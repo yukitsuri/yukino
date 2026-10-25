@@ -8,6 +8,7 @@ static P3: uint64 = 0xbf58476d1ce4e5b9u64
 
 public static BITHASH64_SEED_DEFAULT: uint64 = 0u64
 
+#[inline_always, stable]
 fun mum(a: uint64, b: uint64) -> uint64 {
     set a0: uint64 = a & 0xffffffffu64
     set a1: uint64 = a >> 32
@@ -23,10 +24,12 @@ fun mum(a: uint64, b: uint64) -> uint64 {
     return hi ^ lo
 }
 
+#[inline_always, stable]
 fun mix(a: uint64, b: uint64) -> uint64 {
     return mum(a ^ P0, b ^ P1)
 }
 
+#[inline_always]
 fun load64(ref data: bytes, offset: int64) -> uint64 {
     return cast(data[offset], "uint64") |
            (cast(data[offset + 1], "uint64") << 8) |
@@ -38,6 +41,7 @@ fun load64(ref data: bytes, offset: int64) -> uint64 {
            (cast(data[offset + 7], "uint64") << 56)
 }
 
+#[inline_always]
 fun load32(ref data: bytes, offset: int64) -> uint64 {
     return cast(data[offset], "uint64") |
            (cast(data[offset + 1], "uint64") << 8) |
@@ -45,6 +49,7 @@ fun load32(ref data: bytes, offset: int64) -> uint64 {
            (cast(data[offset + 3], "uint64") << 24)
 }
 
+#[inline]
 fun tail(ref data: bytes, offset: int64, len: int64, state_in: uint64) -> uint64 {
     set state: uint64 = state_in
     set p: int64 = offset
@@ -75,6 +80,7 @@ fun tail(ref data: bytes, offset: int64, len: int64, state_in: uint64) -> uint64
     return state
 }
 
+#[inline, stable]
 fun finalize(s0: uint64, s1: uint64, s2: uint64, s3: uint64, len: uint64) -> uint64 {
     set h: uint64 = mix(s0, s1) ^ mix(s2, s3)
     rewrite h = mum(h ^ len, P3)
@@ -86,6 +92,7 @@ fun finalize(s0: uint64, s1: uint64, s2: uint64, s3: uint64, len: uint64) -> uin
     return h
 }
 
+#[inline]
 public fun bithash64(ref data: bytes, seed: uint64 = 0u64) -> uint64 {
     set s0: uint64 = seed ^ P0
     set s1: uint64 = seed ^ P1

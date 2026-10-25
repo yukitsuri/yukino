@@ -4,6 +4,7 @@ load .error: SqliteError
 load .value: SqliteValue, sqlite_null, sqlite_int, sqlite_float, sqlite_string, sqlite_blob
 load .row: SqliteRow
 
+#[cold, noreturn]
 fun panic_statement_error(db: ptr<void>, default_msg: string) {
     set code = yukistd_sqlite_errcode(db)
     set out_len: int64 = 0

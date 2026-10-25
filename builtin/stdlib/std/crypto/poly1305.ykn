@@ -1,6 +1,7 @@
 load ..hash.common: bytes_to_hex
 load .common: CryptoError, constant_time_eq
 
+#[inline_always]
 fun add1305(ref ~h: uint32[], ref c: uint32[]) {
     set u: uint32 = 0u32
     for j in 0..17 {

@@ -20,6 +20,7 @@ public struct HttpError {
     code: int32
 }
 
+#[cold, noreturn]
 public fun panic_last_net_error(default_msg: string, default_code: int32) {
     set code = yukistd_net_last_error_code()
     set out_len: int64 = 0
@@ -32,6 +33,7 @@ public fun panic_last_net_error(default_msg: string, default_code: int32) {
     panic(NetError { message: msg, code: code })
 }
 
+#[cold, noreturn]
 public fun panic_last_tls_error(default_msg: string, default_code: int32) {
     set code = yukistd_net_last_error_code()
     set out_len: int64 = 0

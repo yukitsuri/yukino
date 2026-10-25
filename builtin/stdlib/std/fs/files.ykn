@@ -42,6 +42,7 @@ public struct FileMetadata {
     mode: uint32
 }
 
+#[cold, noreturn]
 fun panic_last_file_error(default_msg: string, default_code: int32) {
     set code = yukistd_fs_last_error_code()
     set out_len: int64 = 0

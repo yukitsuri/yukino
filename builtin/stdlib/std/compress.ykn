@@ -11,6 +11,7 @@ public struct CompressError {
     code: int32
 }
 
+#[cold, noreturn]
 fun panic_last_compress_error(default_msg: string, default_code: int32) {
     set code = yukistd_compress_last_error_code()
     set out_len: int64 = 0
@@ -23,6 +24,7 @@ fun panic_last_compress_error(default_msg: string, default_code: int32) {
     panic(CompressError { message: msg, code: code })
 }
 
+#[inline]
 public fun crc32(data: bytes) -> uint32 {
     return yukistd_crc32(data.as_ptr(), data.len())
 }

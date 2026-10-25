@@ -20,10 +20,12 @@ public struct TarError {
     code: int32
 }
 
+#[cold, noreturn]
 fun panic_tar_error(msg: string, code: int32) {
     panic(TarError { message: msg, code: code })
 }
 
+#[inline]
 fun parse_octal(ref data: bytes, start: int64, len: int64) -> int64 {
     set res: int64 = 0
     set end = start + len

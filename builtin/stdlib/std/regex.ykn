@@ -59,6 +59,7 @@ public struct CaptureGroup {
     matched: bool
 }
 
+#[cold, noreturn]
 fun panic_last_regex_error(default_msg: string, default_code: int32) {
     set code: int32 = yukistd_regex_last_error_code()
     set out_len: int64 = 0

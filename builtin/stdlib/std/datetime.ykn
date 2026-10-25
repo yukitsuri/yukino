@@ -28,12 +28,14 @@ public struct DateTimeParseError {
     code: int32
 }
 
+#[inline]
 fun pad2(v: int32) -> string {
     if v < 0 { rewrite v = -v }
     if v < 10 { return "0" + cast(v, "string") }
     return cast(v, "string")
 }
 
+#[inline]
 fun pad3(v: int32) -> string {
     if v < 0 { rewrite v = -v }
     if v < 10 { return "00" + cast(v, "string") }
@@ -41,6 +43,7 @@ fun pad3(v: int32) -> string {
     return cast(v, "string")
 }
 
+#[inline]
 fun pad4(v: int32) -> string {
     if v < 0 { rewrite v = -v }
     if v < 10 { return "000" + cast(v, "string") }
@@ -74,6 +77,7 @@ fun parse_int_substr(s: string, start: int64, len: int64) -> int32 {
     return res
 }
 
+#[inline, stable]
 fun days_from_civil(y: int64, m: int64, d: int64) -> int64 {
     if m <= 2 {
         rewrite y = y - 1
@@ -87,6 +91,7 @@ fun days_from_civil(y: int64, m: int64, d: int64) -> int64 {
     return era * 146097 + doe - 719468
 }
 
+#[inline, stable]
 fun civil_from_days(z: int64) -> (int32, int32, int32) {
     rewrite z = z + 719468
     set era = z / 146097
@@ -106,12 +111,14 @@ fun civil_from_days(z: int64) -> (int32, int32, int32) {
     return (y_i32, m_i32, d_i32)
 }
 
+#[inline_always, stable]
 public fun is_leap_year(year: int32) -> bool {
     if year % 4 != 0 { return false }
     if year % 100 != 0 { return true }
     return year % 400 == 0
 }
 
+#[inline, stable]
 public fun days_in_month(year: int32, month: int32) -> int32 {
     if month == 2 {
         if is_leap_year(year) { return 29 }
@@ -123,6 +130,7 @@ public fun days_in_month(year: int32, month: int32) -> int32 {
     return 31
 }
 
+#[inline, stable]
 public fun day_of_week(ref dt: DateTime) -> int32 {
     set days = days_from_civil(cast(dt.year, "int64"), cast(dt.month, "int64"), cast(dt.day, "int64"))
     set w = (days + 3) % 7
@@ -131,6 +139,7 @@ public fun day_of_week(ref dt: DateTime) -> int32 {
     return res
 }
 
+#[inline, stable]
 public fun day_of_year(ref dt: DateTime) -> int32 {
     set d1 = days_from_civil(cast(dt.year, "int64"), 1, 1)
     set d2 = days_from_civil(cast(dt.year, "int64"), cast(dt.month, "int64"), cast(dt.day, "int64"))

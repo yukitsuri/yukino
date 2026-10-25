@@ -12,6 +12,7 @@ public struct RandomError {
     code: int32
 }
 
+#[inline_always]
 fun hex_char(v: uint8) -> string {
     if v < 10 {
         return cast(cast(48 + cast(v, "uint32"), "char"), "string")
@@ -22,11 +23,13 @@ fun hex_char(v: uint8) -> string {
 public class Rng {
     state: uint64
 
+    #[inline]
     fun init(seed: uint64) {
         if seed == 0 { rewrite seed = 0x853c49e6748fea9bu64 }
         rewrite this.state = seed
     }
 
+    #[inline]
     fun next_u64() -> uint64 {
         rewrite this.state = this.state + 0x9e3779b97f4a7c15u64
         set z: uint64 = this.state
@@ -35,21 +38,29 @@ public class Rng {
         return z ^ (z >> 31)
     }
 
+    #[inline_always]
     fun next_u32() -> uint32 {
         set v: uint64 = (this.next_u64() >> 32)
         return cast(v, "uint32")
     }
 
+    #[inline_always]
     fun next_i64() -> int64 { return cast(this.next_u64(), "int64") }
+
+    #[inline_always]
     fun next_i32() -> int32 { return cast(this.next_u32(), "int32") }
+
+    #[inline_always]
     fun next_bool() -> bool { return (this.next_u64() & 1u64) != 0 }
 
+    #[inline]
     fun next_float() -> float64 {
         set v: uint64 = (this.next_u64() >> 11)
         set f: float64 = cast(v, "float64")
         return f / 9007199254740992.0
     }
 
+    #[inline]
     fun next_float32() -> float32 {
         set v: uint32 = (this.next_u32() >> 8)
         set f: float32 = cast(v, "float32")
@@ -97,25 +108,38 @@ public class Rng {
     }
 }
 
+#[inline_always]
 public fun rng_with_seed(seed: uint64) -> Rng { return init Rng(seed) }
+
+#[inline_always]
 public fun rng_new() -> Rng { return init Rng(yukistd_random_system_entropy()) }
+
+#[inline_always]
 public fun rand_u64() -> uint64 { return yukistd_random_global_u64() }
 
+#[inline_always]
 public fun rand_u32() -> uint32 {
     set v: uint64 = (yukistd_random_global_u64() >> 32)
     return cast(v, "uint32")
 }
 
+#[inline_always]
 public fun rand_i64() -> int64 { return cast(rand_u64(), "int64") }
+
+#[inline_always]
 public fun rand_i32() -> int32 { return cast(rand_u32(), "int32") }
+
+#[inline_always]
 public fun rand_bool() -> bool { return (rand_u64() & 1u64) != 0 }
 
+#[inline]
 public fun rand_float() -> float64 {
     set v: uint64 = (rand_u64() >> 11)
     set f: float64 = cast(v, "float64")
     return f / 9007199254740992.0
 }
 
+#[inline]
 public fun rand_float32() -> float32 {
     set v: uint32 = (rand_u32() >> 8)
     set f: float32 = cast(v, "float32")
@@ -147,10 +171,12 @@ public fun rand_range(min: float64, max: float64) -> float64 {
     return min + rand_float() * (max - min)
 }
 
+#[inline_always]
 public fun rand_bytes(buf: ptr<uint8>, len: int64) {
     yukistd_random_system_bytes(buf, len)
 }
 
+#[inline_always]
 public fun rand_seed(seed: uint64) {
     yukistd_random_global_seed(seed)
 }

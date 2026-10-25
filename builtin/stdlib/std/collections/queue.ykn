@@ -12,18 +12,22 @@ cfun yukistd_deque_clear(d: ptr<uint8>)
 public class Deque<T> {
     handle: ptr<uint8>
 
+    #[inline]
     public fun init() {
         rewrite this.handle = yukistd_deque_new()
     }
 
+    #[inline]
     public fun push_back(val: int64) {
         yukistd_deque_push_back(this.handle, val)
     }
 
+    #[inline]
     public fun push_front(val: int64) {
         yukistd_deque_push_front(this.handle, val)
     }
 
+    #[inline]
     public fun pop_front() -> int64? {
         set found: bool = false
         set val = yukistd_deque_pop_front(this.handle, ptr_of(found))
@@ -31,6 +35,7 @@ public class Deque<T> {
         return val
     }
 
+    #[inline]
     public fun pop_back() -> int64? {
         set found: bool = false
         set val = yukistd_deque_pop_back(this.handle, ptr_of(found))
@@ -38,6 +43,7 @@ public class Deque<T> {
         return val
     }
 
+    #[inline]
     public fun peek_front() -> int64? {
         set found: bool = false
         set val = yukistd_deque_peek_front(this.handle, ptr_of(found))
@@ -45,6 +51,7 @@ public class Deque<T> {
         return val
     }
 
+    #[inline]
     public fun peek_back() -> int64? {
         set found: bool = false
         set val = yukistd_deque_peek_back(this.handle, ptr_of(found))
@@ -52,12 +59,15 @@ public class Deque<T> {
         return val
     }
 
+    #[inline_always]
     public fun len() -> int64 {
         return yukistd_deque_len(this.handle)
     }
 
+    #[inline_always]
     public fun is_empty() -> bool { return this.len() == 0 }
 
+    #[inline]
     public fun clear() {
         yukistd_deque_clear(this.handle)
     }
@@ -66,14 +76,17 @@ public class Deque<T> {
 public class Queue<T> {
     handle: ptr<uint8>
 
+    #[inline]
     public fun init() {
         rewrite this.handle = yukistd_deque_new()
     }
 
+    #[inline]
     public fun push(val: int64) {
         yukistd_deque_push_back(this.handle, val)
     }
 
+    #[inline]
     public fun pop() -> int64? {
         set found: bool = false
         set val = yukistd_deque_pop_front(this.handle, ptr_of(found))
@@ -81,6 +94,7 @@ public class Queue<T> {
         return val
     }
 
+    #[inline]
     public fun peek() -> int64? {
         set found: bool = false
         set val = yukistd_deque_peek_front(this.handle, ptr_of(found))
@@ -88,9 +102,13 @@ public class Queue<T> {
         return val
     }
 
+    #[inline_always]
     public fun len() -> int64 { return yukistd_deque_len(this.handle) }
+
+    #[inline_always]
     public fun is_empty() -> bool { return this.len() == 0 }
 
+    #[inline]
     public fun clear() {
         yukistd_deque_clear(this.handle)
     }
