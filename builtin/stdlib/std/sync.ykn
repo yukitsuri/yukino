@@ -1,0 +1,690 @@
+// declarations for sync.rs
+
+cfun yukistd_sync_mutex_create() -> uint64
+cfun yukistd_sync_mutex_lock(id: uint64)
+cfun yukistd_sync_mutex_try_lock(id: uint64) -> bool
+cfun yukistd_sync_mutex_unlock(id: uint64)
+cfun yukistd_sync_mutex_destroy(id: uint64)
+
+cfun yukistd_sync_rwlock_create() -> uint64
+cfun yukistd_sync_rwlock_read_lock(id: uint64)
+cfun yukistd_sync_rwlock_try_read_lock(id: uint64) -> bool
+cfun yukistd_sync_rwlock_read_unlock(id: uint64)
+cfun yukistd_sync_rwlock_write_lock(id: uint64)
+cfun yukistd_sync_rwlock_try_write_lock(id: uint64) -> bool
+cfun yukistd_sync_rwlock_write_unlock(id: uint64)
+cfun yukistd_sync_rwlock_destroy(id: uint64)
+
+cfun yukistd_sync_condvar_create() -> uint64
+cfun yukistd_sync_condvar_wait(cond_id: uint64, mutex_id: uint64)
+cfun yukistd_sync_condvar_wait_timeout(cond_id: uint64, mutex_id: uint64, ms: uint64) -> bool
+cfun yukistd_sync_condvar_notify_one(cond_id: uint64)
+cfun yukistd_sync_condvar_notify_all(cond_id: uint64)
+cfun yukistd_sync_condvar_destroy(cond_id: uint64)
+
+cfun yukistd_sync_once_create() -> uint64
+cfun yukistd_sync_once_call(id: uint64, task: ptr<void>, arg: ptr<void>)
+cfun yukistd_sync_once_is_completed(id: uint64) -> bool
+cfun yukistd_sync_once_destroy(id: uint64)
+
+cfun yukistd_sync_channel_create(bound: int64) -> uint64
+cfun yukistd_sync_channel_send(id: uint64, val: int64) -> bool
+cfun yukistd_sync_channel_recv(id: uint64, timeout_ms: int64, out_val: ptr<int64>) -> int32
+cfun yukistd_sync_channel_close(id: uint64)
+cfun yukistd_sync_channel_is_closed(id: uint64) -> bool
+cfun yukistd_sync_channel_len(id: uint64) -> int64
+cfun yukistd_sync_channel_destroy(id: uint64)
+
+cfun yukistd_sync_semaphore_create(permits: int64) -> uint64
+cfun yukistd_sync_semaphore_acquire(id: uint64)
+cfun yukistd_sync_semaphore_try_acquire(id: uint64) -> bool
+cfun yukistd_sync_semaphore_release(id: uint64)
+cfun yukistd_sync_semaphore_destroy(id: uint64)
+
+cfun yukistd_sync_barrier_create(parties: uint32) -> uint64
+cfun yukistd_sync_barrier_wait(id: uint64) -> bool
+cfun yukistd_sync_barrier_destroy(id: uint64)
+
+cfun yukistd_sync_atomic_i64_create(init: int64) -> uint64
+cfun yukistd_sync_atomic_i64_load(id: uint64) -> int64
+cfun yukistd_sync_atomic_i64_store(id: uint64, val: int64)
+cfun yukistd_sync_atomic_i64_fetch_add(id: uint64, val: int64) -> int64
+cfun yukistd_sync_atomic_i64_fetch_sub(id: uint64, val: int64) -> int64
+cfun yukistd_sync_atomic_i64_swap(id: uint64, val: int64) -> int64
+cfun yukistd_sync_atomic_i64_cas(id: uint64, expected: int64, desired: int64) -> bool
+cfun yukistd_sync_atomic_i64_destroy(id: uint64)
+
+cfun yukistd_sync_atomic_bool_create(init: bool) -> uint64
+cfun yukistd_sync_atomic_bool_load(id: uint64) -> bool
+cfun yukistd_sync_atomic_bool_store(id: uint64, val: bool)
+cfun yukistd_sync_atomic_bool_swap(id: uint64, val: bool) -> bool
+cfun yukistd_sync_atomic_bool_cas(id: uint64, expected: bool, desired: bool) -> bool
+cfun yukistd_sync_atomic_bool_destroy(id: uint64)
+
+// synchronization errors
+
+public struct SyncError {
+    message: string
+    code: int32
+}
+
+// mutex
+
+public class Mutex {
+    handle: uint64
+
+    public fun init() {
+        set id = yukistd_sync_mutex_create()
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create mutex",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun lock() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid mutex handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_mutex_lock(this.handle)
+    }
+
+    public fun try_lock() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_mutex_try_lock(this.handle)
+    }
+
+    public fun unlock() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid mutex handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_mutex_unlock(this.handle)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_mutex_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun mutex() -> Mutex {
+    return init Mutex()
+}
+
+// rwlock
+
+public class RwLock {
+    handle: uint64
+
+    public fun init() {
+        set id = yukistd_sync_rwlock_create()
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create rwlock",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun read() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid rwlock handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_rwlock_read_lock(this.handle)
+    }
+
+    public fun try_read() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_rwlock_try_read_lock(this.handle)
+    }
+
+    public fun unlock_read() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid rwlock handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_rwlock_read_unlock(this.handle)
+    }
+
+    public fun write() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid rwlock handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_rwlock_write_lock(this.handle)
+    }
+
+    public fun try_write() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_rwlock_try_write_lock(this.handle)
+    }
+
+    public fun unlock_write() {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid rwlock handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_rwlock_write_unlock(this.handle)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_rwlock_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun rwlock() -> RwLock {
+    return init RwLock()
+}
+
+// condvar
+
+public class CondVar {
+    handle: uint64
+
+    public fun init() {
+        set id = yukistd_sync_condvar_create()
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create condvar",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun wait(ref m: Mutex) {
+        if this.handle == 0 || m.handle == 0 {
+            panic(SyncError {
+                message: "invalid handle in condvar wait",
+                code: 401,
+            })
+        }
+        yukistd_sync_condvar_wait(this.handle, m.handle)
+    }
+
+    public fun wait_handle(mutex_id: uint64) {
+        if this.handle == 0 || mutex_id == 0 {
+            panic(SyncError {
+                message: "invalid handle in condvar wait_handle",
+                code: 401,
+            })
+        }
+        yukistd_sync_condvar_wait(this.handle, mutex_id)
+    }
+
+    public fun wait_timeout(ref m: Mutex, ms: uint64) -> bool {
+        if this.handle == 0 || m.handle == 0 {
+            panic(SyncError {
+                message: "invalid handle in condvar wait_timeout",
+                code: 401,
+            })
+        }
+        return yukistd_sync_condvar_wait_timeout(this.handle, m.handle, ms)
+    }
+
+    public fun notify_one() {
+        if this.handle != 0 {
+            yukistd_sync_condvar_notify_one(this.handle)
+        }
+    }
+
+    public fun notify_all() {
+        if this.handle != 0 {
+            yukistd_sync_condvar_notify_all(this.handle)
+        }
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_condvar_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun condvar() -> CondVar {
+    return init CondVar()
+}
+
+// once
+
+public class Once {
+    handle: uint64
+
+    public fun init() {
+        set id = yukistd_sync_once_create()
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create once",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun call_once(task: ptr<void>, arg: ptr<void> = null) {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid once handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_once_call(this.handle, task, arg)
+    }
+
+    public fun is_completed() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_once_is_completed(this.handle)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_once_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun once() -> Once {
+    return init Once()
+}
+
+// channel
+
+public class Channel {
+    handle: uint64
+
+    public fun init(bound: int64 = 0) {
+        set id = yukistd_sync_channel_create(bound)
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create channel",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun send_i64(val: int64) -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_channel_send(this.handle, val)
+    }
+
+    public fun recv_i64() -> int64? {
+        if this.handle == 0 {
+            return null
+        }
+        set out_val: int64 = 0
+        set res = yukistd_sync_channel_recv(this.handle, -1, ptr_of(out_val))
+        if res != 0 {
+            return null
+        }
+        return out_val
+    }
+
+    public fun try_recv_i64() -> int64? {
+        if this.handle == 0 {
+            return null
+        }
+        set out_val: int64 = 0
+        set res = yukistd_sync_channel_recv(this.handle, 0, ptr_of(out_val))
+        if res != 0 {
+            return null
+        }
+        return out_val
+    }
+
+    public fun recv_timeout_i64(timeout_ms: int64) -> int64? {
+        if this.handle == 0 {
+            return null
+        }
+        set out_val: int64 = 0
+        set res = yukistd_sync_channel_recv(this.handle, timeout_ms, ptr_of(out_val))
+        if res != 0 {
+            return null
+        }
+        return out_val
+    }
+
+    public fun send_ptr(p: ptr<void>) -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_channel_send(this.handle, cast(p, "int64"))
+    }
+
+    public fun recv_ptr() -> ptr<void>? {
+        set v = this.recv_i64()
+        if v == null {
+            return null
+        }
+        return cast(v ?? 0, "ptr<void>")
+    }
+
+    public fun try_recv_ptr() -> ptr<void>? {
+        set v = this.try_recv_i64()
+        if v == null {
+            return null
+        }
+        return cast(v ?? 0, "ptr<void>")
+    }
+
+    public fun close() {
+        if this.handle != 0 {
+            yukistd_sync_channel_close(this.handle)
+        }
+    }
+
+    public fun is_closed() -> bool {
+        if this.handle == 0 {
+            return true
+        }
+        return yukistd_sync_channel_is_closed(this.handle)
+    }
+
+    public fun len() -> int64 {
+        if this.handle == 0 {
+            return 0
+        }
+        return yukistd_sync_channel_len(this.handle)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_channel_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun channel(bound: int64 = 0) -> Channel {
+    return init Channel(bound)
+}
+
+// semaphore
+
+public class Semaphore {
+    handle: uint64
+
+    public fun init(permits: int64 = 1) {
+        set id = yukistd_sync_semaphore_create(permits)
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create semaphore",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun acquire() -> bool {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid semaphore handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_semaphore_acquire(this.handle)
+        return true
+    }
+
+    public fun try_acquire() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_semaphore_try_acquire(this.handle)
+    }
+
+    public fun release() -> bool {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid semaphore handle (0)",
+                code: 401,
+            })
+        }
+        yukistd_sync_semaphore_release(this.handle)
+        return true
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_semaphore_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun semaphore(permits: int64 = 1) -> Semaphore {
+    return init Semaphore(permits)
+}
+
+// barrier
+
+public class Barrier {
+    handle: uint64
+
+    public fun init(parties: uint32) {
+        set id = yukistd_sync_barrier_create(parties)
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create barrier",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun wait() -> bool {
+        if this.handle == 0 {
+            panic(SyncError {
+                message: "invalid barrier handle (0)",
+                code: 401,
+            })
+        }
+        return yukistd_sync_barrier_wait(this.handle)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_barrier_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun barrier(parties: uint32) -> Barrier {
+    return init Barrier(parties)
+}
+
+// atomic int64
+
+public class AtomicInt64 {
+    handle: uint64
+
+    public fun init(init_val: int64 = 0) {
+        set id = yukistd_sync_atomic_i64_create(init_val)
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create atomic_i64",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun get() -> int64 {
+        if this.handle == 0 {
+            return 0
+        }
+        return yukistd_sync_atomic_i64_load(this.handle)
+    }
+
+    public fun set(val: int64) {
+        if this.handle != 0 {
+            yukistd_sync_atomic_i64_store(this.handle, val)
+        }
+    }
+
+    public fun fetch_add(val: int64) -> int64 {
+        if this.handle == 0 {
+            return 0
+        }
+        return yukistd_sync_atomic_i64_fetch_add(this.handle, val)
+    }
+
+    public fun fetch_sub(val: int64) -> int64 {
+        if this.handle == 0 {
+            return 0
+        }
+        return yukistd_sync_atomic_i64_fetch_sub(this.handle, val)
+    }
+
+    public fun swap(val: int64) -> int64 {
+        if this.handle == 0 {
+            return 0
+        }
+        return yukistd_sync_atomic_i64_swap(this.handle, val)
+    }
+
+    public fun compare_exchange(expected: int64, desired: int64) -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_atomic_i64_cas(this.handle, expected, desired)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_atomic_i64_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun atomic_i64(init_val: int64 = 0) -> AtomicInt64 {
+    return init AtomicInt64(init_val)
+}
+
+// atomic bool
+
+public class AtomicBool {
+    handle: uint64
+
+    public fun init(init_val: bool = false) {
+        set id = yukistd_sync_atomic_bool_create(init_val)
+        if id == 0 {
+            panic(SyncError {
+                message: "failed to create atomic_bool",
+                code: 401,
+            })
+        }
+        rewrite this.handle = id
+    }
+
+    public fun get() -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_atomic_bool_load(this.handle)
+    }
+
+    public fun set(val: bool) {
+        if this.handle != 0 {
+            yukistd_sync_atomic_bool_store(this.handle, val)
+        }
+    }
+
+    public fun swap(val: bool) -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_atomic_bool_swap(this.handle, val)
+    }
+
+    public fun compare_exchange(expected: bool, desired: bool) -> bool {
+        if this.handle == 0 {
+            return false
+        }
+        return yukistd_sync_atomic_bool_cas(this.handle, expected, desired)
+    }
+
+    public fun destroy() {
+        if this.handle != 0 {
+            yukistd_sync_atomic_bool_destroy(this.handle)
+            rewrite this.handle = 0
+        }
+    }
+
+    public fun get_handle() -> uint64 {
+        return this.handle
+    }
+}
+
+public fun atomic_bool(init_val: bool = false) -> AtomicBool {
+    return init AtomicBool(init_val)
+}

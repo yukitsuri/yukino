@@ -1,3 +1,5 @@
+public load .sysinfox: *
+
 // decls sysinfo.rs
 
 cfun yukistd_sysinfo_host_name(out_len: ptr<int64>) -> ptr<uint8>

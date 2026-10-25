@@ -17,7 +17,10 @@ load std.sysinfo
 - **Структуры данных:**
   - `LoadAverage` — метрики средней загрузки системы за 1, 5 и 15 минут;
   - `DiskSpace` — общий и доступный объем дискового пространства;
-  - `DiskInfo` — детальная информация о смонтированном дисковом разделе.
+  - `DiskInfo` — детальная информация о смонтированном дисковом разделе;
+  - `NetworkInterfaceInfo` — информация о сетевом адаптере, MAC-адресе и счетчиках трафика;
+  - `ThermalSensorInfo` — показания аппаратных температурных датчиков и критические лимиты;
+  - `ProcessInfo` — детальная информация о запущенном системном процессе.
 - **Хост, операционная система и ядро:**
   - `host_name`, `os_name`, `os_version`, `kernel_version`, `distribution_id`, `cpu_arch`, `uptime`, `boot_time`.
 - **Пользователи и привилегии:**
@@ -30,6 +33,12 @@ load std.sysinfo
   - `disk_space`, `disks`.
 - **Состояние батареи:**
   - `battery_percent`, `is_battery_charging`.
+- **Сетевые интерфейсы и трафик (std.sysinfox):**
+  - `network_interfaces`, `network_interface`.
+- **Температурные датчики оборудования:**
+  - `thermal_sensors`.
+- **Таблица процессов операционной системы:**
+  - `process_list`, `process_by_pid`.
 
 Все перечисленные сущности также автоматически становятся доступны при загрузке всей стандартной библиотеки целиком: `load std`.
 
@@ -96,6 +105,76 @@ public struct DiskInfo {
 - `available_space` — свободное дисковое пространство, доступное непривилегированным пользователям.
 - `is_removable` — флаг съемного носителя (USB-флеш-карта, SD-накопитель).
 - `is_read_only` — признак режима "только чтение".
+
+### 3.4 NetworkInterfaceInfo
+
+Детальные характеристики сетевого адаптера, его операционный статус и счетчики переданных и принятых пакетов и байтов.
+
+```yukino
+public struct NetworkInterfaceInfo {
+    name: string
+    mac_address: string
+    is_up: bool
+    is_loopback: bool
+    rx_bytes: uint64
+    tx_bytes: uint64
+    rx_packets: uint64
+    tx_packets: uint64
+    rx_errors: uint64
+    tx_errors: uint64
+}
+```
+
+- `name` — системное имя интерфейса (например, `"eth0"`, `"wlan0"`, `"lo"`).
+- `mac_address` — аппаратный MAC-адрес устройства (например, `"9c:c7:d3:eb:e0:38"`).
+- `is_up` — флаг активности интерфейса (`true`, если интерфейс включен и поднят).
+- `is_loopback` — признак петлевого интерфейса локального хоста (`lo`).
+- `rx_bytes` — суммарное количество принятых байтов.
+- `tx_bytes` — суммарное количество отправленных байтов.
+- `rx_packets` — количество успешно принятых сетевых пакетов.
+- `tx_packets` — количество успешно отправленных сетевых пакетов.
+- `rx_errors` — количество ошибок приема пакетов.
+- `tx_errors` — количество ошибок передачи пакетов.
+
+### 3.5 ThermalSensorInfo
+
+Показания аппаратного температурного датчика материнской платы, процессора или видеокарты.
+
+```yukino
+public struct ThermalSensorInfo {
+    label: string
+    temperature_celsius: float32
+    critical_temp: float32?
+}
+```
+
+- `label` — идентификатор или метка датчика (например, `"k10temp Tctl"`, `"acpitz"`, `"coretemp Package id 0"`).
+- `temperature_celsius` — текущая температура в градусах Цельсия.
+- `critical_temp` — предельно допустимая температура в градусах Цельсия либо `null`, если порог не определен драйвером оборудования.
+
+### 3.6 ProcessInfo
+
+Информация о запущенном системном процессе из таблицы процессов операционной системы.
+
+```yukino
+public struct ProcessInfo {
+    pid: uint32
+    parent_pid: uint32
+    name: string
+    cmdline: string
+    cpu_usage: float32
+    memory_rss: uint64
+    memory_virtual: uint64
+}
+```
+
+- `pid` — уникальный идентификатор процесса (PID).
+- `parent_pid` — идентификатор родительского процесса (PPID).
+- `name` — имя исполняемого файла или процесса (comm).
+- `cmdline` — полная строка запуска с аргументами командной строки.
+- `cpu_usage` — расчетный процент использования ресурсов ЦП.
+- `memory_rss` — физическая оперативная память, занятая процессом (Resident Set Size в байтах).
+- `memory_virtual` — общий объем выделенной виртуальной памяти процесса (в байтах).
 
 ---
 
@@ -686,6 +765,135 @@ load std.io: println
 set charging = is_battery_charging()
 if charging != null {
     println("Питание от сети: ${charging}")
+}
+```
+
+---
+
+## 10. Справочник функций: Сетевые интерфейсы и трафик
+
+### 10.1 network_interfaces
+
+Возвращает список всех обнаруженных физических и виртуальных сетевых адаптеров и счетчиков переданного трафика.
+
+```yukino
+public fun network_interfaces() -> NetworkInterfaceInfo[]
+```
+
+Возвращает срез структур `NetworkInterfaceInfo[]`. Если сетевые интерфейсы не найдены, возвращает пустой срез.
+
+Функция никогда не вызывает панику.
+
+```yukino
+load std.sysinfox: network_interfaces
+load std.io: println
+
+set ifaces = network_interfaces()
+for i in 0..ifaces.len() {
+    set iface = ifaces[i]
+    println("Интерфейс: ${iface.name}, MAC: ${iface.mac_address}, Up: ${iface.is_up}, RX: ${iface.rx_bytes} байт")
+}
+```
+
+### 10.2 network_interface (nullable)
+
+Находит сетевой адаптер по его точному системному имени.
+
+```yukino
+public fun network_interface(name: string) -> NetworkInterfaceInfo?
+```
+
+Возвращает структуру `NetworkInterfaceInfo` либо `null`, если интерфейс с указанным именем отсутствует в системе.
+
+Функция никогда не вызывает панику.
+
+```yukino
+load std.sysinfox: network_interface
+load std.io: println
+
+set eth = network_interface("eth0")
+if eth != null {
+    println("Найден eth0 с адресом: " + (eth?.mac_address ?? "нет MAC"))
+} else {
+    println("Интерфейс eth0 не обнаружен")
+}
+```
+
+---
+
+## 11. Справочник функций: Температурные датчики оборудования
+
+### 11.1 thermal_sensors
+
+Считывает показатели всех доступных аппаратных термодатчиков процессора, чипсета и системных контроллеров.
+
+```yukino
+public fun thermal_sensors() -> ThermalSensorInfo[]
+```
+
+Возвращает срез структур `ThermalSensorInfo[]`. Если термодатчики не поддерживаются платформой или недоступны, возвращает пустой срез.
+
+Функция никогда не вызывает панику.
+
+```yukino
+load std.sysinfox: thermal_sensors
+load std.io: println
+
+set sensors = thermal_sensors()
+for i in 0..sensors.len() {
+    set s = sensors[i]
+    println("Датчик [${s.label}]: " + cast(s.temperature_celsius, "string") + " °C")
+}
+```
+
+---
+
+## 12. Справочник функций: Таблица процессов операционной системы
+
+### 12.1 process_list
+
+Возвращает снимок всех запущенных в операционной системе процессов.
+
+```yukino
+public fun process_list() -> ProcessInfo[]
+```
+
+Возвращает срез структур `ProcessInfo[]`. Если доступ к таблице процессов ограничен, возвращает пустой срез.
+
+Функция никогда не вызывает панику.
+
+```yukino
+load std.sysinfox: process_list
+load std.io: println
+
+set procs = process_list()
+for i in 0..procs.len() {
+    set p = procs[i]
+    println("PID ${p.pid} (${p.name}): RSS = ${p.memory_rss} байт")
+}
+```
+
+### 12.2 process_by_pid (nullable)
+
+Находит запись о процессе в системной таблице по его уникальному идентификатору (PID).
+
+```yukino
+public fun process_by_pid(pid: uint32) -> ProcessInfo?
+```
+
+Возвращает структуру `ProcessInfo` либо `null`, если процесс с указанным PID не найден или завершил выполнение.
+
+Функция никогда не вызывает панику.
+
+```yukino
+load std.sysinfox: process_by_pid
+load std.io: println
+
+set proc = process_by_pid(1u32)
+if proc != null {
+    println("Корневой процесс инициализации: ${proc?.name} (${proc?.cmdline})")
+} else {
+    println("Процесс PID 1 не найден")
 }
 ```
 

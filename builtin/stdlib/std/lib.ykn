@@ -23,4 +23,5 @@ public load .hash: *
 public load .crypto: *
 public load .net: *
 public load .regex: *
+public load .encore: *
 

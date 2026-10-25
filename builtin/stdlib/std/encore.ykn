@@ -1,0 +1,230 @@
+// declarations for encore.rs
+
+cfun yukistd_encore_is_valid_utf8(p: ptr<uint8>, len: int64) -> bool
+cfun yukistd_encore_from_utf8_lossy(p: ptr<uint8>, len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_encore_count_codepoints(p: ptr<uint8>, len: int64) -> int64
+cfun yukistd_encore_codepoints(p: ptr<uint8>, len: int64, out_count: ptr<int64>) -> ptr<CodepointEntry>
+cfun yukistd_encore_decode_codepoints(p: ptr<uint8>, len: int64, out_count: ptr<int64>) -> ptr<uint32>
+cfun yukistd_encore_encode_codepoint(cp: uint32, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_encore_encode_codepoints(cps: ptr<uint32>, count: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_encore_count_graphemes(p: ptr<uint8>, len: int64) -> int64
+cfun yukistd_encore_graphemes(p: ptr<uint8>, len: int64, out_count: ptr<int64>) -> ptr<GraphemeCluster>
+cfun yukistd_encore_to_utf16(p: ptr<uint8>, len: int64, null_term: bool, out_count: ptr<int64>) -> ptr<uint16>
+cfun yukistd_encore_from_utf16(units: ptr<uint16>, len: int64, lossy: bool, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_encore_from_utf16_null_terminated(p: ptr<uint16>, lossy: bool, out_len: ptr<int64>) -> ptr<uint8>
+
+public struct UtfError {
+    message: string
+    code: int32
+}
+
+public struct CodepointEntry {
+    codepoint: uint32
+    byte_offset: int64
+    byte_len: int32
+}
+
+public struct GraphemeCluster {
+    text: string
+    byte_offset: int64
+    byte_len: int32
+}
+
+// utf-8 validation and codepoint iteration
+
+public fun is_valid_utf8(ref bytes: bytes) -> bool {
+    return yukistd_encore_is_valid_utf8(bytes.as_ptr(), bytes.len())
+}
+
+public fun is_valid_utf8_raw(p: ptr<uint8>, len: int64) -> bool {
+    return yukistd_encore_is_valid_utf8(p, len)
+}
+
+public fun validate_utf8(ref bytes: bytes) -> string {
+    set ok = is_valid_utf8(ref bytes)
+    if !ok {
+        panic(UtfError {
+            message: "invalid utf-8 byte sequence",
+            code: 101,
+        })
+    }
+    return from_raw_parts(bytes.as_ptr(), bytes.len())
+}
+
+public fun from_utf8_lossy(ref bytes: bytes) -> string {
+    if bytes.len() == 0 {
+        return ""
+    }
+    set out_len: int64 = 0
+    set p = yukistd_encore_from_utf8_lossy(bytes.as_ptr(), bytes.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        return ""
+    }
+    return from_raw_parts(p, out_len)
+}
+
+public fun codepoints(s: string) -> CodepointEntry[] {
+    set out_count: int64 = 0
+    set p = yukistd_encore_codepoints(s.as_ptr(), s.len(), ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<CodepointEntry> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun decode_codepoints(s: string) -> uint32[] {
+    set out_count: int64 = 0
+    set p = yukistd_encore_decode_codepoints(s.as_ptr(), s.len(), ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<uint32> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun encode_codepoint(cp: uint32) -> string {
+    if cp > 0x10FFFFu32 || (cp >= 0xD800u32 && cp <= 0xDFFFu32) {
+        panic(UtfError {
+            message: "invalid unicode scalar value for codepoint",
+            code: 102,
+        })
+    }
+    set out_len: int64 = 0
+    set p = yukistd_encore_encode_codepoint(cp, ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        panic(UtfError {
+            message: "failed to encode unicode codepoint",
+            code: 102,
+        })
+    }
+    return from_raw_parts(p, out_len)
+}
+
+public fun encode_codepoints(ref cps: uint32[]) -> string {
+    if cps.len() == 0 {
+        return ""
+    }
+    set out_len: int64 = 0
+    set p = yukistd_encore_encode_codepoints(cps.as_ptr(), cps.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        return ""
+    }
+    return from_raw_parts(p, out_len)
+}
+
+public fun count_codepoints(s: string) -> int64 {
+    return yukistd_encore_count_codepoints(s.as_ptr(), s.len())
+}
+
+// grapheme clusters
+
+public fun graphemes(s: string) -> string[] {
+    set clusters = grapheme_clusters(s)
+    set res: string[] = []
+    for i in 0..clusters.len() {
+        res.push(clusters[i].text.cp())
+    }
+    return res
+}
+
+public fun grapheme_clusters(s: string) -> GraphemeCluster[] {
+    set out_count: int64 = 0
+    set p = yukistd_encore_graphemes(s.as_ptr(), s.len(), ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<GraphemeCluster> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun count_graphemes(s: string) -> int64 {
+    return yukistd_encore_count_graphemes(s.as_ptr(), s.len())
+}
+
+public fun grapheme_at(s: string, index: int64) -> string? {
+    if index < 0 {
+        return null
+    }
+    set clusters = grapheme_clusters(s)
+    if index >= clusters.len() {
+        return null
+    }
+    return clusters[index].text.cp()
+}
+
+// utf-16 conversions for win32 and jvm interop
+
+public fun to_utf16(s: string) -> uint16[] {
+    set out_count: int64 = 0
+    set p = yukistd_encore_to_utf16(s.as_ptr(), s.len(), false, ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<uint16> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun to_utf16_null_terminated(s: string) -> uint16[] {
+    set out_count: int64 = 0
+    set p = yukistd_encore_to_utf16(s.as_ptr(), s.len(), true, ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<uint16> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun from_utf16(ref units: uint16[]) -> string {
+    if units.len() == 0 {
+        return ""
+    }
+    set out_len: int64 = 0
+    set p = yukistd_encore_from_utf16(units.as_ptr(), units.len(), false, ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic(UtfError {
+            message: "invalid utf-16 surrogate sequence",
+            code: 103,
+        })
+    }
+    if out_len == 0 {
+        return ""
+    }
+    return from_raw_parts(p, out_len)
+}
+
+public fun from_utf16_lossy(ref units: uint16[]) -> string {
+    if units.len() == 0 {
+        return ""
+    }
+    set out_len: int64 = 0
+    set p = yukistd_encore_from_utf16(units.as_ptr(), units.len(), true, ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        return ""
+    }
+    return from_raw_parts(p, out_len)
+}
+
+public fun from_utf16_null_terminated(p: ptr<uint16>) -> string {
+    if p == null {
+        return ""
+    }
+    set out_len: int64 = 0
+    set s_ptr = yukistd_encore_from_utf16_null_terminated(p, true, ptr_of(out_len))
+    if out_len <= 0 || s_ptr == null {
+        return ""
+    }
+    return from_raw_parts(s_ptr, out_len)
+}
+
+public fun is_high_surrogate(unit: uint16) -> bool {
+    return unit >= 0xD800u16 && unit <= 0xDBFFu16
+}
+
+public fun is_low_surrogate(unit: uint16) -> bool {
+    return unit >= 0xDC00u16 && unit <= 0xDFFFu16
+}
+
+public fun is_surrogate(unit: uint16) -> bool {
+    return unit >= 0xD800u16 && unit <= 0xDFFFu16
+}
