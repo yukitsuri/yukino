@@ -1,0 +1,174 @@
+load .constants: SQLITE_ROW, SQLITE_DONE, SQLITE_OK, SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT, SQLITE_BLOB, SQLITE_NULL
+load .bridge: yukistd_sqlite_step, yukistd_sqlite_reset, yukistd_sqlite_finalize, yukistd_sqlite_bind_null, yukistd_sqlite_bind_int64, yukistd_sqlite_bind_double, yukistd_sqlite_bind_text, yukistd_sqlite_bind_blob, yukistd_sqlite_column_count, yukistd_sqlite_column_name, yukistd_sqlite_column_type, yukistd_sqlite_column_int64, yukistd_sqlite_column_double, yukistd_sqlite_column_text, yukistd_sqlite_column_blob, yukistd_sqlite_errmsg, yukistd_sqlite_errcode
+load .error: SqliteError
+load .value: SqliteValue, sqlite_null, sqlite_int, sqlite_float, sqlite_string, sqlite_blob
+load .row: SqliteRow
+
+fun panic_statement_error(db: ptr<void>, default_msg: string) {
+    set code = yukistd_sqlite_errcode(db)
+    set out_len: int64 = 0
+    set p = yukistd_sqlite_errmsg(db, ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    panic(SqliteError { message: msg, code: code })
+}
+
+public class SqliteStatement {
+    public db_handle: ptr<void>
+    public handle: ptr<void>
+    public is_finalized: bool
+
+    public fun init(db: ptr<void>, handle: ptr<void>) {
+        rewrite this.db_handle = db
+        rewrite this.handle = handle
+        rewrite this.is_finalized = false
+    }
+
+    public fun step() -> bool {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot step finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_step(this.handle)
+        if rc == SQLITE_ROW {
+            return true
+        }
+        if rc == SQLITE_DONE {
+            return false
+        }
+        panic_statement_error(this.db_handle, "sqlite step failed")
+        return false
+    }
+
+    public fun current_row() -> SqliteRow {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot read row from finalized statement", code: 1 })
+        }
+        set col_count = yukistd_sqlite_column_count(this.handle)
+        set names: string[] = []
+        set vals: SqliteValue[] = []
+        set col: int32 = 0
+
+        while col < col_count {
+            set name_len: int64 = 0
+            set name_p = yukistd_sqlite_column_name(this.handle, col, ptr_of(name_len))
+            set name: string = if name_p != null && name_len > 0 { from_raw_parts(name_p, name_len) } else { "" }
+            names.push(name)
+
+            set ctype = yukistd_sqlite_column_type(this.handle, col)
+            if ctype == SQLITE_INTEGER {
+                set i_val = yukistd_sqlite_column_int64(this.handle, col)
+                vals.push(sqlite_int(i_val))
+            } elif ctype == SQLITE_FLOAT {
+                set f_val = yukistd_sqlite_column_double(this.handle, col)
+                vals.push(sqlite_float(f_val))
+            } elif ctype == SQLITE_TEXT {
+                set t_len: int64 = 0
+                set t_p = yukistd_sqlite_column_text(this.handle, col, ptr_of(t_len))
+                set s_val: string = if t_p != null && t_len > 0 { from_raw_parts(t_p, t_len) } else { "" }
+                vals.push(sqlite_string(s_val))
+            } elif ctype == SQLITE_BLOB {
+                set b_len: int64 = 0
+                set b_p = yukistd_sqlite_column_blob(this.handle, col, ptr_of(b_len))
+                set b_val: uint8[] = if b_p != null && b_len > 0 { from_raw_parts(b_p, b_len, b_len) } else { [] }
+                vals.push(sqlite_blob(b_val))
+            } else {
+                vals.push(sqlite_null())
+            }
+
+            rewrite col = col + 1
+        }
+
+        return init SqliteRow(names, vals)
+    }
+
+    public fun reset() {
+        if !this.is_finalized && this.handle != null {
+            set rc = yukistd_sqlite_reset(this.handle)
+            if rc != SQLITE_OK {
+                panic_statement_error(this.db_handle, "sqlite reset failed")
+            }
+        }
+    }
+
+    public fun finalize() {
+        if !this.is_finalized && this.handle != null {
+            set _ = yukistd_sqlite_finalize(this.handle)
+            rewrite this.is_finalized = true
+        }
+    }
+
+    public fun bind_null(index: int32) {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_bind_null(this.handle, index)
+        if rc != SQLITE_OK {
+            panic_statement_error(this.db_handle, "failed to bind null")
+        }
+    }
+
+    public fun bind_int(index: int32, val: int64) {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_bind_int64(this.handle, index, val)
+        if rc != SQLITE_OK {
+            panic_statement_error(this.db_handle, "failed to bind int")
+        }
+    }
+
+    public fun bind_float(index: int32, val: float64) {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_bind_double(this.handle, index, val)
+        if rc != SQLITE_OK {
+            panic_statement_error(this.db_handle, "failed to bind float")
+        }
+    }
+
+    public fun bind_string(index: int32, val: string) {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_bind_text(this.handle, index, val.as_ptr(), val.len())
+        if rc != SQLITE_OK {
+            panic_statement_error(this.db_handle, "failed to bind string")
+        }
+    }
+
+    public fun bind_blob(index: int32, val: uint8[]) {
+        if this.is_finalized || this.handle == null {
+            panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
+        }
+        set rc = yukistd_sqlite_bind_blob(this.handle, index, val.as_ptr(), val.len())
+        if rc != SQLITE_OK {
+            panic_statement_error(this.db_handle, "failed to bind blob")
+        }
+    }
+
+    public fun bind_value(index: int32, val: SqliteValue) {
+        if val.kind == SQLITE_INTEGER {
+            this.bind_int(index, val.int_val)
+        } elif val.kind == SQLITE_FLOAT {
+            this.bind_float(index, val.float_val)
+        } elif val.kind == SQLITE_TEXT {
+            this.bind_string(index, val.str_val)
+        } elif val.kind == SQLITE_BLOB {
+            this.bind_blob(index, val.blob_val)
+        } else {
+            this.bind_null(index)
+        }
+    }
+
+    public fun bind_params(params: SqliteValue[]) {
+        set i: int64 = 0
+        while i < params.len() {
+            set idx: int32 = cast(i + 1, "int32")
+            this.bind_value(idx, params[i])
+            rewrite i = i + 1
+        }
+    }
+}

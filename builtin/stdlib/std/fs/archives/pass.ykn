@@ -1,0 +1,110 @@
+cfun yukistd_pass_zipcrypto_decrypt(pass_p: ptr<uint8>, pass_len: int64, data_p: ptr<uint8>, data_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_zipcrypto_encrypt(pass_p: ptr<uint8>, pass_len: int64, data_p: ptr<uint8>, data_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_aes_ctr(key_p: ptr<uint8>, key_len: int64, iv_p: ptr<uint8>, iv_len: int64, data_p: ptr<uint8>, data_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_aes_cbc_encrypt(key_p: ptr<uint8>, key_len: int64, iv_p: ptr<uint8>, iv_len: int64, data_p: ptr<uint8>, data_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_aes_cbc_decrypt(key_p: ptr<uint8>, key_len: int64, iv_p: ptr<uint8>, iv_len: int64, data_p: ptr<uint8>, data_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_winzip_aes_decrypt(pass_p: ptr<uint8>, pass_len: int64, aes_bits: int32, salt_p: ptr<uint8>, salt_len: int64, data_p: ptr<uint8>, data_len: int64, check_val: uint16, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_winzip_aes_encrypt(pass_p: ptr<uint8>, pass_len: int64, aes_bits: int32, salt_p: ptr<uint8>, salt_len: int64, data_p: ptr<uint8>, data_len: int64, out_check: ptr<uint16>, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_pass_last_error_code() -> int32
+cfun yukistd_pass_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+public struct PassError {
+    message: string
+    code: int32
+}
+
+fun panic_last_pass_error(default_msg: string, default_code: int32) {
+    set code = yukistd_pass_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_pass_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(PassError { message: msg, code: code })
+}
+
+public fun zipcrypto_decrypt(password: string, data: bytes) -> bytes {
+    if data.len() == 0 { return cast("", "bytes") }
+    set out_len: int64 = 0
+    set p = yukistd_pass_zipcrypto_decrypt(password.as_ptr(), password.len(), data.as_ptr(), data.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("zipcrypto decryption failed", 201)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun zipcrypto_encrypt(password: string, data: bytes) -> bytes {
+    if data.len() == 0 { return cast("", "bytes") }
+    set out_len: int64 = 0
+    set p = yukistd_pass_zipcrypto_encrypt(password.as_ptr(), password.len(), data.as_ptr(), data.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("zipcrypto encryption failed", 201)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun aes_ctr(key: bytes, iv: bytes, data: bytes) -> bytes {
+    if data.len() == 0 { return cast("", "bytes") }
+    set out_len: int64 = 0
+    set p = yukistd_pass_aes_ctr(key.as_ptr(), key.len(), iv.as_ptr(), iv.len(), data.as_ptr(), data.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("aes-ctr cipher failed", 203)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes {
+    set out_len: int64 = 0
+    set p = yukistd_pass_aes_cbc_encrypt(key.as_ptr(), key.len(), iv.as_ptr(), iv.len(), data.as_ptr(), data.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("aes-cbc encryption failed", 203)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes {
+    if data.len() == 0 { return cast("", "bytes") }
+    set out_len: int64 = 0
+    set p = yukistd_pass_aes_cbc_decrypt(key.as_ptr(), key.len(), iv.as_ptr(), iv.len(), data.as_ptr(), data.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("aes-cbc decryption failed", 203)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun winzip_aes_decrypt(password: string, aes_bits: int32, salt: bytes, data: bytes, check_val: uint16) -> bytes {
+    if data.len() == 0 { return cast("", "bytes") }
+    set out_len: int64 = 0
+    set p = yukistd_pass_winzip_aes_decrypt(password.as_ptr(), password.len(), aes_bits, salt.as_ptr(), salt.len(), data.as_ptr(), data.len(), check_val, ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("winzip aes decryption failed", 204)
+    }
+    if out_len == 0 { return cast("", "bytes") }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public struct WinZipAesResult {
+    data: bytes
+    check_value: uint16
+}
+
+public fun winzip_aes_encrypt(password: string, aes_bits: int32, salt: bytes, data: bytes) -> WinZipAesResult {
+    set out_len: int64 = 0
+    set raw_check: uint16 = 0
+    set p = yukistd_pass_winzip_aes_encrypt(password.as_ptr(), password.len(), aes_bits, salt.as_ptr(), salt.len(), data.as_ptr(), data.len(), ptr_of(raw_check), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_pass_error("winzip aes encryption failed", 203)
+    }
+    set res_data: bytes = if out_len == 0 { cast("", "bytes") } else { from_raw_parts(p, out_len, out_len) }
+    return WinZipAesResult {
+        data: res_data,
+        check_value: raw_check,
+    }
+}

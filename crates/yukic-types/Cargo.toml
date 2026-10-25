@@ -1,0 +1,17 @@
+[package]
+name = "yukic-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-span = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-diagnostics = { workspace = true }
+yukic-target = { workspace = true }
+indexmap = { workspace = true }

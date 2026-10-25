@@ -1,0 +1,215 @@
+load ..strings: split, trim, index_of, slice
+load ..simpleurl: parse_query, QueryParam
+load .errors: HttpError
+load .http_types: HttpHeaders, HttpRequest, HttpResponse, status_reason
+load .tcp: TcpStream
+load .tls: TlsStream
+
+// decl core/strings.rs start
+
+cfun yukistd_str_parse_i64(p: ptr<uint8>, len: int64, out_val: ptr<int64>) -> bool
+
+// decl end
+
+fun parse_hex_i64(s: string) -> int64 {
+    set clean = trim(s)
+    set val: int64 = 0
+    for i in 0..clean.len() {
+        set c: uint8 = cast(clean[i], "uint8")
+        set digit: int64 = 0
+        if c >= 48 && c <= 57 {
+            rewrite digit = cast(c - 48, "int64")
+        } else {
+            if c >= 65 && c <= 70 {
+                rewrite digit = cast(c - 55, "int64")
+            } else {
+                if c >= 97 && c <= 102 {
+                    rewrite digit = cast(c - 87, "int64")
+                } else {
+                    break
+                }
+            }
+        }
+        rewrite val = (val * 16) + digit
+    }
+    return val
+}
+
+public fun format_request(req: HttpRequest, host: string = "") -> string {
+    set res = req.method + " " + req.path + " HTTP/1.1\r\n"
+    if host.len() > 0 && !req.headers.has("Host") {
+        req.headers.set("Host", host)
+    }
+    if req.body.len() > 0 && !req.headers.has("Content-Length") {
+        req.headers.set("Content-Length", cast(req.body.len(), "string"))
+    }
+    rewrite res = res + req.headers.format() + "\r\n" + req.body
+    return res
+}
+
+public fun format_response(res: HttpResponse) -> string {
+    set head = "HTTP/1.1 " + cast(res.status, "string") + " " + status_reason(res.status) + "\r\n"
+    if !res.headers.has("Content-Length") {
+        res.headers.set("Content-Length", cast(res.body.len(), "string"))
+    }
+    return head + res.headers.format() + "\r\n" + res.body
+}
+
+fun parse_headers_and_body(raw_headers: string) -> HttpHeaders {
+    set headers = init HttpHeaders()
+    set lines = split(raw_headers, "\r\n")
+    for i in 1..lines.len() {
+        set line = trim(lines[i])
+        if line.len() == 0 { continue }
+        set sep = index_of(line, ":")
+        if sep > 0 {
+            set k = trim(slice(line, 0, sep))
+            set v = trim(slice(line, sep + 1, line.len()))
+            headers.set(k, v)
+        }
+    }
+    return headers
+}
+
+public fun parse_request_str(raw: string) -> HttpRequest {
+    set header_end = index_of(raw, "\r\n\r\n")
+    if header_end < 0 {
+        panic(HttpError { message: "incomplete http request header", code: 400 })
+    }
+    set head_part = slice(raw, 0, header_end)
+    set body_part = slice(raw, header_end + 4, raw.len())
+    set first_line_end = index_of(head_part, "\r\n")
+    set first_line: string = if first_line_end > 0 { slice(head_part, 0, first_line_end) } else { head_part }
+    set parts = split(first_line, " ")
+    if parts.len() < 2 {
+        panic(HttpError { message: "invalid http request line: " + first_line, code: 400 })
+    }
+    set method = trim(parts[0])
+    set raw_path = trim(parts[1])
+    set q_mark = index_of(raw_path, "?")
+    set path: string = if q_mark >= 0 { slice(raw_path, 0, q_mark) } else { raw_path }
+    set query_params: QueryParam[] = []
+    if q_mark >= 0 {
+        rewrite query_params = parse_query(slice(raw_path, q_mark + 1, raw_path.len()))
+    }
+    set headers = parse_headers_and_body(head_part)
+    return init HttpRequest(method, path, headers, body_part, query_params)
+}
+
+public fun parse_response_str(raw: string) -> HttpResponse {
+    set header_end = index_of(raw, "\r\n\r\n")
+    if header_end < 0 {
+        panic(HttpError { message: "incomplete http response header", code: 502 })
+    }
+    set head_part = slice(raw, 0, header_end)
+    set body_part = slice(raw, header_end + 4, raw.len())
+    set first_line_end = index_of(head_part, "\r\n")
+    set first_line: string = if first_line_end > 0 { slice(head_part, 0, first_line_end) } else { head_part }
+    set parts = split(first_line, " ")
+    if parts.len() < 2 {
+        panic(HttpError { message: "invalid http response line: " + first_line, code: 502 })
+    }
+    set code_val: int64 = 0
+    set ok = yukistd_str_parse_i64(parts[1].as_ptr(), parts[1].len(), ptr_of(code_val))
+    if !ok {
+        panic(HttpError { message: "invalid http status code: " + parts[1], code: 502 })
+    }
+    set headers = parse_headers_and_body(head_part)
+    return init HttpResponse(cast(code_val, "int32"), headers, body_part)
+}
+
+fun read_content_length_body_tcp(ref stream: TcpStream, headers: HttpHeaders, initial_body: string) -> string {
+    set cl_str = headers.get("Content-Length")
+    if cl_str == null { return initial_body }
+    set cl_non_null = cl_str ?? ""
+    set cl_val: int64 = 0
+    set ok = yukistd_str_parse_i64(cl_non_null.as_ptr(), cl_non_null.len(), ptr_of(cl_val))
+    if !ok || cl_val <= 0 { return initial_body }
+    set cur = initial_body
+    while cur.len() < cl_val {
+        set chunk = stream.read(65536)
+        if chunk.len() == 0 { break }
+        rewrite cur = cur + chunk
+    }
+    return cur
+}
+
+fun read_content_length_body_tls(ref stream: TlsStream, headers: HttpHeaders, initial_body: string) -> string {
+    set cl_str = headers.get("Content-Length")
+    if cl_str == null { return initial_body }
+    set cl_non_null = cl_str ?? ""
+    set cl_val: int64 = 0
+    set ok = yukistd_str_parse_i64(cl_non_null.as_ptr(), cl_non_null.len(), ptr_of(cl_val))
+    if !ok || cl_val <= 0 { return initial_body }
+    set cur = initial_body
+    while cur.len() < cl_val {
+        set chunk = stream.read(65536)
+        if chunk.len() == 0 { break }
+        rewrite cur = cur + chunk
+    }
+    return cur
+}
+
+public fun parse_request(ref stream: TcpStream) -> HttpRequest? {
+    set buf = ""
+    while index_of(buf, "\r\n\r\n") < 0 {
+        set chunk = stream.read(4096)
+        if chunk.len() == 0 {
+            if buf.len() == 0 { return null }
+            break
+        }
+        rewrite buf = buf + chunk
+    }
+    set req = parse_request_str(buf)
+    set complete_body = read_content_length_body_tcp(ref stream, req.headers, req.body)
+    rewrite req.body = complete_body
+    return req
+}
+
+public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest? {
+    set buf = ""
+    while index_of(buf, "\r\n\r\n") < 0 {
+        set chunk = stream.read(4096)
+        if chunk.len() == 0 {
+            if buf.len() == 0 { return null }
+            break
+        }
+        rewrite buf = buf + chunk
+    }
+    set req = parse_request_str(buf)
+    set complete_body = read_content_length_body_tls(ref stream, req.headers, req.body)
+    rewrite req.body = complete_body
+    return req
+}
+
+public fun parse_response(ref stream: TcpStream) -> HttpResponse? {
+    set buf = ""
+    while index_of(buf, "\r\n\r\n") < 0 {
+        set chunk = stream.read(4096)
+        if chunk.len() == 0 {
+            if buf.len() == 0 { return null }
+            break
+        }
+        rewrite buf = buf + chunk
+    }
+    set res = parse_response_str(buf)
+    set complete_body = read_content_length_body_tcp(ref stream, res.headers, res.body)
+    rewrite res.body = complete_body
+    return res
+}
+
+public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse? {
+    set buf = ""
+    while index_of(buf, "\r\n\r\n") < 0 {
+        set chunk = stream.read(4096)
+        if chunk.len() == 0 {
+            if buf.len() == 0 { return null }
+            break
+        }
+        rewrite buf = buf + chunk
+    }
+    set res = parse_response_str(buf)
+    set complete_body = read_content_length_body_tls(ref stream, res.headers, res.body)
+    rewrite res.body = complete_body
+    return res
+}

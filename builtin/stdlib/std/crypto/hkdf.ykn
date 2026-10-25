@@ -1,0 +1,46 @@
+load .common: CryptoError, zero_bytes
+load .hmac: hmac_sha256
+
+public fun hkdf_extract(ref salt: bytes, ref ikm: bytes) -> bytes {
+    if salt.len() == 0 {
+        set empty_salt: bytes = zero_bytes(32)
+        return hmac_sha256(ref empty_salt, ref ikm)
+    }
+    return hmac_sha256(ref salt, ref ikm)
+}
+
+public fun hkdf_expand(ref prk: bytes, ref info: bytes, length: int64) -> bytes {
+    if length < 0 {
+        panic(CryptoError { message: "hkdf length cannot be negative", code: 61 })
+    }
+    if length == 0 { return cast("", "bytes") }
+    if length > 255 * 32 {
+        panic(CryptoError { message: "hkdf requested length exceeds maximum allowed", code: 62 })
+    }
+    set n: int64 = (length + 31) / 32
+    set okm: uint8[] = []
+    set t: bytes = cast("", "bytes")
+    set i: int64 = 1
+    while i <= n {
+        set buf: uint8[] = []
+        for k in 0..t.len() {
+            buf.push(t[k])
+        }
+        for k in 0..info.len() {
+            buf.push(info[k])
+        }
+        buf.push(cast(i, "uint8"))
+        set block_in: bytes = from_raw_parts(buf.as_ptr(), buf.len(), buf.len())
+        rewrite t = hmac_sha256(ref prk, ref block_in)
+        for k in 0..t.len() {
+            okm.push(t[k])
+        }
+        rewrite i = i + 1
+    }
+    return from_raw_parts(okm.as_ptr(), length, length)
+}
+
+public fun hkdf(ref salt: bytes, ref ikm: bytes, ref info: bytes, length: int64) -> bytes {
+    set prk: bytes = hkdf_extract(ref salt, ref ikm)
+    return hkdf_expand(ref prk, ref info, length)
+}

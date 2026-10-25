@@ -1,0 +1,141 @@
+load .constants: SQLITE_NULL, SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT, SQLITE_BLOB
+
+public class SqliteValue {
+    public kind: int32
+    public int_val: int64
+    public float_val: float64
+    public str_val: string
+    public blob_val: uint8[]
+
+    public fun init() {
+        rewrite this.kind = SQLITE_NULL
+        rewrite this.int_val = 0
+        rewrite this.float_val = 0.0
+        rewrite this.str_val = ""
+        rewrite this.blob_val = []
+    }
+
+    public fun is_null() -> bool { return this.kind == SQLITE_NULL }
+    public fun is_int() -> bool { return this.kind == SQLITE_INTEGER }
+    public fun is_float() -> bool { return this.kind == SQLITE_FLOAT }
+    public fun is_number() -> bool { return this.kind == SQLITE_INTEGER || this.kind == SQLITE_FLOAT }
+    public fun is_string() -> bool { return this.kind == SQLITE_TEXT }
+    public fun is_text() -> bool { return this.kind == SQLITE_TEXT }
+    public fun is_blob() -> bool { return this.kind == SQLITE_BLOB }
+
+    public fun as_int() -> int64 {
+        return this.as_int_or(0)
+    }
+
+    public fun as_int_or(fallback: int64) -> int64 {
+        if this.kind == SQLITE_INTEGER {
+            return this.int_val
+        }
+        if this.kind == SQLITE_FLOAT {
+            return cast(this.float_val, "int64")
+        }
+        return fallback
+    }
+
+    public fun as_float() -> float64 {
+        return this.as_float_or(0.0)
+    }
+
+    public fun as_float_or(fallback: float64) -> float64 {
+        if this.kind == SQLITE_FLOAT {
+            return this.float_val
+        }
+        if this.kind == SQLITE_INTEGER {
+            return cast(this.int_val, "float64")
+        }
+        return fallback
+    }
+
+    public fun as_string() -> string {
+        return this.as_string_or("")
+    }
+
+    public fun as_string_or(fallback: string) -> string {
+        if this.kind == SQLITE_TEXT {
+            return this.str_val
+        }
+        if this.kind == SQLITE_INTEGER {
+            return cast(this.int_val, "string")
+        }
+        if this.kind == SQLITE_FLOAT {
+            return cast(this.float_val, "string")
+        }
+        return fallback
+    }
+
+    public fun as_bool() -> bool {
+        return this.as_bool_or(false)
+    }
+
+    public fun as_bool_or(fallback: bool) -> bool {
+        if this.kind == SQLITE_INTEGER {
+            return this.int_val != 0
+        }
+        if this.kind == SQLITE_FLOAT {
+            return this.float_val != 0.0
+        }
+        if this.kind == SQLITE_TEXT {
+            return this.str_val == "true" || this.str_val == "1"
+        }
+        if this.kind == SQLITE_NULL {
+            return false
+        }
+        return fallback
+    }
+
+    public fun as_blob() -> uint8[] {
+        if this.kind == SQLITE_BLOB {
+            return this.blob_val
+        }
+        set empty: uint8[] = []
+        return empty
+    }
+}
+
+public fun sqlite_null() -> SqliteValue {
+    set v = init SqliteValue()
+    rewrite v.kind = SQLITE_NULL
+    return v
+}
+
+public fun sqlite_int(val: int64) -> SqliteValue {
+    set v = init SqliteValue()
+    rewrite v.kind = SQLITE_INTEGER
+    rewrite v.int_val = val
+    return v
+}
+
+public fun sqlite_float(val: float64) -> SqliteValue {
+    set v = init SqliteValue()
+    rewrite v.kind = SQLITE_FLOAT
+    rewrite v.float_val = val
+    return v
+}
+
+public fun sqlite_string(val: string) -> SqliteValue {
+    set v = init SqliteValue()
+    rewrite v.kind = SQLITE_TEXT
+    rewrite v.str_val = val
+    return v
+}
+
+public fun sqlite_text(val: string) -> SqliteValue {
+    return sqlite_string(val)
+}
+
+public fun sqlite_blob(val: uint8[]) -> SqliteValue {
+    set v = init SqliteValue()
+    rewrite v.kind = SQLITE_BLOB
+    rewrite v.blob_val = val
+    return v
+}
+
+public fun sqlite_bool(val: bool) -> SqliteValue {
+    set num: int64 = if val { 1 } else { 0 }
+    return sqlite_int(num)
+}

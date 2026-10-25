@@ -1,0 +1,154 @@
+load .constants: SQLITE_OK
+load .bridge: yukistd_sqlite_open, yukistd_sqlite_close, yukistd_sqlite_prepare, yukistd_sqlite_changes, yukistd_sqlite_last_insert_rowid, yukistd_sqlite_errmsg, yukistd_sqlite_errcode
+load .error: SqliteError
+load .value: SqliteValue
+load .row: SqliteRow
+load .statement: SqliteStatement
+
+fun panic_conn_error(db: ptr<void>, default_msg: string) {
+    set code = yukistd_sqlite_errcode(db)
+    set out_len: int64 = 0
+    set p = yukistd_sqlite_errmsg(db, ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    panic(SqliteError { message: msg, code: code })
+}
+
+public class SqliteConnection {
+    public handle: ptr<void>
+    public path: string
+    public is_closed: bool
+
+    public fun init(handle: ptr<void>, path: string) {
+        rewrite this.handle = handle
+        rewrite this.path = path
+        rewrite this.is_closed = false
+    }
+
+    public fun prepare(sql: string) -> SqliteStatement {
+        if this.is_closed || this.handle == null {
+            panic(SqliteError { message: "database connection is closed", code: 1 })
+        }
+        set stmt_p: ptr<void> = null
+        set rc = yukistd_sqlite_prepare(this.handle, sql.as_ptr(), sql.len(), ptr_of(stmt_p))
+        if rc != SQLITE_OK || stmt_p == null {
+            panic_conn_error(this.handle, "failed to prepare SQL: " + sql)
+        }
+        return init SqliteStatement(this.handle, stmt_p)
+    }
+
+    public fun execute(sql: string) -> int64 {
+        set stmt = this.prepare(sql)
+        while stmt.step() {
+            space
+        }
+        stmt.finalize()
+        return this.changes()
+    }
+
+    public fun execute_params(sql: string, params: SqliteValue[]) -> int64 {
+        set stmt = this.prepare(sql)
+        stmt.bind_params(params)
+        while stmt.step() {
+            space
+        }
+        stmt.finalize()
+        return this.changes()
+    }
+
+    public fun query(sql: string) -> SqliteRow[] {
+        set stmt = this.prepare(sql)
+        set rows: SqliteRow[] = []
+        while stmt.step() {
+            rows.push(stmt.current_row())
+        }
+        stmt.finalize()
+        return rows
+    }
+
+    public fun query_params(sql: string, params: SqliteValue[]) -> SqliteRow[] {
+        set stmt = this.prepare(sql)
+        stmt.bind_params(params)
+        set rows: SqliteRow[] = []
+        while stmt.step() {
+            rows.push(stmt.current_row())
+        }
+        stmt.finalize()
+        return rows
+    }
+
+    public fun query_row(sql: string) -> SqliteRow {
+        set rows = this.query(sql)
+        if rows.len() == 0 {
+            panic(SqliteError { message: "query returned no rows: " + sql, code: 101 })
+        }
+        return rows[0]
+    }
+
+    public fun query_row_opt(sql: string) -> SqliteRow? {
+        set rows = this.query(sql)
+        if rows.len() == 0 {
+            return null
+        }
+        return rows[0]
+    }
+
+    public fun changes() -> int64 {
+        if this.is_closed || this.handle == null {
+            return 0
+        }
+        return yukistd_sqlite_changes(this.handle)
+    }
+
+    public fun last_insert_rowid() -> int64 {
+        if this.is_closed || this.handle == null {
+            return 0
+        }
+        return yukistd_sqlite_last_insert_rowid(this.handle)
+    }
+
+    public fun begin() {
+        set _ = this.execute("BEGIN")
+    }
+
+    public fun commit() {
+        set _ = this.execute("COMMIT")
+    }
+
+    public fun rollback() {
+        set _ = this.execute("ROLLBACK")
+    }
+
+    public fun close() {
+        if !this.is_closed && this.handle != null {
+            set _ = yukistd_sqlite_close(this.handle)
+            rewrite this.is_closed = true
+        }
+    }
+}
+
+public fun open_connection(path: string, flags: int32) -> SqliteConnection {
+    set db_p: ptr<void> = null
+    set rc = yukistd_sqlite_open(path.as_ptr(), path.len(), flags, ptr_of(db_p))
+    if rc != SQLITE_OK || db_p == null {
+        if db_p != null {
+            panic_conn_error(db_p, "failed to open sqlite database: " + path)
+        }
+        panic(SqliteError { message: "failed to open sqlite database: " + path, code: rc })
+    }
+    return init SqliteConnection(db_p, path)
+}
+
+public fun try_open_connection(path: string, flags: int32) -> SqliteConnection? {
+    set db_p: ptr<void> = null
+    set rc = yukistd_sqlite_open(path.as_ptr(), path.len(), flags, ptr_of(db_p))
+    if rc != SQLITE_OK || db_p == null {
+        if db_p != null {
+            set _ = yukistd_sqlite_close(db_p)
+        }
+        return null
+    }
+    return init SqliteConnection(db_p, path)
+}

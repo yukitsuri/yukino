@@ -1,0 +1,54 @@
+cfun yukistd_set_new() -> ptr<uint8>
+cfun yukistd_set_free(s: ptr<uint8>)
+cfun yukistd_set_add(s: ptr<uint8>, v_ptr: ptr<uint8>, v_len: int64) -> bool
+cfun yukistd_set_has(s: ptr<uint8>, v_ptr: ptr<uint8>, v_len: int64) -> bool
+cfun yukistd_set_del(s: ptr<uint8>, v_ptr: ptr<uint8>, v_len: int64) -> bool
+cfun yukistd_set_len(s: ptr<uint8>) -> int64
+cfun yukistd_set_clear(s: ptr<uint8>)
+cfun yukistd_set_add_i64(s: ptr<uint8>, val: int64) -> bool
+cfun yukistd_set_has_i64(s: ptr<uint8>, val: int64) -> bool
+cfun yukistd_set_del_i64(s: ptr<uint8>, val: int64) -> bool
+
+public class HashSet<T> {
+    handle: ptr<uint8>
+
+    public fun init() {
+        rewrite this.handle = yukistd_set_new()
+    }
+
+    public fun add(item: string) -> bool {
+        return yukistd_set_add(this.handle, item.as_ptr(), item.len())
+    }
+
+    public fun contains(item: string) -> bool {
+        return yukistd_set_has(this.handle, item.as_ptr(), item.len())
+    }
+
+    public fun remove(item: string) -> bool {
+        return yukistd_set_del(this.handle, item.as_ptr(), item.len())
+    }
+
+    public fun len() -> int64 {
+        return yukistd_set_len(this.handle)
+    }
+
+    public fun is_empty() -> bool {
+        return this.len() == 0
+    }
+
+    public fun clear() {
+        yukistd_set_clear(this.handle)
+    }
+
+    public fun add_i64(val: int64) -> bool {
+        return yukistd_set_add_i64(this.handle, val)
+    }
+
+    public fun contains_i64(val: int64) -> bool {
+        return yukistd_set_has_i64(this.handle, val)
+    }
+
+    public fun remove_i64(val: int64) -> bool {
+        return yukistd_set_del_i64(this.handle, val)
+    }
+}

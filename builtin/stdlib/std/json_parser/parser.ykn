@@ -1,0 +1,262 @@
+load ..strings: slice
+load .tokens: *
+load .value: *
+load .scanner: JsonScanner
+
+public struct JsonParseOptions {
+    allow_comments: bool
+    allow_trailing_commas: bool
+}
+
+public fun json_options_strict() -> JsonParseOptions {
+    return JsonParseOptions {
+        allow_comments: false,
+        allow_trailing_commas: false,
+    }
+}
+
+public fun json_options_jsonc() -> JsonParseOptions {
+    return JsonParseOptions {
+        allow_comments: true,
+        allow_trailing_commas: true,
+    }
+}
+
+public class JsonParser {
+    public scanner: JsonScanner
+    public options: JsonParseOptions
+    public curr_tok: int32
+    public has_error: bool
+    public error: JsonError
+
+    public fun init(text: string, options: JsonParseOptions) {
+        rewrite this.scanner = init JsonScanner(text)
+        rewrite this.options = options
+        rewrite this.curr_tok = TOK_EOF
+        rewrite this.has_error = false
+        rewrite this.error = JsonError {
+            message: "",
+            line: 0,
+            column: 0,
+            offset: 0,
+        }
+    }
+
+    public fun record_error(msg: string) {
+        if !this.has_error {
+            rewrite this.has_error = true
+            rewrite this.error = JsonError {
+                message: msg,
+                line: this.scanner.token_line,
+                column: this.scanner.token_col,
+                offset: this.scanner.token_offset,
+            }
+        }
+    }
+
+    public fun next() {
+        rewrite this.curr_tok = this.scanner.scan()
+        while true {
+            if this.curr_tok == TOK_LINE_COMMENT || this.curr_tok == TOK_BLOCK_COMMENT {
+                if !this.options.allow_comments {
+                    this.record_error("comments are not allowed in standard JSON")
+                    break
+                }
+                rewrite this.curr_tok = this.scanner.scan()
+            } else {
+                break
+            }
+        }
+
+        if this.curr_tok == TOK_ERROR {
+            this.record_error(this.scanner.error_msg)
+        }
+    }
+
+    public fun parse_value() -> JsonValue {
+        if this.curr_tok == TOK_NULL {
+            this.next()
+            return json_null()
+        }
+        if this.curr_tok == TOK_TRUE {
+            this.next()
+            return json_bool(true)
+        }
+        if this.curr_tok == TOK_FALSE {
+            this.next()
+            return json_bool(false)
+        }
+        if this.curr_tok == TOK_NUMBER {
+            set n: float64 = this.scanner.token_num
+            this.next()
+            return json_number(n)
+        }
+        if this.curr_tok == TOK_STRING {
+            set s: string = this.scanner.token_str.cp()
+            this.next()
+            return json_string(s)
+        }
+        if this.curr_tok == TOK_LBRACKET {
+            return this.parse_array()
+        }
+        if this.curr_tok == TOK_LBRACE {
+            return this.parse_object()
+        }
+
+        this.record_error("expected JSON value")
+        return json_null()
+    }
+
+    fun parse_array() -> JsonValue {
+        this.next()
+        set items: JsonValue[] = []
+
+        if this.curr_tok == TOK_RBRACKET {
+            this.next()
+            return json_array(items)
+        }
+
+        while !this.has_error {
+            set val = this.parse_value()
+            items.push(val)
+
+            if this.curr_tok == TOK_COMMA {
+                this.next()
+                if this.curr_tok == TOK_RBRACKET {
+                    if !this.options.allow_trailing_commas {
+                        this.record_error("trailing comma is not allowed in standard JSON")
+                    }
+                    this.next()
+                    break
+                }
+            } elif this.curr_tok == TOK_RBRACKET {
+                this.next()
+                break
+            } else {
+                this.record_error("expected ',' or ']' after array element")
+                break
+            }
+        }
+
+        return json_array(items)
+    }
+
+    fun parse_object() -> JsonValue {
+        this.next()
+        set obj = json_object()
+
+        if this.curr_tok == TOK_RBRACE {
+            this.next()
+            return obj
+        }
+
+        while !this.has_error {
+            if this.curr_tok != TOK_STRING {
+                this.record_error("expected string property name in object")
+                break
+            }
+
+            set key: string = this.scanner.token_str.cp()
+            this.next()
+
+            if this.curr_tok != TOK_COLON {
+                this.record_error("expected ':' after property name")
+                break
+            }
+            this.next()
+
+            set val = this.parse_value()
+            obj.set(key, val)
+
+            if this.curr_tok == TOK_COMMA {
+                this.next()
+                if this.curr_tok == TOK_RBRACE {
+                    if !this.options.allow_trailing_commas {
+                        this.record_error("trailing comma is not allowed in standard JSON")
+                    }
+                    this.next()
+                    break
+                }
+            } elif this.curr_tok == TOK_RBRACE {
+                this.next()
+                break
+            } else {
+                this.record_error("expected ',' or '}' after object property")
+                break
+            }
+        }
+
+        return obj
+    }
+
+    public fun parse_document() -> JsonValue {
+        this.next()
+        set root = this.parse_value()
+        if !this.has_error && this.curr_tok != TOK_EOF {
+            this.record_error("unexpected trailing content after JSON value")
+        }
+        return root
+    }
+}
+
+public fun strip_comments(text: string) -> string {
+    set len = text.len()
+    set pos: int64 = 0
+    set res: string = ""
+    set chunk_start: int64 = 0
+
+    while pos < len {
+        set b = text[pos]
+
+        if b == 34 {
+            rewrite pos = pos + 1
+            while pos < len {
+                set ch = text[pos]
+                rewrite pos = pos + 1
+                if ch == 92 && pos < len {
+                    rewrite pos = pos + 1
+                } elif ch == 34 {
+                    break
+                }
+            }
+        } elif b == 47 && pos + 1 < len {
+            set next_b = text[pos + 1]
+            if next_b == 47 {
+                rewrite res = res + slice(text, chunk_start, pos)
+                rewrite pos = pos + 2
+                while pos < len && text[pos] != 10 {
+                    rewrite res = res + " "
+                    rewrite pos = pos + 1
+                }
+                rewrite chunk_start = pos
+            } elif next_b == 42 {
+                rewrite res = res + slice(text, chunk_start, pos)
+                rewrite pos = pos + 2
+                while pos + 1 < len {
+                    if text[pos] == 10 {
+                        rewrite res = res + "\n"
+                        rewrite pos = pos + 1
+                    } elif text[pos] == 42 && text[pos + 1] == 47 {
+                        rewrite pos = pos + 2
+                        rewrite res = res + "  "
+                        break
+                    } else {
+                        rewrite res = res + " "
+                        rewrite pos = pos + 1
+                    }
+                }
+                rewrite chunk_start = pos
+            } else {
+                rewrite pos = pos + 1
+            }
+        } else {
+            rewrite pos = pos + 1
+        }
+    }
+
+    if chunk_start < len {
+        rewrite res = res + slice(text, chunk_start, len)
+    }
+
+    return res
+}

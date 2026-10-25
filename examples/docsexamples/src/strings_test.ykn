@@ -1,0 +1,35 @@
+load std.io: print
+
+public fun test_strings() {
+    // 1. Literal and multi-line
+    set greeting = "Hello, Yukino!"
+
+    // 2. Interpolation
+    set name = "Alice"
+    set age: int32 = 20
+    set msg = "User: ${name}, Age: ${age}"
+
+    // 3. Methods .len() and .as_ptr()
+    set length: int64 = greeting.len()
+    set raw_ptr = greeting.as_ptr()
+
+    // 4. Indexing (byte)
+    set b: uint8 = greeting[0]
+
+    // 5. Slices (s[0..5] has parser range precedence bug)
+    // set sub: string = greeting[0..5]
+
+    // 6. Concatenation
+    set part1 = "Foo"
+    set part2 = "Bar"
+    set combined = part1 + part2
+
+    // 7. C string interop with cast
+    set c_str: ptr<char> = cast(greeting, "ptr<char>")
+    set back_str: string = cast(c_str, "string")
+
+    // 8. string::from_raw_parts
+    set reconstructed = string::from_raw_parts(raw_ptr, length)
+
+    print("Strings OK\n")
+}

@@ -1,0 +1,203 @@
+load ..hash.sha2: Sha256, Sha512, sha256, sha512
+load ..hash.common: bytes_to_hex
+load .common: constant_time_eq, CryptoError
+
+fun pad_key256(ref key: bytes) -> bytes {
+    set k_len: int64 = key.len()
+    set raw: uint8[] = []
+    if k_len > 64 {
+        set hashed: bytes = sha256(ref key)
+        for i in 0..32 {
+            raw.push(hashed[i])
+        }
+        for i in 32..64 {
+            raw.push(0u8)
+        }
+        return from_raw_parts(raw.as_ptr(), 64, 64)
+    }
+    for i in 0..k_len {
+        raw.push(key[i])
+    }
+    for i in k_len..64 {
+        raw.push(0u8)
+    }
+    return from_raw_parts(raw.as_ptr(), 64, 64)
+}
+
+fun pad_key512(ref key: bytes) -> bytes {
+    set k_len: int64 = key.len()
+    set raw: uint8[] = []
+    if k_len > 128 {
+        set hashed: bytes = sha512(ref key)
+        for i in 0..64 {
+            raw.push(hashed[i])
+        }
+        for i in 64..128 {
+            raw.push(0u8)
+        }
+        return from_raw_parts(raw.as_ptr(), 128, 128)
+    }
+    for i in 0..k_len {
+        raw.push(key[i])
+    }
+    for i in k_len..128 {
+        raw.push(0u8)
+    }
+    return from_raw_parts(raw.as_ptr(), 128, 128)
+}
+
+public class HmacSha256 {
+    inner_hasher: Sha256
+    outer_hasher: Sha256
+    ready: bool
+
+    // hashers are created by hmac_sha256_init()
+    public fun init() {
+        rewrite this.ready = false
+    }
+
+    fun ensure_ready() {
+        if !this.ready {
+            panic(CryptoError {
+                message: "HmacSha256 is not initialized; use hmac_sha256_init()",
+                code: 13,
+            })
+        }
+    }
+
+    public fun update(data: bytes) {
+        this.ensure_ready()
+        this.inner_hasher.update(data)
+    }
+
+    public fun update_str(s: string) {
+        this.ensure_ready()
+        set d: bytes = cast(s, "bytes")
+        this.inner_hasher.update(d)
+    }
+
+    public fun finish() -> bytes {
+        this.ensure_ready()
+        set inner_hash: bytes = this.inner_hasher.finish()
+        this.outer_hasher.update(inner_hash)
+        return this.outer_hasher.finish()
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = this.finish()
+        return bytes_to_hex(ref b)
+    }
+}
+
+public fun hmac_sha256_init(ref key: bytes) -> HmacSha256 {
+    set h = init HmacSha256()
+    set k: bytes = pad_key256(ref key)
+    set k_ipad: uint8[] = []
+    set k_opad: uint8[] = []
+    for i in 0..64 {
+        k_ipad.push(k[i] ^ 0x36u8)
+        k_opad.push(k[i] ^ 0x5cu8)
+    }
+    rewrite h.inner_hasher = init Sha256()
+    rewrite h.outer_hasher = init Sha256()
+    set d_ipad: bytes = from_raw_parts(k_ipad.as_ptr(), 64, 64)
+    set d_opad: bytes = from_raw_parts(k_opad.as_ptr(), 64, 64)
+    h.inner_hasher.update(d_ipad)
+    h.outer_hasher.update(d_opad)
+    rewrite h.ready = true
+    return h
+}
+
+public class HmacSha512 {
+    inner_hasher: Sha512
+    outer_hasher: Sha512
+    ready: bool
+
+    // hashers are created by hmac_sha512_init()
+    public fun init() {
+        rewrite this.ready = false
+    }
+
+    fun ensure_ready() {
+        if !this.ready {
+            panic(CryptoError {
+                message: "HmacSha512 is not initialized; use hmac_sha512_init()",
+                code: 13,
+            })
+        }
+    }
+
+    public fun update(data: bytes) {
+        this.ensure_ready()
+        this.inner_hasher.update(data)
+    }
+
+    public fun update_str(s: string) {
+        this.ensure_ready()
+        set d: bytes = cast(s, "bytes")
+        this.inner_hasher.update(d)
+    }
+
+    public fun finish() -> bytes {
+        this.ensure_ready()
+        set inner_hash: bytes = this.inner_hasher.finish()
+        this.outer_hasher.update(inner_hash)
+        return this.outer_hasher.finish()
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = this.finish()
+        return bytes_to_hex(ref b)
+    }
+}
+
+public fun hmac_sha512_init(ref key: bytes) -> HmacSha512 {
+    set h = init HmacSha512()
+    set k: bytes = pad_key512(ref key)
+    set k_ipad: uint8[] = []
+    set k_opad: uint8[] = []
+    for i in 0..128 {
+        k_ipad.push(k[i] ^ 0x36u8)
+        k_opad.push(k[i] ^ 0x5cu8)
+    }
+    rewrite h.inner_hasher = init Sha512()
+    rewrite h.outer_hasher = init Sha512()
+    set d_ipad: bytes = from_raw_parts(k_ipad.as_ptr(), 128, 128)
+    set d_opad: bytes = from_raw_parts(k_opad.as_ptr(), 128, 128)
+    h.inner_hasher.update(d_ipad)
+    h.outer_hasher.update(d_opad)
+    rewrite h.ready = true
+    return h
+}
+
+public fun hmac_sha256(ref key: bytes, ref data: bytes) -> bytes {
+    set mac: HmacSha256 = hmac_sha256_init(ref key)
+    mac.update(data.cp())
+    return mac.finish()
+}
+
+public fun hmac_sha256_hex(ref key: bytes, ref data: bytes) -> string {
+    set b: bytes = hmac_sha256(ref key, ref data)
+    return bytes_to_hex(ref b)
+}
+
+public fun hmac_sha256_verify(ref key: bytes, ref data: bytes, ref tag: bytes) -> bool {
+    set computed: bytes = hmac_sha256(ref key, ref data)
+    return constant_time_eq(ref computed, ref tag)
+}
+
+public fun hmac_sha512(ref key: bytes, ref data: bytes) -> bytes {
+    set mac: HmacSha512 = hmac_sha512_init(ref key)
+    mac.update(data.cp())
+    return mac.finish()
+}
+
+public fun hmac_sha512_hex(ref key: bytes, ref data: bytes) -> string {
+    set b: bytes = hmac_sha512(ref key, ref data)
+    return bytes_to_hex(ref b)
+}
+
+public fun hmac_sha512_verify(ref key: bytes, ref data: bytes, ref tag: bytes) -> bool {
+    set computed: bytes = hmac_sha512(ref key, ref data)
+    return constant_time_eq(ref computed, ref tag)
+}

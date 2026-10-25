@@ -1,0 +1,173 @@
+public fun ansi_fg_rgb(r: int32, g: int32, b: int32) -> string {
+    return "\x1b[38;2;" + cast(r, "string") + ";" + cast(g, "string") + ";" + cast(b, "string") + "m"
+}
+
+public fun ansi_bg_rgb(r: int32, g: int32, b: int32) -> string {
+    return "\x1b[48;2;" + cast(r, "string") + ";" + cast(g, "string") + ";" + cast(b, "string") + "m"
+}
+
+public fun ansi_fg_256(idx: int32) -> string {
+    return "\x1b[38;5;" + cast(idx, "string") + "m"
+}
+
+public fun ansi_bg_256(idx: int32) -> string {
+    return "\x1b[48;5;" + cast(idx, "string") + "m"
+}
+
+public fun ansi_fg_color(name: string) -> string {
+    if name == "black" { return "\x1b[30m" }
+    if name == "red" { return "\x1b[31m" }
+    if name == "green" { return "\x1b[32m" }
+    if name == "yellow" { return "\x1b[33m" }
+    if name == "blue" { return "\x1b[34m" }
+    if name == "magenta" { return "\x1b[35m" }
+    if name == "cyan" { return "\x1b[36m" }
+    if name == "white" { return "\x1b[37m" }
+    if name == "bright_black" || name == "gray" { return "\x1b[90m" }
+    if name == "bright_red" { return "\x1b[91m" }
+    if name == "bright_green" { return "\x1b[92m" }
+    if name == "bright_yellow" { return "\x1b[93m" }
+    if name == "bright_blue" { return "\x1b[94m" }
+    if name == "bright_magenta" { return "\x1b[95m" }
+    if name == "bright_cyan" { return "\x1b[96m" }
+    if name == "bright_white" { return "\x1b[97m" }
+    return ""
+}
+
+public fun ansi_bg_color(name: string) -> string {
+    if name == "black" { return "\x1b[40m" }
+    if name == "red" { return "\x1b[41m" }
+    if name == "green" { return "\x1b[42m" }
+    if name == "yellow" { return "\x1b[43m" }
+    if name == "blue" { return "\x1b[44m" }
+    if name == "magenta" { return "\x1b[45m" }
+    if name == "cyan" { return "\x1b[46m" }
+    if name == "white" { return "\x1b[47m" }
+    if name == "bright_black" || name == "gray" { return "\x1b[100m" }
+    if name == "bright_red" { return "\x1b[101m" }
+    if name == "bright_green" { return "\x1b[102m" }
+    if name == "bright_yellow" { return "\x1b[103m" }
+    if name == "bright_blue" { return "\x1b[104m" }
+    if name == "bright_magenta" { return "\x1b[105m" }
+    if name == "bright_cyan" { return "\x1b[106m" }
+    if name == "bright_white" { return "\x1b[107m" }
+    return ""
+}
+
+public fun ansi_reset() -> string {
+    return "\x1b[0m"
+}
+
+public fun reset_color() -> string {
+    return "\x1b[0m"
+}
+
+public fun style_bold() -> string { return "\x1b[1m" }
+public fun style_dim() -> string { return "\x1b[2m" }
+public fun style_italic() -> string { return "\x1b[3m" }
+public fun style_underline() -> string { return "\x1b[4m" }
+public fun style_reversed() -> string { return "\x1b[7m" }
+public fun style_reset() -> string { return "\x1b[0m" }
+
+public class Color {
+    public kind: int32
+    public r: int32
+    public g: int32
+    public b: int32
+    public index: int32
+    public name: string
+
+    public fun init(kind: int32, r: int32, g: int32, b: int32, index: int32, name: string) {
+        rewrite this.kind = kind
+        rewrite this.r = r
+        rewrite this.g = g
+        rewrite this.b = b
+        rewrite this.index = index
+        rewrite this.name = name
+    }
+
+    public fun to_fg() -> string {
+        if this.kind == 3 {
+            return ansi_fg_rgb(this.r, this.g, this.b)
+        } elif this.kind == 2 {
+            return ansi_fg_256(this.index)
+        } elif this.kind == 1 {
+            return ansi_fg_color(this.name)
+        }
+        return ""
+    }
+
+    public fun to_bg() -> string {
+        if this.kind == 3 {
+            return ansi_bg_rgb(this.r, this.g, this.b)
+        } elif this.kind == 2 {
+            return ansi_bg_256(this.index)
+        } elif this.kind == 1 {
+            return ansi_bg_color(this.name)
+        }
+        return ""
+    }
+}
+
+public fun color_reset() -> Color {
+    return init Color(0, 0, 0, 0, 0, "")
+}
+
+public fun color_named(name: string) -> Color {
+    return init Color(1, 0, 0, 0, 0, name)
+}
+
+public fun color_256(index: int32) -> Color {
+    return init Color(2, 0, 0, 0, index, "")
+}
+
+public fun color_rgb(r: int32, g: int32, b: int32) -> Color {
+    return init Color(3, r, g, b, 0, "")
+}
+
+public class Cell {
+    public symbol: string
+    public fg: Color
+    public bg: Color
+    public bold: bool
+    public dim: bool
+    public italic: bool
+    public underline: bool
+    public reversed: bool
+
+    public fun init(symbol: string, fg: Color, bg: Color, bold: bool = false, dim: bool = false, italic: bool = false, underline: bool = false, reversed: bool = false) {
+        rewrite this.symbol = symbol
+        rewrite this.fg = fg
+        rewrite this.bg = bg
+        rewrite this.bold = bold
+        rewrite this.dim = dim
+        rewrite this.italic = italic
+        rewrite this.underline = underline
+        rewrite this.reversed = reversed
+    }
+
+    public fun render() -> string {
+        set seq = ""
+        if this.bold { rewrite seq = seq + style_bold() }
+        if this.dim { rewrite seq = seq + style_dim() }
+        if this.italic { rewrite seq = seq + style_italic() }
+        if this.underline { rewrite seq = seq + style_underline() }
+        if this.reversed { rewrite seq = seq + style_reversed() }
+        rewrite seq = seq + this.fg.to_fg() + this.bg.to_bg()
+        set sym: string = if this.symbol.len() > 0 { this.symbol.cp() } else { " " }
+        return seq + sym + ansi_reset()
+    }
+}
+
+public fun empty_cell() -> Cell {
+    return init Cell(
+        " ",
+        color_reset(),
+        color_reset(),
+        false,
+        false,
+        false,
+        false,
+        false
+    )
+}

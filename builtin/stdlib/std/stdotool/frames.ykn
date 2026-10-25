@@ -1,0 +1,54 @@
+public class Frames {
+    public items: string[]
+    public index: int32
+
+    public fun init(items: string[]) {
+        rewrite this.items = items
+        rewrite this.index = 0
+    }
+
+    public fun next() -> string {
+        if this.items.len() == 0 {
+            return ""
+        }
+        set val: string = this.items[this.index]
+        rewrite this.index = this.index + 1
+        if this.index >= cast(this.items.len(), "int32") {
+            rewrite this.index = 0
+        }
+        return val
+    }
+
+    public fun current() -> string {
+        if this.items.len() == 0 {
+            return ""
+        }
+        return this.items[this.index]
+    }
+
+    public fun reset() {
+        rewrite this.index = 0
+    }
+
+    public fun len() -> int32 {
+        return cast(this.items.len(), "int32")
+    }
+
+    public fun frame_at(i: int32) -> string {
+        if i < 0 || i >= cast(this.items.len(), "int32") {
+            return ""
+        }
+        return this.items[i]
+    }
+
+    public fun set_index(i: int32) {
+        if this.items.len() > 0 {
+            set total = cast(this.items.len(), "int32")
+            set valid = i % total
+            if valid < 0 {
+                rewrite valid = valid + total
+            }
+            rewrite this.index = valid
+        }
+    }
+}

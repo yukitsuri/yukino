@@ -1,0 +1,19 @@
+[package]
+name = "yukic-opt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-codegen = { workspace = true }
+yukic-target = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-span = { workspace = true }
+inkwell = { workspace = true }
+thiserror = { workspace = true }
+

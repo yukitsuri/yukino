@@ -1,0 +1,97 @@
+cfun yukistd_deque_new() -> ptr<uint8>
+cfun yukistd_deque_free(d: ptr<uint8>)
+cfun yukistd_deque_push_back(d: ptr<uint8>, val: int64)
+cfun yukistd_deque_push_front(d: ptr<uint8>, val: int64)
+cfun yukistd_deque_pop_front(d: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_deque_pop_back(d: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_deque_peek_front(d: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_deque_peek_back(d: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_deque_len(d: ptr<uint8>) -> int64
+cfun yukistd_deque_clear(d: ptr<uint8>)
+
+public class Deque<T> {
+    handle: ptr<uint8>
+
+    public fun init() {
+        rewrite this.handle = yukistd_deque_new()
+    }
+
+    public fun push_back(val: int64) {
+        yukistd_deque_push_back(this.handle, val)
+    }
+
+    public fun push_front(val: int64) {
+        yukistd_deque_push_front(this.handle, val)
+    }
+
+    public fun pop_front() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_pop_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun pop_back() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_pop_back(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun peek_front() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_peek_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun peek_back() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_peek_back(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun len() -> int64 {
+        return yukistd_deque_len(this.handle)
+    }
+
+    public fun is_empty() -> bool { return this.len() == 0 }
+
+    public fun clear() {
+        yukistd_deque_clear(this.handle)
+    }
+}
+
+public class Queue<T> {
+    handle: ptr<uint8>
+
+    public fun init() {
+        rewrite this.handle = yukistd_deque_new()
+    }
+
+    public fun push(val: int64) {
+        yukistd_deque_push_back(this.handle, val)
+    }
+
+    public fun pop() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_pop_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun peek() -> int64? {
+        set found: bool = false
+        set val = yukistd_deque_peek_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun len() -> int64 { return yukistd_deque_len(this.handle) }
+    public fun is_empty() -> bool { return this.len() == 0 }
+
+    public fun clear() {
+        yukistd_deque_clear(this.handle)
+    }
+}

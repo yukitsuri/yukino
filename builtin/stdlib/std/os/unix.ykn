@@ -1,0 +1,81 @@
+// decl core/os/unix.rs start
+
+cfun yukistd_os_unix_fork() -> int32
+cfun yukistd_os_unix_execve(path_p: ptr<uint8>, path_len: int64, args_p: ptr<string>, args_len: int64, envs_p: ptr<string>, envs_len: int64) -> int32
+cfun yukistd_os_unix_waitpid(pid: int32, out_status: ptr<int32>, options: int32) -> int32
+cfun yukistd_os_unix_getpid() -> int32
+cfun yukistd_os_unix_getppid() -> int32
+cfun yukistd_os_unix_kill(pid: int32, sig: int32) -> int32
+cfun yukistd_os_unix_chmod(path_p: ptr<uint8>, path_len: int64, mode: uint32) -> int32
+cfun yukistd_os_unix_chown(path_p: ptr<uint8>, path_len: int64, uid: uint32, gid: uint32) -> int32
+cfun yukistd_os_unix_umask(mask: uint32) -> uint32
+cfun yukistd_os_unix_getuid() -> uint32
+cfun yukistd_os_unix_geteuid() -> uint32
+cfun yukistd_os_unix_getgid() -> uint32
+cfun yukistd_os_unix_getegid() -> uint32
+cfun yukistd_os_unix_fcntl(fd: int32, cmd: int32, arg: int32) -> int32
+
+// decl end
+
+public static SIGHUP: int32 = 1
+public static SIGINT: int32 = 2
+public static SIGQUIT: int32 = 3
+public static SIGILL: int32 = 4
+public static SIGTRAP: int32 = 5
+public static SIGABRT: int32 = 6
+public static SIGKILL: int32 = 9
+public static SIGUSR1: int32 = 10
+public static SIGSEGV: int32 = 11
+public static SIGUSR2: int32 = 12
+public static SIGPIPE: int32 = 13
+public static SIGALRM: int32 = 14
+public static SIGTERM: int32 = 15
+public static SIGCHLD: int32 = 17
+public static SIGCONT: int32 = 18
+public static SIGSTOP: int32 = 19
+public static SIGTSTP: int32 = 20
+
+public struct OsError {
+    message: string
+    code: int32
+}
+
+public fun fork() -> int32 { return yukistd_os_unix_fork() }
+
+public fun execve(path: string, args: string[], envs: string[]) -> int32 {
+    return yukistd_os_unix_execve(
+        path.as_ptr(), path.len(),
+        args.as_ptr(), args.len(),
+        envs.as_ptr(), envs.len()
+    )
+}
+
+public fun waitpid(pid: int32, options: int32) -> int32 {
+    set status: int32 = 0
+    return yukistd_os_unix_waitpid(pid, ptr_of(status), options)
+}
+
+public fun getpid() -> int32 { return yukistd_os_unix_getpid() }
+public fun getppid() -> int32 { return yukistd_os_unix_getppid() }
+
+public fun kill(pid: int32, sig: int32) -> int32 {
+    return yukistd_os_unix_kill(pid, sig)
+}
+
+public fun chmod(path: string, mode: uint32) -> int32 {
+    return yukistd_os_unix_chmod(path.as_ptr(), path.len(), mode)
+}
+
+public fun chown(path: string, uid: uint32, gid: uint32) -> int32 {
+    return yukistd_os_unix_chown(path.as_ptr(), path.len(), uid, gid)
+}
+
+public fun umask(mask: uint32) -> uint32 { return yukistd_os_unix_umask(mask) }
+public fun getuid() -> uint32 { return yukistd_os_unix_getuid() }
+public fun geteuid() -> uint32 { return yukistd_os_unix_geteuid() }
+public fun getgid() -> uint32 { return yukistd_os_unix_getgid() }
+public fun getegid() -> uint32 { return yukistd_os_unix_getegid() }
+
+public fun fcntl(fd: int32, cmd: int32, arg: int32) -> int32 {
+    return yukistd_os_unix_fcntl(fd, cmd, arg)
+}

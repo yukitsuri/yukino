@@ -1,0 +1,44 @@
+[bin]
+name = "tapp"
+namedbg = "tapp_debug"
+version = "0.1.0"
+entry = "src/main.ykn"
+yukino = ["0.1.0", "+"] # [min, max]
+
+[test]
+threads = "auto"
+timeout_ms = 10000 
+capture_output = true
+fail_fast = false
+tests_dir = "tests"
+
+[config.release]
+inline_statics = true
+strip_unused = true
+opt_level = 3
+lto = true
+debug_assertions = false
+panic_strategy = "unwind"
+strip = true
+
+# LLVM config
+cpu = "native"
+features = ["+avx2"]
+reloc_model = "pic"
+code_model = "default"
+fast_math = false
+emit = ["bin"]
+
+[features]
+default = []
+
+[libs.runtime]
+tlibmath = { link = "https://github.com/shareui/configs/raw/refs/heads/main/tests/libs.tar.zst" }
+
+[libs.build]
+
+[libs.static]
+objects = ["test_cabi.o"]
+archives = []
+search_paths = []
+system = []

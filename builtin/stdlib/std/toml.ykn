@@ -1,0 +1,67 @@
+public load .toml_parser: TomlValue, TomlError, TOML_NULL, TOML_BOOL, TOML_INT, TOML_FLOAT, TOML_STRING, TOML_DATETIME, TOML_ARRAY, TOML_TABLE, toml_null, toml_bool, toml_int, toml_float, toml_number, toml_string, toml_datetime, toml_array, toml_table, toml_object
+load .toml_parser: TomlParser
+load .toml_serialize: serialize_toml, serialize_toml_pretty
+
+public fun parse(text: string) -> TomlValue {
+    set parser = init TomlParser(text)
+    set val = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+
+public fun try_parse(text: string) -> TomlValue? {
+    set parser = init TomlParser(text)
+    set val = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+
+public fun validate(text: string) -> bool {
+    set parser = init TomlParser(text)
+    set _ = parser.parse_document()
+    return !parser.has_error
+}
+
+public fun stringify(val: TomlValue) -> string {
+    return serialize_toml(val)
+}
+
+public fun pretty(val: TomlValue) -> string {
+    return serialize_toml_pretty(val, "  ")
+}
+
+public fun pretty_indent(val: TomlValue, indent: string) -> string {
+    return serialize_toml_pretty(val, indent)
+}
+
+public fun toml_parse(text: string) -> TomlValue {
+    set parser = init TomlParser(text)
+    set val = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+
+public fun toml_try_parse(text: string) -> TomlValue? {
+    set parser = init TomlParser(text)
+    set val = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+
+public fun toml_validate(text: string) -> bool {
+    set parser = init TomlParser(text)
+    set _ = parser.parse_document()
+    return !parser.has_error
+}
+
+public fun toml_stringify(val: TomlValue) -> string { return serialize_toml(val) }
+public fun toml_pretty(val: TomlValue) -> string { return serialize_toml_pretty(val, "  ") }
+public fun toml_pretty_indent(val: TomlValue, indent: string) -> string { return serialize_toml_pretty(val, indent) }

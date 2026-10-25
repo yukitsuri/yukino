@@ -1,0 +1,190 @@
+load .errors: NetError, panic_last_net_error
+
+// decl core/net/tcp.rs start
+
+cfun yukistd_tcp_listen(addr_p: ptr<uint8>, addr_len: int64) -> uint64
+cfun yukistd_tcp_accept(listener_id: uint64, out_peer_len: ptr<int64>) -> uint64
+cfun yukistd_tcp_connect(addr_p: ptr<uint8>, addr_len: int64, timeout_ms: uint64) -> uint64
+cfun yukistd_tcp_read(stream_id: uint64, buf_p: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_tcp_read_text(stream_id: uint64, max_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_tcp_write(stream_id: uint64, buf_p: ptr<uint8>, len: int64) -> int64
+cfun yukistd_tcp_flush(stream_id: uint64) -> bool
+cfun yukistd_tcp_set_nonblocking(stream_id: uint64, nonblocking: bool) -> bool
+cfun yukistd_tcp_listener_set_nonblocking(listener_id: uint64, nonblocking: bool) -> bool
+cfun yukistd_tcp_set_nodelay(stream_id: uint64, nodelay: bool) -> bool
+cfun yukistd_tcp_set_timeouts(stream_id: uint64, read_ms: uint64, write_ms: uint64) -> bool
+cfun yukistd_tcp_shutdown(stream_id: uint64, how: int32) -> bool
+cfun yukistd_tcp_close(stream_id: uint64) -> bool
+cfun yukistd_tcp_listener_close(listener_id: uint64) -> bool
+cfun yukistd_tcp_peer_addr(stream_id: uint64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_tcp_local_addr(stream_id: uint64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_tcp_listener_local_addr(listener_id: uint64, out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public class TcpStream {
+    id: uint64
+
+    fun init(id: uint64) {
+        rewrite this.id = id
+    }
+
+    fun read(max_len: int64 = 65536) -> string {
+        set out_len: int64 = 0
+        set p = yukistd_tcp_read_text(this.id, max_len, ptr_of(out_len))
+        if out_len < 0 || p == null {
+            panic_last_net_error("failed to read from tcp stream", 6)
+        }
+        if out_len == 0 { return "" }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun read_bytes(buf: ptr<uint8>, max_len: int64) -> int64 {
+        set n = yukistd_tcp_read(this.id, buf, max_len)
+        if n < 0 {
+            panic_last_net_error("failed to read bytes from tcp stream", 6)
+        }
+        return n
+    }
+
+    fun write(data: string) -> int64 {
+        set n = yukistd_tcp_write(this.id, data.as_ptr(), data.len())
+        if n < 0 {
+            panic_last_net_error("failed to write to tcp stream", 6)
+        }
+        return n
+    }
+
+    fun write_bytes(buf: ptr<uint8>, len: int64) -> int64 {
+        set n = yukistd_tcp_write(this.id, buf, len)
+        if n < 0 {
+            panic_last_net_error("failed to write bytes to tcp stream", 6)
+        }
+        return n
+    }
+
+    fun flush() -> bool {
+        set ok = yukistd_tcp_flush(this.id)
+        if !ok {
+            panic_last_net_error("failed to flush tcp stream", 6)
+        }
+        return true
+    }
+
+    fun set_timeouts(read_ms: int64, write_ms: int64) -> bool {
+        set r: uint64 = if read_ms < 0 { 0u64 } else { cast(read_ms, "uint64") }
+        set w: uint64 = if write_ms < 0 { 0u64 } else { cast(write_ms, "uint64") }
+        set ok = yukistd_tcp_set_timeouts(this.id, r, w)
+        if !ok {
+            panic_last_net_error("failed to set timeouts on tcp stream", 20)
+        }
+        return true
+    }
+
+    fun set_nodelay(nodelay: bool) -> bool {
+        set ok = yukistd_tcp_set_nodelay(this.id, nodelay)
+        if !ok {
+            panic_last_net_error("failed to set nodelay on tcp stream", 20)
+        }
+        return true
+    }
+
+    fun set_nonblocking(nonblocking: bool) -> bool {
+        set ok = yukistd_tcp_set_nonblocking(this.id, nonblocking)
+        if !ok {
+            panic_last_net_error("failed to set nonblocking on tcp stream", 20)
+        }
+        return true
+    }
+
+    fun shutdown(how: int32 = 2) -> bool {
+        set ok = yukistd_tcp_shutdown(this.id, how)
+        if !ok {
+            panic_last_net_error("failed to shutdown tcp stream", 20)
+        }
+        return true
+    }
+
+    fun peer_addr() -> string {
+        set out_len: int64 = 0
+        set p = yukistd_tcp_peer_addr(this.id, ptr_of(out_len))
+        if out_len <= 0 || p == null {
+            panic_last_net_error("failed to get tcp peer address", 20)
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun local_addr() -> string {
+        set out_len: int64 = 0
+        set p = yukistd_tcp_local_addr(this.id, ptr_of(out_len))
+        if out_len <= 0 || p == null {
+            panic_last_net_error("failed to get tcp stream local address", 20)
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun close() -> bool {
+        if this.id == 0 { return true }
+        set ok = yukistd_tcp_close(this.id)
+        rewrite this.id = 0
+        return ok
+    }
+}
+
+public class TcpListener {
+    id: uint64
+
+    fun init(id: uint64) {
+        rewrite this.id = id
+    }
+
+    fun accept() -> TcpStream {
+        set out_len: int64 = 0
+        set stream_handle = yukistd_tcp_accept(this.id, ptr_of(out_len))
+        if stream_handle == 0 {
+            panic_last_net_error("failed to accept tcp connection", 6)
+        }
+        return init TcpStream(stream_handle)
+    }
+
+    fun set_nonblocking(nonblocking: bool) -> bool {
+        set ok = yukistd_tcp_listener_set_nonblocking(this.id, nonblocking)
+        if !ok {
+            panic_last_net_error("failed to set nonblocking on tcp listener", 20)
+        }
+        return true
+    }
+
+    fun local_addr() -> string {
+        set out_len: int64 = 0
+        set p = yukistd_tcp_listener_local_addr(this.id, ptr_of(out_len))
+        if out_len <= 0 || p == null {
+            panic_last_net_error("failed to get tcp listener local address", 20)
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun close() -> bool {
+        if this.id == 0 { return true }
+        set ok = yukistd_tcp_listener_close(this.id)
+        rewrite this.id = 0
+        return ok
+    }
+}
+
+public fun tcp_listen(addr: string) -> TcpListener {
+    set handle = yukistd_tcp_listen(addr.as_ptr(), addr.len())
+    if handle == 0 {
+        panic_last_net_error("failed to bind tcp listener to " + addr, 7)
+    }
+    return init TcpListener(handle)
+}
+
+public fun tcp_connect(addr: string, timeout_ms: int64 = 10000) -> TcpStream {
+    set t: uint64 = if timeout_ms < 0 { 0u64 } else { cast(timeout_ms, "uint64") }
+    set handle = yukistd_tcp_connect(addr.as_ptr(), addr.len(), t)
+    if handle == 0 {
+        panic_last_net_error("failed to connect to " + addr, 3)
+    }
+    return init TcpStream(handle)
+}

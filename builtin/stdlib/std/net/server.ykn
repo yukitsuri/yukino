@@ -1,0 +1,110 @@
+load .errors: NetError
+load .tcp: TcpListener, TcpStream, tcp_listen
+load .tls: TlsStream, TlsServerConfig, tls_accept
+load .http_types: HttpRequest, HttpResponse, request_new
+load .http_codec: parse_request, parse_tls_request, format_response
+
+public class HttpServer {
+    addr: string
+    listener: TcpListener?
+    is_running: bool
+
+    fun init(addr: string) {
+        rewrite this.addr = addr
+        rewrite this.listener = null
+        rewrite this.is_running = false
+    }
+
+    fun handle_connection(stream: TcpStream, handler: fun(HttpRequest) -> HttpResponse) {
+        while true {
+            set req = parse_request(ref stream)
+            if req == null { break }
+            set req_val = req ?? request_new("GET", "/")
+            set resp = handler(req_val)
+            set out = format_response(resp)
+            stream.write(out)
+            stream.flush()
+            set conn_hdr = req_val.headers.get("Connection")
+            if conn_hdr != null && (conn_hdr ?? "") == "close" { break }
+        }
+        stream.close()
+    }
+
+    fun listen(handler: fun(HttpRequest) -> HttpResponse) {
+        set l = tcp_listen(this.addr)
+        rewrite this.listener = l
+        rewrite this.is_running = true
+        while this.is_running {
+            sus {
+                set stream = l.accept()
+                this.handle_connection(stream, handler)
+            } catch err: NetError {
+                if !this.is_running { break }
+                panic(err)
+            }
+        }
+    }
+
+    fun close() {
+        rewrite this.is_running = false
+        if this.listener != null {
+            set l = this.listener ?? init TcpListener(0)
+            l.close()
+            rewrite this.listener = null
+        }
+    }
+}
+
+public class HttpsServer {
+    addr: string
+    config: TlsServerConfig
+    listener: TcpListener?
+    is_running: bool
+
+    fun init(addr: string, config: TlsServerConfig) {
+        rewrite this.addr = addr
+        rewrite this.config = config
+        rewrite this.listener = null
+        rewrite this.is_running = false
+    }
+
+    fun handle_tls_connection(tls: TlsStream, handler: fun(HttpRequest) -> HttpResponse) {
+        while true {
+            set req = parse_tls_request(ref tls)
+            if req == null { break }
+            set req_val = req ?? request_new("GET", "/")
+            set resp = handler(req_val)
+            set out = format_response(resp)
+            tls.write(out)
+            tls.flush()
+            set conn_hdr = req_val.headers.get("Connection")
+            if conn_hdr != null && (conn_hdr ?? "") == "close" { break }
+        }
+        tls.close()
+    }
+
+    fun listen(handler: fun(HttpRequest) -> HttpResponse) {
+        set l = tcp_listen(this.addr)
+        rewrite this.listener = l
+        rewrite this.is_running = true
+        while this.is_running {
+            sus {
+                set tcp_stream = l.accept()
+                set tls_stream = tls_accept(ref tcp_stream, this.config)
+                this.handle_tls_connection(tls_stream, handler)
+            } catch err: NetError {
+                if !this.is_running { break }
+                panic(err)
+            }
+        }
+    }
+
+    fun close() {
+        rewrite this.is_running = false
+        if this.listener != null {
+            set l = this.listener ?? init TcpListener(0)
+            l.close()
+            rewrite this.listener = null
+        }
+    }
+}

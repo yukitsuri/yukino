@@ -1,0 +1,45 @@
+// decl core/net/error.rs start
+
+cfun yukistd_net_last_error_code() -> int32
+cfun yukistd_net_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public struct NetError {
+    message: string
+    code: int32
+}
+
+public struct TlsError {
+    message: string
+    code: int32
+}
+
+public struct HttpError {
+    message: string
+    code: int32
+}
+
+public fun panic_last_net_error(default_msg: string, default_code: int32) {
+    set code = yukistd_net_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_net_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(NetError { message: msg, code: code })
+}
+
+public fun panic_last_tls_error(default_msg: string, default_code: int32) {
+    set code = yukistd_net_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_net_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(TlsError { message: msg, code: code })
+}

@@ -1,0 +1,97 @@
+[workspace]
+members = [
+  "crates/yukic-span",
+  "crates/yukic-diagnostics",
+  "crates/yukic-target",
+  "crates/yukic-lexer",
+  "crates/yukic-ast",
+  "crates/yukic-parser",
+  "crates/yukic-resolve",
+  "crates/yukic-macro",
+  "crates/yukic-types",
+  "crates/yukic-borrow",
+  "crates/yukic-dce",
+  "crates/yukic-codegen",
+  "crates/yukic-opt",
+  "crates/yukic-driver",
+  "crates/yukino",
+  "crates/yukino-builtin",
+  "crates/yukino-macroproto",
+  "builtin/runtime",
+  "builtin/stdlib",
+  "builtin/macrosdk",
+]
+exclude = [
+  "target",
+  "yuki-work",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+authors = ["shareui"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+yukic-span = { path = "crates/yukic-span" }
+yukic-diagnostics = { path = "crates/yukic-diagnostics" }
+yukic-target = { path = "crates/yukic-target" }
+yukic-lexer = { path = "crates/yukic-lexer" }
+yukic-ast = { path = "crates/yukic-ast" }
+yukic-parser = { path = "crates/yukic-parser" }
+yukic-resolve = { path = "crates/yukic-resolve" }
+yukic-macro = { path = "crates/yukic-macro" }
+yukic-types = { path = "crates/yukic-types" }
+yukic-borrow = { path = "crates/yukic-borrow" }
+yukic-dce = { path = "crates/yukic-dce" }
+yukic-codegen = { path = "crates/yukic-codegen" }
+yukic-opt = { path = "crates/yukic-opt" }
+yukic-driver = { path = "crates/yukic-driver" }
+yukino = { path = "crates/yukino" }
+yukino-builtin = { path = "crates/yukino-builtin" }
+yukino-macroproto = { path = "crates/yukino-macroproto" }
+yukino-rt = { path = "builtin/runtime" }
+
+inkwell = { version = "0.10.0", features = ["llvm22-1"] }
+indexmap = "2.7"
+blake3 = "1.6"
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+toml = "0.8"
+miette = { version = "7.5", features = ["fancy"] }
+owo-colors = "4.2"
+bitflags = "2.8"
+smallvec = "1.14"
+thiserror = "2.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = false
+
+[profile.release.package.yukino-rt]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
+[profile.release.package.yukistd-core]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+too_many_lines = "allow"

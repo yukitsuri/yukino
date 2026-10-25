@@ -1,0 +1,111 @@
+load ..outf: style
+load ..io: println
+
+fun min3(a: int64, b: int64, c: int64) -> int64 {
+    set m = a
+    if b < m { rewrite m = b }
+    if c < m { rewrite m = c }
+    return m
+}
+
+public fun levenshtein(a: string, b: string) -> int64 {
+    set la = a.len()
+    set lb = b.len()
+    if la == 0 { return lb }
+    if lb == 0 { return la }
+
+    set prev: int64[] = []
+    set curr: int64[] = []
+    for j in 0..(lb + 1) {
+        prev.push(j)
+        curr.push(0)
+    }
+
+    for i in 1..(la + 1) {
+        rewrite curr[0] = i
+        for j in 1..(lb + 1) {
+            set cost: int64 = if a[i - 1] == b[j - 1] { 0 } else { 1 }
+            set del = prev[j] + 1
+            set ins = curr[j - 1] + 1
+            set sub = prev[j - 1] + cost
+            rewrite curr[j] = min3(del, ins, sub)
+        }
+        for j in 0..(lb + 1) {
+            rewrite prev[j] = curr[j]
+        }
+    }
+    return prev[lb]
+}
+
+public fun find_suggestion(unknown: string, candidates: string[]) -> string? {
+    set best_dist: int64 = 999
+    set best_idx: int64 = -1
+    set max_allowed: int64 = if unknown.len() <= 3 { 1 } elif unknown.len() <= 6 { 2 } else { 3 }
+
+    for i in 0..candidates.len() {
+        set c = candidates[i]
+        set d = levenshtein(unknown, c)
+        if d <= max_allowed && d < best_dist {
+            rewrite best_dist = d
+            rewrite best_idx = i
+        }
+    }
+
+    if best_idx >= 0 {
+        return candidates[best_idx].cp()
+    }
+    return null
+}
+
+fun format_error_prefix() -> string {
+    return style("error:").bold().red().render()
+}
+
+fun format_tip_prefix() -> string {
+    return style("tip:").bold().cyan().render()
+}
+
+public fun print_error_unexpected_arg(arg_str: string, candidates: string[]) {
+    println(format_error_prefix() + " unexpected argument '" + arg_str + "' found")
+    set sug = find_suggestion(arg_str, candidates)
+    if sug != null {
+        set s = sug ?? ""
+        println("  " + format_tip_prefix() + " a similar option exists: '" + s + "'")
+    }
+    println("")
+    println("For more information, try '--help'.")
+    exit(2)
+}
+
+public fun print_error_unknown_subcommand(sub_str: string, candidates: string[]) {
+    println(format_error_prefix() + " unrecognized subcommand '" + sub_str + "'")
+    set sug = find_suggestion(sub_str, candidates)
+    if sug != null {
+        set s = sug ?? ""
+        println("  " + format_tip_prefix() + " a similar subcommand exists: '" + s + "'")
+    }
+    println("")
+    println("For more information, try '--help'.")
+    exit(2)
+}
+
+public fun print_error_missing_required(name: string) {
+    println(format_error_prefix() + " the following required argument was not provided: <" + name + ">")
+    println("")
+    println("For more information, try '--help'.")
+    exit(2)
+}
+
+public fun print_error_missing_value(opt_name: string) {
+    println(format_error_prefix() + " option '" + opt_name + "' requires a value")
+    println("")
+    println("For more information, try '--help'.")
+    exit(2)
+}
+
+public fun print_error_conflict(a: string, b: string) {
+    println(format_error_prefix() + " the argument '" + a + "' cannot be used with '" + b + "'")
+    println("")
+    println("For more information, try '--help'.")
+    exit(2)
+}

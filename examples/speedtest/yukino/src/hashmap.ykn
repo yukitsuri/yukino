@@ -1,0 +1,69 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u64, free_u64
+
+static MAP_BITS: int32 = 22
+static MAP_SIZE: int64 = 4194304
+static MAP_INSERTS: int64 = 2000000
+static MAP_MISSES: int64 = 1000000
+static MAP_HASH_MUL: uint64 = 0x9e3779b97f4a7c15u64
+static MAP_MISSING: uint64 = 0xffffffffffffffffu64
+static MISS_SEED: uint64 = 0x2545f4914f6cdd1du64
+
+class Table {
+    keys: uint64[]
+    vals: uint64[]
+
+    fun init() {
+        rewrite this.keys = alloc_u64(MAP_SIZE)
+        rewrite this.vals = alloc_u64(MAP_SIZE)
+    }
+
+    fun put(key: uint64, val: uint64) {
+        set s: int64 = cast((key * MAP_HASH_MUL) >> cast(64 - MAP_BITS, "uint64"), "int64")
+        while this.keys[s] != 0u64 && this.keys[s] != key {
+            rewrite s = (s + 1) & (MAP_SIZE - 1)
+        }
+        rewrite this.keys[s] = key
+        rewrite this.vals[s] = val
+    }
+
+    fun lookup(key: uint64) -> uint64 {
+        set s: int64 = cast((key * MAP_HASH_MUL) >> cast(64 - MAP_BITS, "uint64"), "int64")
+        while this.keys[s] != 0u64 {
+            if this.keys[s] == key {
+                return this.vals[s]
+            }
+            rewrite s = (s + 1) & (MAP_SIZE - 1)
+        }
+        return MAP_MISSING
+    }
+
+    fun destroy() {
+        free_u64(this.keys)
+        free_u64(this.vals)
+    }
+}
+
+public fun hashmap_test() -> uint64 {
+    set table = init Table()
+    set r = init Rng(RNG_SEED)
+    for i in 0..MAP_INSERTS {
+        table.put(r.next() | 1u64, cast(i, "uint64"))
+    }
+    set again = init Rng(RNG_SEED)
+    set sum: uint64 = 0
+    for i in 0..MAP_INSERTS {
+        rewrite sum = sum + table.lookup(again.next() | 1u64)
+    }
+    set miss = init Rng(MISS_SEED)
+    set misses: uint64 = 0
+    for i in 0..MAP_MISSES {
+        set v: uint64 = table.lookup(miss.next() | 1u64)
+        if v == MAP_MISSING {
+            rewrite misses = misses + 1
+        } else {
+            rewrite sum = sum + v
+        }
+    }
+    table.destroy()
+    return mix(mix(MIX_SEED, sum), misses)
+}

@@ -1,0 +1,67 @@
+public load .yaml_parser: YamlValue, YamlError, YAML_NULL, YAML_BOOL, YAML_NUMBER, YAML_STRING, YAML_ARRAY, YAML_OBJECT, yaml_null, yaml_bool, yaml_number, yaml_int, yaml_float, yaml_string, yaml_array, yaml_object, yaml_mapping
+load .yaml_parser: YamlParser
+load .yaml_serialize: serialize_yaml, serialize_yaml_pretty
+
+public fun parse(text: string) -> YamlValue {
+    set parser: YamlParser = init YamlParser(text)
+    set val: YamlValue = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+
+public fun try_parse(text: string) -> YamlValue? {
+    set parser: YamlParser = init YamlParser(text)
+    set val: YamlValue = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+
+public fun validate(text: string) -> bool {
+    set parser: YamlParser = init YamlParser(text)
+    set _: YamlValue = parser.parse_document()
+    return !parser.has_error
+}
+
+public fun stringify(val: YamlValue) -> string {
+    return serialize_yaml(val)
+}
+
+public fun pretty(val: YamlValue) -> string {
+    return serialize_yaml_pretty(val, "  ")
+}
+
+public fun pretty_indent(val: YamlValue, indent: string) -> string {
+    return serialize_yaml_pretty(val, indent)
+}
+
+public fun yaml_parse(text: string) -> YamlValue {
+    set parser: YamlParser = init YamlParser(text)
+    set val: YamlValue = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+
+public fun yaml_try_parse(text: string) -> YamlValue? {
+    set parser: YamlParser = init YamlParser(text)
+    set val: YamlValue = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+
+public fun yaml_validate(text: string) -> bool {
+    set parser: YamlParser = init YamlParser(text)
+    set _: YamlValue = parser.parse_document()
+    return !parser.has_error
+}
+
+public fun yaml_stringify(val: YamlValue) -> string { return serialize_yaml(val) }
+public fun yaml_pretty(val: YamlValue) -> string { return serialize_yaml_pretty(val, "  ") }
+public fun yaml_pretty_indent(val: YamlValue, indent: string) -> string { return serialize_yaml_pretty(val, indent) }

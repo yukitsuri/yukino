@@ -1,0 +1,319 @@
+load .paths: FsError
+load ..strings: lines
+
+// decl core/fs.rs start
+
+cfun yukistd_fs_is_file(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_file_read_text(path_p: ptr<uint8>, path_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_file_write_text(path_p: ptr<uint8>, path_len: int64, data_p: ptr<uint8>, data_len: int64) -> bool
+cfun yukistd_fs_file_append_text(path_p: ptr<uint8>, path_len: int64, data_p: ptr<uint8>, data_len: int64) -> bool
+cfun yukistd_fs_file_read_bytes(path_p: ptr<uint8>, path_len: int64, buf: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_fs_file_size(path_p: ptr<uint8>, path_len: int64) -> int64
+cfun yukistd_fs_file_remove(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_file_rename(from_p: ptr<uint8>, from_len: int64, to_p: ptr<uint8>, to_len: int64) -> bool
+cfun yukistd_fs_file_copy(from_p: ptr<uint8>, from_len: int64, to_p: ptr<uint8>, to_len: int64) -> int64
+cfun yukistd_fs_file_hard_link(orig_p: ptr<uint8>, orig_len: int64, link_p: ptr<uint8>, link_len: int64) -> bool
+cfun yukistd_fs_file_symlink(orig_p: ptr<uint8>, orig_len: int64, link_p: ptr<uint8>, link_len: int64) -> bool
+cfun yukistd_fs_file_touch(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_file_set_readonly(path_p: ptr<uint8>, path_len: int64, readonly: bool) -> bool
+cfun yukistd_fs_file_set_permissions(path_p: ptr<uint8>, path_len: int64, mode: uint32) -> bool
+cfun yukistd_fs_metadata(path_p: ptr<uint8>, path_len: int64, out_size: ptr<int64>, out_type: ptr<int32>, out_readonly: ptr<bool>, out_modified: ptr<int64>, out_created: ptr<int64>, out_accessed: ptr<int64>, out_mode: ptr<uint32>) -> bool
+cfun yukistd_fs_file_open(path_p: ptr<uint8>, path_len: int64, mode: int32) -> int32
+cfun yukistd_fs_file_close(fd: int32) -> bool
+cfun yukistd_fs_file_read_fd(fd: int32, buf: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_fs_file_write_fd(fd: int32, buf: ptr<uint8>, len: int64) -> int64
+cfun yukistd_fs_file_flush_fd(fd: int32) -> bool
+cfun yukistd_fs_file_seek_fd(fd: int32, offset: int64, whence: int32) -> int64
+cfun yukistd_fs_file_tell_fd(fd: int32) -> int64
+cfun yukistd_fs_last_error_code() -> int32
+cfun yukistd_fs_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public struct FileMetadata {
+    size: int64
+    is_file: bool
+    is_dir: bool
+    is_symlink: bool
+    readonly: bool
+    modified_nanos: int64
+    created_nanos: int64
+    accessed_nanos: int64
+    mode: uint32
+}
+
+fun panic_last_file_error(default_msg: string, default_code: int32) {
+    set code = yukistd_fs_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_fs_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(FsError { message: msg, code: code })
+}
+
+public fun read_text(path: string) -> string {
+    set out_len: int64 = 0
+    set p = yukistd_fs_file_read_text(path.as_ptr(), path.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_file_error("failed to read file '" + path + "'", 1)
+    }
+    if out_len == 0 { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun read_lines(path: string) -> string[] {
+    set text = read_text(path)
+    return lines(text)
+}
+
+public fun write_text(path: string, content: string) -> bool {
+    set ok = yukistd_fs_file_write_text(path.as_ptr(), path.len(), content.as_ptr(), content.len())
+    if !ok {
+        panic_last_file_error("failed to write to file '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun append_text(path: string, content: string) -> bool {
+    set ok = yukistd_fs_file_append_text(path.as_ptr(), path.len(), content.as_ptr(), content.len())
+    if !ok {
+        panic_last_file_error("failed to append to file '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun read_bytes(path: string, buf: ptr<uint8>, max_len: int64) -> int64 {
+    set n = yukistd_fs_file_read_bytes(path.as_ptr(), path.len(), buf, max_len)
+    if n < 0 {
+        panic_last_file_error("failed to read bytes from '" + path + "'", 6)
+    }
+    return n
+}
+
+public fun file_exists(path: string) -> bool {
+    return yukistd_fs_is_file(path.as_ptr(), path.len())
+}
+
+public fun file_size(path: string) -> int64 {
+    set sz = yukistd_fs_file_size(path.as_ptr(), path.len())
+    if sz < 0 {
+        panic_last_file_error("failed to get size of '" + path + "'", 1)
+    }
+    return sz
+}
+
+public fun remove_file(path: string) -> bool {
+    set ok = yukistd_fs_file_remove(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_file_error("failed to remove file '" + path + "'", 1)
+    }
+    return true
+}
+
+public fun rename_file(from_path: string, to_path: string) -> bool {
+    set ok = yukistd_fs_file_rename(from_path.as_ptr(), from_path.len(), to_path.as_ptr(), to_path.len())
+    if !ok {
+        panic_last_file_error("failed to rename file '" + from_path + "' to '" + to_path + "'", 6)
+    }
+    return true
+}
+
+public fun copy_file(from_path: string, to_path: string) -> int64 {
+    set bytes = yukistd_fs_file_copy(from_path.as_ptr(), from_path.len(), to_path.as_ptr(), to_path.len())
+    if bytes < 0 {
+        panic_last_file_error("failed to copy file '" + from_path + "' to '" + to_path + "'", 6)
+    }
+    return bytes
+}
+
+public fun hard_link(original: string, link: string) -> bool {
+    set ok = yukistd_fs_file_hard_link(original.as_ptr(), original.len(), link.as_ptr(), link.len())
+    if !ok {
+        panic_last_file_error("failed to create hard link '" + link + "' -> '" + original + "'", 6)
+    }
+    return true
+}
+
+public fun symlink(original: string, link: string) -> bool {
+    set ok = yukistd_fs_file_symlink(original.as_ptr(), original.len(), link.as_ptr(), link.len())
+    if !ok {
+        panic_last_file_error("failed to create symlink '" + link + "' -> '" + original + "'", 6)
+    }
+    return true
+}
+
+public fun touch(path: string) -> bool {
+    set ok = yukistd_fs_file_touch(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_file_error("failed to touch file '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun set_readonly(path: string, readonly: bool) -> bool {
+    set ok = yukistd_fs_file_set_readonly(path.as_ptr(), path.len(), readonly)
+    if !ok {
+        panic_last_file_error("failed to set readonly flag on '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun set_permissions(path: string, mode: uint32) -> bool {
+    set ok = yukistd_fs_file_set_permissions(path.as_ptr(), path.len(), mode)
+    if !ok {
+        panic_last_file_error("failed to set permissions on '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun metadata(path: string) -> FileMetadata {
+    set size: int64 = 0
+    set ftype: int32 = 0
+    set ro: bool = false
+    set modified: int64 = 0
+    set created: int64 = 0
+    set accessed: int64 = 0
+    set mode: uint32 = 0u32
+
+    set ok = yukistd_fs_metadata(
+        path.as_ptr(), path.len(),
+        ptr_of(size), ptr_of(ftype), ptr_of(ro),
+        ptr_of(modified), ptr_of(created), ptr_of(accessed),
+        ptr_of(mode),
+    )
+    if !ok {
+        panic_last_file_error("failed to read metadata for '" + path + "'", 1)
+    }
+
+    return FileMetadata {
+        size: size,
+        is_file: ftype == 1,
+        is_dir: ftype == 2,
+        is_symlink: ftype == 3,
+        readonly: ro,
+        modified_nanos: modified,
+        created_nanos: created,
+        accessed_nanos: accessed,
+        mode: mode,
+    }
+}
+
+public class File {
+    fd: int32
+    path: string
+
+    fun init(fd: int32, path: string) {
+        rewrite this.fd = fd
+        rewrite this.path = path
+    }
+
+    fun read(buf: ptr<uint8>, max_len: int64) -> int64 {
+        set res = yukistd_fs_file_read_fd(this.fd, buf, max_len)
+        if res < 0 {
+            panic_last_file_error("failed to read from file '" + this.path + "'", 6)
+        }
+        return res
+    }
+
+    fun write(buf: ptr<uint8>, len: int64) -> int64 {
+        set res = yukistd_fs_file_write_fd(this.fd, buf, len)
+        if res < 0 {
+            panic_last_file_error("failed to write to file '" + this.path + "'", 6)
+        }
+        return res
+    }
+
+    fun write_text(text: string) -> int64 {
+        return this.write(text.as_ptr(), text.len())
+    }
+
+    fun flush() -> bool {
+        set ok = yukistd_fs_file_flush_fd(this.fd)
+        if !ok {
+            panic_last_file_error("failed to flush file '" + this.path + "'", 6)
+        }
+        return true
+    }
+
+    fun seek(offset: int64, whence: int32) -> int64 {
+        set res = yukistd_fs_file_seek_fd(this.fd, offset, whence)
+        if res < 0 {
+            panic_last_file_error("failed to seek in file '" + this.path + "'", 6)
+        }
+        return res
+    }
+
+    fun tell() -> int64 {
+        set res = yukistd_fs_file_tell_fd(this.fd)
+        if res < 0 {
+            panic_last_file_error("failed to tell file position for '" + this.path + "'", 6)
+        }
+        return res
+    }
+
+    fun close() -> bool {
+        if this.fd >= 0 {
+            set ok = yukistd_fs_file_close(this.fd)
+            rewrite this.fd = -1
+            return ok
+        }
+        return true
+    }
+}
+
+public fun open_read(path: string) -> File {
+    set fd = yukistd_fs_file_open(path.as_ptr(), path.len(), 1)
+    if fd < 0 {
+        panic_last_file_error("failed to open file for reading: '" + path + "'", 1)
+    }
+    return init File(fd, path)
+}
+
+public fun open_write(path: string) -> File {
+    set fd = yukistd_fs_file_open(path.as_ptr(), path.len(), 2)
+    if fd < 0 {
+        panic_last_file_error("failed to open file for writing: '" + path + "'", 6)
+    }
+    return init File(fd, path)
+}
+
+public fun open_append(path: string) -> File {
+    set fd = yukistd_fs_file_open(path.as_ptr(), path.len(), 3)
+    if fd < 0 {
+        panic_last_file_error("failed to open file for appending: '" + path + "'", 6)
+    }
+    return init File(fd, path)
+}
+
+public fun create_file(path: string) -> File {
+    set fd = yukistd_fs_file_open(path.as_ptr(), path.len(), 4)
+    if fd < 0 {
+        panic_last_file_error("failed to create new file: '" + path + "'", 3)
+    }
+    return init File(fd, path)
+}
+
+public fun open(path: string) -> File { return open_read(path) }
+public fun create(path: string) -> File { return create_file(path) }
+
+public fun file_read_text(path: string) -> string { return read_text(path) }
+public fun file_read_lines(path: string) -> string[] { return read_lines(path) }
+public fun file_write_text(path: string, content: string) -> bool { return write_text(path, content) }
+public fun file_append_text(path: string, content: string) -> bool { return append_text(path, content) }
+public fun file_read_bytes(path: string, buf: ptr<uint8>, max_len: int64) -> int64 { return read_bytes(path, buf, max_len) }
+public fun file_remove(path: string) -> bool { return remove_file(path) }
+public fun file_rename(from_path: string, to_path: string) -> bool { return rename_file(from_path, to_path) }
+public fun file_copy(from_path: string, to_path: string) -> int64 { return copy_file(from_path, to_path) }
+public fun file_hard_link(original: string, link: string) -> bool { return hard_link(original, link) }
+public fun file_symlink(original: string, link: string) -> bool { return symlink(original, link) }
+public fun file_touch(path: string) -> bool { return touch(path) }
+public fun file_set_readonly(path: string, readonly: bool) -> bool { return set_readonly(path, readonly) }
+public fun file_set_permissions(path: string, mode: uint32) -> bool { return set_permissions(path, mode) }
+public fun file_metadata(path: string) -> FileMetadata { return metadata(path) }
+public fun file_open_read(path: string) -> File { return open_read(path) }
+public fun file_open_write(path: string) -> File { return open_write(path) }
+public fun file_open_append(path: string) -> File { return open_append(path) }
+public fun file_create(path: string) -> File { return create_file(path) }

@@ -1,0 +1,131 @@
+load ..hash.common: bytes_to_hex
+load .common: CryptoError, constant_time_eq
+
+fun add1305(ref ~h: uint32[], ref c: uint32[]) {
+    set u: uint32 = 0u32
+    for j in 0..17 {
+        set sum: uint32 = u + h[j] + c[j]
+        rewrite h[j] = sum & 255u32
+        rewrite u = sum >> 8u32
+    }
+}
+
+fun poly1305_process_block(ref ~h: uint32[], ref r: uint32[], ref block: bytes, offset: int64, len: int64) {
+    set c: uint32[] = []
+    for j in 0..17 {
+        c.push(0u32)
+    }
+    for j in 0..len {
+        rewrite c[j] = cast(block[offset + j], "uint32")
+    }
+    rewrite c[len] = 1u32
+    add1305(ref ~h, ref c)
+
+    set x: uint32[] = []
+    for i in 0..17 {
+        set sum: uint32 = 0u32
+        for j in 0..17 {
+            set coeff: uint32 = if j <= i { r[i - j] } else { 320u32 * r[i + 17 - j] }
+            rewrite sum = sum + h[j] * coeff
+        }
+        x.push(sum)
+    }
+    for i in 0..17 {
+        rewrite h[i] = x[i]
+    }
+    set u: uint32 = 0u32
+    for j in 0..16 {
+        rewrite u = u + h[j]
+        rewrite h[j] = u & 255u32
+        rewrite u = u >> 8u32
+    }
+    rewrite u = u + h[16]
+    rewrite h[16] = u & 3u32
+    rewrite u = 5u32 * (u >> 2u32)
+    for j in 0..16 {
+        rewrite u = u + h[j]
+        rewrite h[j] = u & 255u32
+        rewrite u = u >> 8u32
+    }
+    rewrite u = u + h[16]
+    rewrite h[16] = u
+}
+
+fun poly1305_finish(ref ~h: uint32[], ref pad: uint32[]) -> bytes {
+    set g: uint32[] = []
+    for j in 0..17 {
+        g.push(h[j])
+    }
+    set minusp: uint32[] = []
+    minusp.push(5u32)
+    for j in 1..16 {
+        minusp.push(0u32)
+    }
+    minusp.push(252u32)
+    add1305(ref ~h, ref minusp)
+
+    set s: uint32 = 0u32
+    if h[16] >> 7u32 != 0u32 {
+        rewrite s = cast(0xffffffffu64, "uint32")
+    }
+    for j in 0..17 {
+        rewrite h[j] = h[j] ^ (s & (g[j] ^ h[j]))
+    }
+    add1305(ref ~h, ref pad)
+
+    set out_bytes: uint8[] = []
+    for j in 0..16 {
+        out_bytes.push(cast(h[j] & 255u32, "uint8"))
+    }
+    return from_raw_parts(out_bytes.as_ptr(), 16, 16)
+}
+
+public fun poly1305_mac(ref key: bytes, ref data: bytes) -> bytes {
+    if key.len() != 32 {
+        panic(CryptoError { message: "poly1305 key must be 32 bytes", code: 21 })
+    }
+    set r: uint32[] = []
+    set h: uint32[] = []
+    set pad: uint32[] = []
+    for j in 0..17 {
+        h.push(0u32)
+        r.push(0u32)
+        pad.push(0u32)
+    }
+    for j in 0..16 {
+        rewrite r[j] = cast(key[j], "uint32")
+        rewrite pad[j] = cast(key[j + 16], "uint32")
+    }
+    rewrite r[3] = r[3] & 15u32
+    rewrite r[4] = r[4] & 252u32
+    rewrite r[7] = r[7] & 15u32
+    rewrite r[8] = r[8] & 252u32
+    rewrite r[11] = r[11] & 15u32
+    rewrite r[12] = r[12] & 252u32
+    rewrite r[15] = r[15] & 15u32
+
+    set len: int64 = data.len()
+    set p: int64 = 0
+    set rem: int64 = len
+
+    set blocks: int64 = rem / 16
+    for i in 0..blocks {
+        poly1305_process_block(ref ~h, ref r, ref data, p, 16)
+        rewrite p = p + 16
+        rewrite rem = rem - 16
+    }
+    if rem > 0 {
+        poly1305_process_block(ref ~h, ref r, ref data, p, rem)
+    }
+    return poly1305_finish(ref ~h, ref pad)
+}
+
+public fun poly1305_verify(ref key: bytes, ref data: bytes, ref tag: bytes) -> bool {
+    set computed: bytes = poly1305_mac(ref key, ref data)
+    return constant_time_eq(ref computed, ref tag)
+}
+
+public fun poly1305_hex(ref key: bytes, ref data: bytes) -> string {
+    set tag: bytes = poly1305_mac(ref key, ref data)
+    return bytes_to_hex(ref tag)
+}

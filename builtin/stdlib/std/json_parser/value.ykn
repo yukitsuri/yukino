@@ -1,0 +1,245 @@
+public static JSON_NULL: int32 = 0
+public static JSON_BOOL: int32 = 1
+public static JSON_NUMBER: int32 = 2
+public static JSON_STRING: int32 = 3
+public static JSON_ARRAY: int32 = 4
+public static JSON_OBJECT: int32 = 5
+
+public class JsonValue {
+    public kind: int32
+    public bool_val: bool
+    public num_val: float64
+    public str_val: string
+    public array_val: JsonValue[]
+    public obj_keys: string[]
+    public obj_vals: JsonValue[]
+
+    public fun init() {
+        rewrite this.kind = JSON_NULL
+        rewrite this.bool_val = false
+        rewrite this.num_val = 0.0
+        rewrite this.str_val = ""
+        rewrite this.array_val = []
+        rewrite this.obj_keys = []
+        rewrite this.obj_vals = []
+    }
+
+    public fun is_null() -> bool { return this.kind == JSON_NULL }
+    public fun is_bool() -> bool { return this.kind == JSON_BOOL }
+    public fun is_number() -> bool { return this.kind == JSON_NUMBER }
+    public fun is_string() -> bool { return this.kind == JSON_STRING }
+    public fun is_array() -> bool { return this.kind == JSON_ARRAY }
+    public fun is_object() -> bool { return this.kind == JSON_OBJECT }
+    public fun as_bool() -> bool { return this.as_bool_or(false) }
+
+    public fun as_bool_or(fallback: bool) -> bool {
+        if this.kind == JSON_BOOL { return this.bool_val }
+        return fallback
+    }
+
+    public fun as_int() -> int64 { return this.as_int_or(0) }
+
+    public fun as_int_or(fallback: int64) -> int64 {
+        if this.kind == JSON_NUMBER { return cast(this.num_val, "int64") }
+        return fallback
+    }
+
+    public fun as_float() -> float64 {
+        return this.as_float_or(0.0)
+    }
+
+    public fun as_float_or(fallback: float64) -> float64 {
+        if this.kind == JSON_NUMBER {
+            return this.num_val
+        }
+        return fallback
+    }
+
+    public fun as_string() -> string {
+        return this.as_string_or("")
+    }
+
+    public fun as_string_or(fallback: string) -> string {
+        if this.kind == JSON_STRING {
+            return this.str_val
+        }
+        return fallback
+    }
+
+    public fun as_array() -> JsonValue[] {
+        if this.kind == JSON_ARRAY {
+            return this.array_val
+        }
+        set empty: JsonValue[] = []
+        return empty
+    }
+
+    public fun len() -> int64 {
+        if this.kind == JSON_ARRAY {
+            return this.array_val.len()
+        }
+        if this.kind == JSON_OBJECT {
+            return this.obj_keys.len()
+        }
+        if this.kind == JSON_STRING {
+            return this.str_val.len()
+        }
+        return 0
+    }
+
+    public fun keys() -> string[] {
+        if this.kind == JSON_OBJECT {
+            return this.obj_keys
+        }
+        set empty: string[] = []
+        return empty
+    }
+
+    public fun has(key: string) -> bool {
+        if this.kind != JSON_OBJECT {
+            return false
+        }
+        set i: int64 = 0
+        while i < this.obj_keys.len() {
+            if this.obj_keys[i] == key {
+                return true
+            }
+            rewrite i = i + 1
+        }
+        return false
+    }
+
+    public fun get(key: string) -> JsonValue {
+        if this.kind == JSON_OBJECT {
+            set i: int64 = 0
+            while i < this.obj_keys.len() {
+                if this.obj_keys[i] == key {
+                    return this.obj_vals[i]
+                }
+                rewrite i = i + 1
+            }
+        }
+        return json_null()
+    }
+
+    public fun get_opt(key: string) -> JsonValue? {
+        if this.kind == JSON_OBJECT {
+            set i: int64 = 0
+            while i < this.obj_keys.len() {
+                if this.obj_keys[i] == key {
+                    return this.obj_vals[i]
+                }
+                rewrite i = i + 1
+            }
+        }
+        return null
+    }
+
+    public fun at(index: int64) -> JsonValue {
+        if this.kind == JSON_ARRAY && index >= 0 && index < this.array_val.len() {
+            return this.array_val[index]
+        }
+        return json_null()
+    }
+
+    public fun at_opt(index: int64) -> JsonValue? {
+        if this.kind == JSON_ARRAY && index >= 0 && index < this.array_val.len() {
+            return this.array_val[index]
+        }
+        return null
+    }
+
+    public fun set(key: string, val: JsonValue) -> JsonValue {
+        if this.kind != JSON_OBJECT {
+            rewrite this.kind = JSON_OBJECT
+        }
+        set i: int64 = 0
+        while i < this.obj_keys.len() {
+            if this.obj_keys[i] == key {
+                rewrite this.obj_vals[i] = val
+                return this
+            }
+            rewrite i = i + 1
+        }
+        this.obj_keys.push(key)
+        this.obj_vals.push(val)
+        return this
+    }
+
+    public fun push(item: JsonValue) -> JsonValue {
+        if this.kind != JSON_ARRAY {
+            rewrite this.kind = JSON_ARRAY
+        }
+        this.array_val.push(item)
+        return this
+    }
+
+    public fun cp(this) -> JsonValue {
+        set res = init JsonValue()
+        rewrite res.kind = this.kind
+        rewrite res.bool_val = this.bool_val
+        rewrite res.num_val = this.num_val
+        rewrite res.str_val = this.str_val.cp()
+        set i: int64 = 0
+        set arr_len = this.array_val.len()
+        while i < arr_len {
+            res.array_val.push(this.array_val[i].cp())
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        set obj_len = this.obj_keys.len()
+        while i < obj_len {
+            res.obj_keys.push(this.obj_keys[i].cp())
+            res.obj_vals.push(this.obj_vals[i].cp())
+            rewrite i = i + 1
+        }
+        return res
+    }
+}
+
+public fun json_null() -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_NULL
+    return v
+}
+
+public fun json_bool(b: bool) -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_BOOL
+    rewrite v.bool_val = b
+    return v
+}
+
+public fun json_number(n: float64) -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_NUMBER
+    rewrite v.num_val = n
+    return v
+}
+
+public fun json_int(n: int64) -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_NUMBER
+    rewrite v.num_val = cast(n, "float64")
+    return v
+}
+
+public fun json_string(s: string) -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_STRING
+    rewrite v.str_val = s
+    return v
+}
+
+public fun json_array(items: JsonValue[]) -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_ARRAY
+    rewrite v.array_val = items
+    return v
+}
+
+public fun json_object() -> JsonValue {
+    set v = init JsonValue()
+    rewrite v.kind = JSON_OBJECT
+    return v
+}

@@ -1,0 +1,47 @@
+load std.io: print
+
+struct Payload {
+    val: int64
+}
+
+fun consume(p: Payload) -> int64 {
+    return p.val
+}
+
+fun inspect(ref p: Payload) -> int64 {
+    return p.val
+}
+
+public fun test_memory() {
+    // 1. Move semantics
+    set p1 = Payload { val: 42 }
+    set p2 = p1
+    set res = consume(p2)
+
+    // 2. Borrowing (immutable reference ref)
+    set p3 = Payload { val: 100 }
+    set read_val = inspect(ref p3)
+
+    // 3. Explicit region
+    region {
+        set temp = Payload { val: 300 }
+        set temp_read = inspect(ref temp)
+    }
+
+    // 4. Defer
+    defer {
+        print("Defer in test_memory executed\n")
+    }
+
+    // 5. Sus / Catch / Finally
+    sus {
+        // Safe block
+        space
+    } catch e {
+        space
+    } finally {
+        space
+    }
+
+    print("Memory OK\n")
+}

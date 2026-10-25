@@ -1,0 +1,110 @@
+// decl threads.rs start
+
+cfun yukistd_thread_spawn(task: ptr<void>, arg: ptr<void>) -> uint64
+cfun yukistd_thread_join(id: uint64) -> int32
+cfun yukistd_thread_is_finished(id: uint64) -> bool
+cfun yukistd_thread_id(id: uint64) -> uint64
+cfun yukistd_thread_sleep(ms: uint64)
+cfun yukistd_thread_yield()
+cfun yukistd_thread_current_id() -> uint64
+cfun yukistd_thread_hardware_concurrency() -> uint32
+
+// mutex
+
+cfun yukistd_mutex_create() -> uint64
+cfun yukistd_mutex_lock(id: uint64)
+cfun yukistd_mutex_unlock(id: uint64)
+cfun yukistd_mutex_destroy(id: uint64)
+
+// decl end
+
+public struct ThreadError {
+    message: string
+    code: int32
+}
+
+public fun spawn(task: ptr<void>, arg: ptr<void> = null) -> uint64 {
+    if task == null {
+        panic(ThreadError {
+            message: "spawn task function pointer cannot be null",
+            code: 301,
+        })
+    }
+    set id = yukistd_thread_spawn(task, arg)
+    if id == 0 {
+        panic(ThreadError {
+            message: "failed to spawn thread",
+            code: 302,
+        })
+    }
+    return id
+}
+
+public fun join(handle: uint64) -> int32 {
+    set res = yukistd_thread_join(handle)
+    if res != 0 {
+        panic(ThreadError {
+            message: "failed to join thread",
+            code: 303,
+        })
+    }
+    return res
+}
+
+public fun is_finished(handle: uint64) -> bool {
+    return yukistd_thread_is_finished(handle)
+}
+
+public fun thread_id(handle: uint64) -> uint64 {
+    return yukistd_thread_id(handle)
+}
+
+public fun sleep(ms: uint64) { yukistd_thread_sleep(ms) }
+public fun yield_now() { yukistd_thread_yield() }
+public fun current_id() -> uint64 { return yukistd_thread_current_id() }
+
+public fun hardware_concurrency() -> uint32 {
+    return yukistd_thread_hardware_concurrency()
+}
+
+public fun mutex_create() -> uint64 {
+    set id = yukistd_mutex_create()
+    if id == 0 {
+        panic(ThreadError {
+            message: "failed to create mutex",
+            code: 304,
+        })
+    }
+    return id
+}
+
+public fun mutex_lock(m: uint64) {
+    if m == 0 {
+        panic(ThreadError {
+            message: "invalid mutex handle (0)",
+            code: 305,
+        })
+    }
+    yukistd_mutex_lock(m)
+}
+
+public fun mutex_unlock(m: uint64) {
+    if m == 0 {
+        panic(ThreadError {
+            message: "invalid mutex handle (0)",
+            code: 306,
+        })
+    }
+    yukistd_mutex_unlock(m)
+}
+
+public fun mutex_destroy(m: uint64) -> bool {
+    if m == 0 {
+        panic(ThreadError {
+            message: "invalid mutex handle (0)",
+            code: 307,
+        })
+    }
+    yukistd_mutex_destroy(m)
+    return true
+}

@@ -1,0 +1,22 @@
+[package]
+name = "yukic-borrow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-span = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-types = { workspace = true }
+yukic-diagnostics = { workspace = true }
+bitflags = { workspace = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+yukic-lexer = { workspace = true }
+yukic-parser = { workspace = true }

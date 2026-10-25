@@ -1,0 +1,195 @@
+load ..strings: slice
+
+// decl core/fs.rs start
+
+cfun yukistd_fs_canonicalize(path_p: ptr<uint8>, path_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_exists(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_is_file(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_is_dir(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_is_symlink(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_last_error_code() -> int32
+cfun yukistd_fs_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public struct FsError {
+    message: string
+    code: int32
+}
+
+fun panic_last_fs_error(default_msg: string, default_code: int32) {
+    set code = yukistd_fs_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_fs_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(FsError { message: msg, code: code })
+}
+
+public fun path_separator() -> string {
+    return "/"
+}
+
+public fun path_is_separator(c: char) -> bool {
+    return c == '/' || c == '\\'
+}
+
+public fun path_is_absolute(path: string) -> bool {
+    set len = path.len()
+    if len == 0 { return false }
+    set b0 = path[0]
+    if b0 == 47u8 || b0 == 92u8 { return true }
+    if len >= 3 && path[1] == 58u8 {
+        set b2 = path[2]
+        if b2 == 47u8 || b2 == 92u8 {
+            set is_upper = b0 >= 65u8 && b0 <= 90u8
+            set is_lower = b0 >= 97u8 && b0 <= 122u8
+            if is_upper || is_lower { return true }
+        }
+    }
+    return false
+}
+
+public fun path_is_relative(path: string) -> bool {
+    return !path_is_absolute(path)
+}
+
+public fun path_join(a: string, b: string) -> string {
+    if a.len() == 0 { return b }
+    if b.len() == 0 { return a }
+    if path_is_absolute(b.cp()) { return b }
+
+    set a_last = a[a.len() - 1]
+    set b_first = b[0]
+    set a_has_sep = a_last == 47u8 || a_last == 92u8
+    set b_has_sep = b_first == 47u8 || b_first == 92u8
+
+    if a_has_sep && b_has_sep {
+        set b_len = b.len()
+        return a + slice(b, 1, b_len)
+    }
+    if a_has_sep || b_has_sep { return a + b }
+    return a + "/" + b
+}
+
+public fun path_join3(a: string, b: string, c: string) -> string {
+    return path_join(path_join(a, b), c)
+}
+
+public fun path_file_name(path: string) -> string {
+    set len = path.len()
+    if len == 0 { return "" }
+    set end_idx = len
+    while end_idx > 0 && (path[end_idx - 1] == 47u8 || path[end_idx - 1] == 92u8) {
+        rewrite end_idx = end_idx - 1
+    }
+    if end_idx == 0 {
+        if len > 0 { return "/" }
+        return ""
+    }
+    set i = end_idx
+    while i > 0 {
+        set b = path[i - 1]
+        if b == 47u8 || b == 92u8 { return slice(path, i, end_idx) }
+        rewrite i = i - 1
+    }
+    return slice(path, 0, end_idx)
+}
+
+public fun path_parent(path: string) -> string {
+    set len = path.len()
+    if len == 0 { return "" }
+    set end_idx = len
+    while end_idx > 0 && (path[end_idx - 1] == 47u8 || path[end_idx - 1] == 92u8) {
+        rewrite end_idx = end_idx - 1
+    }
+    if end_idx == 0 { return "/" }
+    set i = end_idx
+    while i > 0 {
+        set b = path[i - 1]
+        if b == 47u8 || b == 92u8 {
+            if i - 1 == 0 { return "/" }
+            return slice(path, 0, i - 1)
+        }
+        rewrite i = i - 1
+    }
+    return ""
+}
+
+public fun path_file_stem(path: string) -> string {
+    set name = path_file_name(path)
+    set len = name.len()
+    if len == 0 { return "" }
+    set i = len
+    while i > 0 {
+        if name[i - 1] == 46u8 { // '.'
+            if i - 1 == 0 { return name }
+            return slice(name, 0, i - 1)
+        }
+        rewrite i = i - 1
+    }
+    return name
+}
+
+public fun path_extension(path: string) -> string {
+    set name = path_file_name(path)
+    set len = name.len()
+    if len == 0 { return "" }
+    set i = len
+    while i > 0 {
+        if name[i - 1] == 46u8 { // '.'
+            if i - 1 == 0 { return "" }
+            return slice(name, i, len)
+        }
+        rewrite i = i - 1
+    }
+    return ""
+}
+
+public fun path_has_extension(path: string) -> bool {
+    return path_extension(path).len() > 0
+}
+
+public fun path_with_extension(path: string, new_ext: string) -> string {
+    set stem = path_file_stem(path.cp())
+    set par = path_parent(path)
+    set new_name = stem
+    if new_ext.len() > 0 {
+        rewrite new_name = new_name + "." + new_ext
+    }
+    if par.len() > 0 {
+        return path_join(par, new_name)
+    }
+    return new_name
+}
+
+public fun path_canonicalize(path: string) -> string {
+    set out_len: int64 = 0
+    set p = yukistd_fs_canonicalize(path.as_ptr(), path.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_fs_error("failed to canonicalize path '" + path + "'", 1)
+    }
+    if out_len == 0 { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun path_exists(path: string) -> bool {
+    return yukistd_fs_exists(path.as_ptr(), path.len())
+}
+
+public fun path_is_file(path: string) -> bool {
+    return yukistd_fs_is_file(path.as_ptr(), path.len())
+}
+
+public fun path_is_dir(path: string) -> bool {
+    return yukistd_fs_is_dir(path.as_ptr(), path.len())
+}
+
+public fun path_is_symlink(path: string) -> bool {
+    return yukistd_fs_is_symlink(path.as_ptr(), path.len())
+}
+
+

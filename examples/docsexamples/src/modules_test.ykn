@@ -1,0 +1,17 @@
+load std.io: print
+load root.helper_mod: *calc
+load .!subpkg: from_subpkg
+load .subpkg.worker: work*
+
+#[arch("x86_64")]
+fun arch_specific_fn() -> int32 {
+    return 1
+}
+
+public fun test_modules() {
+    set res1 = public_calc(10)
+    set res2 = from_subpkg()
+    set res3 = work_a() + work_b()
+    set a = arch_specific_fn()
+    print("Modules OK\n")
+}

@@ -1,0 +1,162 @@
+load ..simpleurl: url_parse, Url, QueryParam
+load ..json: json_stringify
+load ..json_parser.value: JsonValue
+load .errors: NetError, HttpError
+load .tcp: TcpStream, tcp_connect
+load .tls: TlsStream, tls_connect
+load .http_types: HttpHeaders, HttpRequest, HttpResponse, response_status, METHOD_GET, METHOD_POST, METHOD_PUT, METHOD_DELETE, METHOD_PATCH, METHOD_HEAD
+load .http_codec: format_request, parse_response, parse_tls_response
+
+public class HttpClient {
+    timeout_ms: int64
+    insecure_skip_verify: bool
+
+    fun init(timeout_ms: int64 = 15000, insecure_skip_verify: bool = false) {
+        rewrite this.timeout_ms = timeout_ms
+        rewrite this.insecure_skip_verify = insecure_skip_verify
+    }
+
+    fun request(method: string, url_str: string, body: string = "", headers: HttpHeaders? = null) -> HttpResponse {
+        set u = url_parse(url_str)
+        set port = u.effective_port()
+        set req_headers = headers ?? init HttpHeaders()
+        req_headers.set("Host", u.host)
+        if !req_headers.has("Connection") {
+            req_headers.set("Connection", "close")
+        }
+        if body.len() > 0 && !req_headers.has("Content-Length") {
+            req_headers.set("Content-Length", cast(body.len(), "string"))
+        }
+        set req_path: string = if u.path.len() == 0 { "/" } else { u.path }
+        set query_str = u.query()
+        if query_str != null && (query_str ?? "").len() > 0 {
+            rewrite req_path = req_path + "?" + (query_str ?? "")
+        }
+        set empty_query: QueryParam[] = []
+        set req = init HttpRequest(method, req_path, req_headers, body, empty_query)
+        set target_addr = u.host + ":" + cast(port, "string")
+        set tcp = tcp_connect(target_addr, this.timeout_ms)
+        tcp.set_timeouts(this.timeout_ms, this.timeout_ms)
+        if u.scheme == "https" {
+            set tls = tls_connect(ref tcp, u.host, this.insecure_skip_verify)
+            set raw_req = format_request(req, u.host)
+            tls.write(raw_req)
+            tls.flush()
+            set resp = parse_tls_response(ref tls)
+            tls.close()
+            tcp.close()
+            if resp == null {
+                panic(HttpError { message: "failed to receive https response from " + url_str, code: 502 })
+            }
+            return resp ?? response_status(502)
+        }
+        set raw_req = format_request(req, u.host)
+        tcp.write(raw_req)
+        tcp.flush()
+        set resp = parse_response(ref tcp)
+        tcp.close()
+        if resp == null {
+            panic(HttpError { message: "failed to receive http response from " + url_str, code: 502 })
+        }
+        return resp ?? response_status(502)
+    }
+
+    fun get(url_str: string, headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_GET, url_str, "", headers)
+    }
+
+    fun post(url_str: string, body: string = "", headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_POST, url_str, body, headers)
+    }
+
+    fun post_json(url_str: string, json_val: JsonValue, headers: HttpHeaders? = null) -> HttpResponse {
+        set h = headers ?? init HttpHeaders()
+        if !h.has("Content-Type") {
+            h.set("Content-Type", "application/json; charset=utf-8")
+        }
+        return this.request(METHOD_POST, url_str, json_stringify(json_val), h)
+    }
+
+    fun put(url_str: string, body: string = "", headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_PUT, url_str, body, headers)
+    }
+
+    fun delete(url_str: string, headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_DELETE, url_str, "", headers)
+    }
+
+    fun patch(url_str: string, body: string = "", headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_PATCH, url_str, body, headers)
+    }
+
+    fun head(url_str: string, headers: HttpHeaders? = null) -> HttpResponse {
+        return this.request(METHOD_HEAD, url_str, "", headers)
+    }
+}
+
+public fun http_client_default() -> HttpClient {
+    return init HttpClient(15000, false)
+}
+
+public fun get(url_str: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.get(url_str, null)
+}
+
+public fun http_get(url_str: string) -> HttpResponse {
+    return get(url_str)
+}
+
+public fun post(url_str: string, body: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.post(url_str, body, null)
+}
+
+public fun http_post(url_str: string, body: string) -> HttpResponse {
+    return post(url_str, body)
+}
+
+public fun post_json(url_str: string, json_val: JsonValue) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.post_json(url_str, json_val, null)
+}
+
+public fun http_post_json(url_str: string, json_val: JsonValue) -> HttpResponse {
+    return post_json(url_str, json_val)
+}
+
+public fun put(url_str: string, body: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.put(url_str, body, null)
+}
+
+public fun http_put(url_str: string, body: string) -> HttpResponse {
+    return put(url_str, body)
+}
+
+public fun delete(url_str: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.delete(url_str, null)
+}
+
+public fun http_delete(url_str: string) -> HttpResponse {
+    return delete(url_str)
+}
+
+public fun patch(url_str: string, body: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.patch(url_str, body, null)
+}
+
+public fun http_patch(url_str: string, body: string) -> HttpResponse {
+    return patch(url_str, body)
+}
+
+public fun head(url_str: string) -> HttpResponse {
+    set client = init HttpClient(15000, false)
+    return client.head(url_str, null)
+}
+
+public fun http_head(url_str: string) -> HttpResponse {
+    return head(url_str)
+}

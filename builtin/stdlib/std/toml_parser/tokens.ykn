@@ -1,0 +1,25 @@
+public static TOML_TOK_EOF: int32 = 0
+public static TOML_TOK_NEWLINE: int32 = 1
+public static TOML_TOK_EQUAL: int32 = 2
+public static TOML_TOK_DOT: int32 = 3
+public static TOML_TOK_COMMA: int32 = 4
+public static TOML_TOK_LBRACKET: int32 = 5
+public static TOML_TOK_RBRACKET: int32 = 6
+public static TOML_TOK_LDBRACKET: int32 = 7
+public static TOML_TOK_RDBRACKET: int32 = 8
+public static TOML_TOK_LBRACE: int32 = 9
+public static TOML_TOK_RBRACE: int32 = 10
+public static TOML_TOK_STRING: int32 = 11
+public static TOML_TOK_INTEGER: int32 = 12
+public static TOML_TOK_FLOAT: int32 = 13
+public static TOML_TOK_BOOLEAN: int32 = 14
+public static TOML_TOK_DATETIME: int32 = 15
+public static TOML_TOK_IDENT: int32 = 16
+public static TOML_TOK_ERROR: int32 = 17
+
+public struct TomlError {
+    message: string
+    line: int64
+    column: int64
+    offset: int64
+}

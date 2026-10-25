@@ -1,0 +1,412 @@
+load .strings: trim
+
+// decl core/process.rs start
+
+cfun yukistd_process_last_error_code() -> int32
+cfun yukistd_process_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_process_default_shell(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_process_exec(launcher_p: ptr<uint8>, launcher_len: int64, script_p: ptr<uint8>, script_len: int64) -> int32
+cfun yukistd_process_run(prog_p: ptr<uint8>, prog_len: int64, args_p: ptr<string>, args_len: int64, out_status: ptr<int32>, out_signal: ptr<int32>, out_stdout: ptr<ptr<uint8>>, out_stdout_len: ptr<int64>, out_stderr: ptr<ptr<uint8>>, out_stderr_len: ptr<int64>) -> bool
+cfun yukistd_process_run_shell(launcher_p: ptr<uint8>, launcher_len: int64, script_p: ptr<uint8>, script_len: int64, out_status: ptr<int32>, out_signal: ptr<int32>, out_stdout: ptr<ptr<uint8>>, out_stdout_len: ptr<int64>, out_stderr: ptr<ptr<uint8>>, out_stderr_len: ptr<int64>) -> bool
+cfun yukistd_process_command_output(prog_p: ptr<uint8>, prog_len: int64, args_p: ptr<string>, args_len: int64, cwd_p: ptr<uint8>, cwd_len: int64, envs_k_p: ptr<string>, envs_v_p: ptr<string>, envs_len: int64, clear_env: bool, out_status: ptr<int32>, out_signal: ptr<int32>, out_stdout: ptr<ptr<uint8>>, out_stdout_len: ptr<int64>, out_stderr: ptr<ptr<uint8>>, out_stderr_len: ptr<int64>) -> bool
+cfun yukistd_process_command_status(prog_p: ptr<uint8>, prog_len: int64, args_p: ptr<string>, args_len: int64, cwd_p: ptr<uint8>, cwd_len: int64, envs_k_p: ptr<string>, envs_v_p: ptr<string>, envs_len: int64, clear_env: bool, stdin_mode: int32, stdout_mode: int32, stderr_mode: int32, out_status: ptr<int32>, out_signal: ptr<int32>) -> bool
+cfun yukistd_process_command_spawn(prog_p: ptr<uint8>, prog_len: int64, args_p: ptr<string>, args_len: int64, cwd_p: ptr<uint8>, cwd_len: int64, envs_k_p: ptr<string>, envs_v_p: ptr<string>, envs_len: int64, clear_env: bool, stdin_mode: int32, stdout_mode: int32, stderr_mode: int32, out_pid: ptr<int32>) -> int32
+cfun yukistd_process_child_id(handle: int32) -> int32
+cfun yukistd_process_child_wait(handle: int32, out_status: ptr<int32>, out_signal: ptr<int32>) -> bool
+cfun yukistd_process_child_try_wait(handle: int32, out_has_exited: ptr<bool>, out_status: ptr<int32>, out_signal: ptr<int32>) -> bool
+cfun yukistd_process_child_kill(handle: int32) -> bool
+cfun yukistd_process_child_terminate(handle: int32) -> bool
+cfun yukistd_process_child_wait_with_output(handle: int32, out_status: ptr<int32>, out_signal: ptr<int32>, out_stdout: ptr<ptr<uint8>>, out_stdout_len: ptr<int64>, out_stderr: ptr<ptr<uint8>>, out_stderr_len: ptr<int64>) -> bool
+cfun yukistd_process_child_write_stdin(handle: int32, data_p: ptr<uint8>, data_len: int64, close_after: bool) -> bool
+cfun yukistd_process_child_drop(handle: int32)
+cfun yukistd_process_current_pid() -> int32
+cfun yukistd_process_parent_pid() -> int32
+cfun yukistd_process_current_exe(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_process_current_dir(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_process_set_current_dir(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_process_get_env(name_p: ptr<uint8>, name_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_process_set_env(name_p: ptr<uint8>, name_len: int64, val_p: ptr<uint8>, val_len: int64) -> bool
+cfun yukistd_process_remove_env(name_p: ptr<uint8>, name_len: int64) -> bool
+cfun yukistd_process_abort()
+
+// decl end
+
+public static STDIO_INHERIT: int32 = 0
+public static STDIO_PIPED: int32 = 1
+public static STDIO_NULL: int32 = 2
+
+public struct ProcessError {
+    message: string
+    code: int32
+}
+
+public struct ExitStatus {
+    code: int32
+    success: bool
+    signal: int32
+}
+
+fun panic_last_process_error(default_msg: string, default_code: int32) {
+    set code = yukistd_process_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_process_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(ProcessError { message: msg, code: code })
+}
+
+public class ProcessOutput {
+    status: ExitStatus
+    stdout: string
+    stderr: string
+
+    fun init(status: ExitStatus, stdout: string, stderr: string) {
+        rewrite this.status = status
+        rewrite this.stdout = stdout
+        rewrite this.stderr = stderr
+    }
+
+    fun stdout_string() -> string { return this.stdout }
+    fun stderr_string() -> string { return this.stderr }
+    fun success() -> bool { return this.status.success }
+    fun code() -> int32 { return this.status.code }
+}
+
+public class ChildProcess {
+    handle: int32
+    pid: int32
+
+    fun init(handle: int32, pid: int32) {
+        rewrite this.handle = handle
+        rewrite this.pid = pid
+    }
+
+    fun id() -> int32 { return this.pid }
+
+    fun wait() -> ExitStatus {
+        set status: int32 = 0
+        set signal: int32 = 0
+        set ok = yukistd_process_child_wait(this.handle, ptr_of(status), ptr_of(signal))
+        if !ok {
+            panic_last_process_error("failed to wait on child process", 7)
+        }
+        return ExitStatus { code: status, success: status == 0, signal: signal }
+    }
+
+    fun try_wait() -> ExitStatus? {
+        set exited: bool = false
+        set status: int32 = 0
+        set signal: int32 = 0
+        set ok = yukistd_process_child_try_wait(this.handle, ptr_of(exited), ptr_of(status), ptr_of(signal))
+        if !ok {
+            panic_last_process_error("failed to try_wait on child process", 7)
+        }
+        if !exited { return null }
+        return ExitStatus { code: status, success: status == 0, signal: signal }
+    }
+
+    fun kill() -> bool {
+        return yukistd_process_child_kill(this.handle)
+    }
+
+    fun terminate() -> bool {
+        return yukistd_process_child_terminate(this.handle)
+    }
+
+    fun write_and_close_stdin(data: string) -> bool {
+        return yukistd_process_child_write_stdin(this.handle, data.as_ptr(), data.len(), true)
+    }
+
+    fun write_stdin(data: string) -> bool {
+        return yukistd_process_child_write_stdin(this.handle, data.as_ptr(), data.len(), false)
+    }
+
+    fun wait_with_output() -> ProcessOutput {
+        set status: int32 = 0
+        set signal: int32 = 0
+        set out_p: ptr<uint8> = null
+        set out_len: int64 = 0
+        set err_p: ptr<uint8> = null
+        set err_len: int64 = 0
+        set ok = yukistd_process_child_wait_with_output(this.handle, ptr_of(status), ptr_of(signal), ptr_of(out_p), ptr_of(out_len), ptr_of(err_p), ptr_of(err_len))
+        if !ok {
+            panic_last_process_error("failed to wait_with_output on child process", 8)
+        }
+        set out_s: string = if out_len > 0 && out_p != null { from_raw_parts(out_p, out_len) } else { "" }
+        set err_s: string = if err_len > 0 && err_p != null { from_raw_parts(err_p, err_len) } else { "" }
+        set st = ExitStatus { code: status, success: status == 0, signal: signal }
+        return init ProcessOutput(st, out_s, err_s)
+    }
+}
+
+public class Command {
+    prog: string
+    cargs: string[]
+    cwd: string
+    env_keys: string[]
+    env_vals: string[]
+    clear_env: bool
+    stdin_mode: int32
+    stdout_mode: int32
+    stderr_mode: int32
+
+    fun init(prog: string) {
+        rewrite this.prog = prog
+        rewrite this.cargs = []
+        rewrite this.cwd = ""
+        rewrite this.env_keys = []
+        rewrite this.env_vals = []
+        rewrite this.clear_env = false
+        rewrite this.stdin_mode = STDIO_INHERIT
+        rewrite this.stdout_mode = STDIO_INHERIT
+        rewrite this.stderr_mode = STDIO_INHERIT
+    }
+
+    fun arg(a: string) -> Command {
+        this.cargs.push(a)
+        return this
+    }
+
+    fun args(arr: string[]) -> Command {
+        for i in 0..arr.len() {
+            this.cargs.push(arr[i])
+        }
+        return this
+    }
+
+    fun current_dir(dir: string) -> Command {
+        rewrite this.cwd = dir
+        return this
+    }
+
+    fun env(key: string, val: string) -> Command {
+        this.env_keys.push(key)
+        this.env_vals.push(val)
+        return this
+    }
+
+    fun env_clear() -> Command {
+        rewrite this.clear_env = true
+        return this
+    }
+
+    fun stdin(mode: int32) -> Command {
+        rewrite this.stdin_mode = mode
+        return this
+    }
+
+    fun stdout(mode: int32) -> Command {
+        rewrite this.stdout_mode = mode
+        return this
+    }
+
+    fun stderr(mode: int32) -> Command {
+        rewrite this.stderr_mode = mode
+        return this
+    }
+
+    fun output() -> ProcessOutput {
+        set status: int32 = 0
+        set signal: int32 = 0
+        set out_p: ptr<uint8> = null
+        set out_len: int64 = 0
+        set err_p: ptr<uint8> = null
+        set err_len: int64 = 0
+        set ok = yukistd_process_command_output(
+            this.prog.as_ptr(), this.prog.len(),
+            this.cargs.as_ptr(), this.cargs.len(),
+            this.cwd.as_ptr(), this.cwd.len(),
+            this.env_keys.as_ptr(), this.env_vals.as_ptr(), this.env_keys.len(),
+            this.clear_env,
+            ptr_of(status), ptr_of(signal),
+            ptr_of(out_p), ptr_of(out_len),
+            ptr_of(err_p), ptr_of(err_len)
+        )
+        if !ok {
+            panic_last_process_error("failed to execute command '" + this.prog + "'", 4)
+        }
+        set out_s: string = if out_len > 0 && out_p != null { from_raw_parts(out_p, out_len) } else { "" }
+        set err_s: string = if err_len > 0 && err_p != null { from_raw_parts(err_p, err_len) } else { "" }
+        set st = ExitStatus { code: status, success: status == 0, signal: signal }
+        return init ProcessOutput(st, out_s, err_s)
+    }
+
+    fun status() -> ExitStatus {
+        set status: int32 = 0
+        set signal: int32 = 0
+        set ok = yukistd_process_command_status(
+            this.prog.as_ptr(), this.prog.len(),
+            this.cargs.as_ptr(), this.cargs.len(),
+            this.cwd.as_ptr(), this.cwd.len(),
+            this.env_keys.as_ptr(), this.env_vals.as_ptr(), this.env_keys.len(),
+            this.clear_env,
+            this.stdin_mode, this.stdout_mode, this.stderr_mode,
+            ptr_of(status), ptr_of(signal)
+        )
+        if !ok {
+            panic_last_process_error("failed to get status for command '" + this.prog + "'", 4)
+        }
+        return ExitStatus { code: status, success: status == 0, signal: signal }
+    }
+
+    fun spawn() -> ChildProcess {
+        set pid: int32 = 0
+        set handle = yukistd_process_command_spawn(
+            this.prog.as_ptr(), this.prog.len(),
+            this.cargs.as_ptr(), this.cargs.len(),
+            this.cwd.as_ptr(), this.cwd.len(),
+            this.env_keys.as_ptr(), this.env_vals.as_ptr(), this.env_keys.len(),
+            this.clear_env,
+            this.stdin_mode, this.stdout_mode, this.stderr_mode,
+            ptr_of(pid)
+        )
+        if handle < 0 {
+            panic_last_process_error("failed to spawn command '" + this.prog + "'", 5)
+        }
+        return init ChildProcess(handle, pid)
+    }
+}
+
+public fun command_new(prog: string) -> Command {
+    return init Command(prog)
+}
+
+public fun command_shell(launcher: string, script: string) -> Command {
+    set cmd = init Command(launcher)
+    cmd.arg(script)
+    return cmd
+}
+
+public fun exec(launcher: string, script: string) -> int32 {
+    set res = yukistd_process_exec(launcher.as_ptr(), launcher.len(), script.as_ptr(), script.len())
+    if res < 0 {
+        panic_last_process_error("exec failed for launcher '" + launcher + "'", 2)
+    }
+    return res
+}
+
+public fun run(program: string, args: string[]) -> ProcessOutput {
+    set status: int32 = 0
+    set signal: int32 = 0
+    set out_p: ptr<uint8> = null
+    set out_len: int64 = 0
+    set err_p: ptr<uint8> = null
+    set err_len: int64 = 0
+    set ok = yukistd_process_run(
+        program.as_ptr(), program.len(),
+        args.as_ptr(), args.len(),
+        ptr_of(status), ptr_of(signal),
+        ptr_of(out_p), ptr_of(out_len),
+        ptr_of(err_p), ptr_of(err_len)
+    )
+    if !ok {
+        panic_last_process_error("failed to run program '" + program + "'", 3)
+    }
+    set out_s: string = if out_len > 0 && out_p != null { from_raw_parts(out_p, out_len) } else { "" }
+    set err_s: string = if err_len > 0 && err_p != null { from_raw_parts(err_p, err_len) } else { "" }
+    set st = ExitStatus { code: status, success: status == 0, signal: signal }
+    return init ProcessOutput(st, out_s, err_s)
+}
+
+public fun run_shell(launcher: string, script: string) -> ProcessOutput {
+    set status: int32 = 0
+    set signal: int32 = 0
+    set out_p: ptr<uint8> = null
+    set out_len: int64 = 0
+    set err_p: ptr<uint8> = null
+    set err_len: int64 = 0
+    set ok = yukistd_process_run_shell(
+        launcher.as_ptr(), launcher.len(),
+        script.as_ptr(), script.len(),
+        ptr_of(status), ptr_of(signal),
+        ptr_of(out_p), ptr_of(out_len),
+        ptr_of(err_p), ptr_of(err_len)
+    )
+    if !ok {
+        panic_last_process_error("failed to run shell with launcher '" + launcher + "'", 3)
+    }
+    set out_s: string = if out_len > 0 && out_p != null { from_raw_parts(out_p, out_len) } else { "" }
+    set err_s: string = if err_len > 0 && err_p != null { from_raw_parts(err_p, err_len) } else { "" }
+    set st = ExitStatus { code: status, success: status == 0, signal: signal }
+    return init ProcessOutput(st, out_s, err_s)
+}
+
+public fun read_output(program: string, args: string[]) -> string {
+    set out = run(program, args)
+    if !out.success() {
+        set code = out.code()
+        set msg = "process command failed with exit code " + cast(code, "string")
+        set err = out.stderr_string()
+        if err.len() > 0 { rewrite msg = msg + ": " + err }
+        panic(ProcessError { message: msg, code: code })
+    }
+    set res = out.stdout_string()
+    return trim(res)
+}
+
+public fun read_output_shell(launcher: string, script: string) -> string {
+    set out = run_shell(launcher, script)
+    if !out.success() {
+        set code = out.code()
+        set msg = "shell command failed with exit code " + cast(code, "string")
+        set err = out.stderr_string()
+        if err.len() > 0 { rewrite msg = msg + ": " + err }
+        panic(ProcessError { message: msg, code: code })
+    }
+    set res = out.stdout_string()
+    return trim(res)
+}
+
+public fun default_shell() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_process_default_shell(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "sh -c" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun current_pid() -> int32 { return yukistd_process_current_pid() }
+
+public fun parent_pid() -> int32? {
+    set p = yukistd_process_parent_pid()
+    if p <= 0 { return null }
+    return p
+}
+
+public fun current_exe() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_process_current_exe(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun current_dir() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_process_current_dir(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun set_current_dir(path: string) -> bool {
+    return yukistd_process_set_current_dir(path.as_ptr(), path.len())
+}
+
+public fun env_var(name: string) -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_process_get_env(name.as_ptr(), name.len(), ptr_of(out_len))
+    if out_len < 0 || p == null { return null }
+    if out_len == 0 { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun set_env_var(name: string, value: string) -> bool {
+    return yukistd_process_set_env(name.as_ptr(), name.len(), value.as_ptr(), value.len())
+}
+
+public fun remove_env_var(name: string) -> bool {
+    return yukistd_process_remove_env(name.as_ptr(), name.len())
+}
+
+public fun abort_process() { yukistd_process_abort() }

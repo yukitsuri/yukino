@@ -1,0 +1,54 @@
+load .errors: NetError, panic_last_net_error
+load ..strings: split, trim, last_index_of, slice
+
+// decl core/net/dns.rs and core/strings.rs start
+
+cfun yukistd_dns_resolve(host_p: ptr<uint8>, host_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_str_parse_i64(p: ptr<uint8>, len: int64, out_val: ptr<int64>) -> bool
+
+// decl end
+
+public struct SocketAddr {
+    host: string
+    port: int32
+}
+
+public fun format_socket_addr(addr: SocketAddr) -> string {
+    return addr.host + ":" + cast(addr.port, "string")
+}
+
+public fun parse_socket_addr(addr: string) -> SocketAddr {
+    set clean_addr = trim(addr)
+    set sep_idx = last_index_of(clean_addr, ":")
+    if sep_idx < 0 {
+        panic(NetError {
+            message: "missing port separator ':' in address: " + addr,
+            code: 11,
+        })
+    }
+    set host_part = slice(clean_addr, 0, sep_idx)
+    set port_str = slice(clean_addr, sep_idx + 1, clean_addr.len())
+    set port_val: int64 = 0
+    set ok = yukistd_str_parse_i64(port_str.as_ptr(), port_str.len(), ptr_of(port_val))
+    if !ok || port_val < 0 || port_val > 65535 {
+        panic(NetError {
+            message: "invalid port number in address: " + port_str,
+            code: 11,
+        })
+    }
+    return SocketAddr {
+        host: host_part,
+        port: cast(port_val, "int32"),
+    }
+}
+
+public fun resolve(host: string) -> string[] {
+    set clean_host = trim(host)
+    set out_len: int64 = 0
+    set p = yukistd_dns_resolve(clean_host.as_ptr(), clean_host.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        panic_last_net_error("failed to resolve host '" + host + "'", 1)
+    }
+    set raw = from_raw_parts(p, out_len)
+    return split(raw, ";")
+}

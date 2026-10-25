@@ -1,0 +1,400 @@
+load ..strings: parse_float, slice
+load .tokens: *
+
+public class JsonScanner {
+    public text: string
+    public len: int64
+    public pos: int64
+    public line: int64
+    public col: int64
+    public token_kind: int32
+    public token_str: string
+    public token_num: float64
+    public token_line: int64
+    public token_col: int64
+    public token_offset: int64
+    public error_msg: string
+    public has_error: bool
+
+    public fun init(text: string) {
+        rewrite this.text = text
+        rewrite this.len = text.len()
+        rewrite this.pos = 0
+        rewrite this.line = 1
+        rewrite this.col = 1
+        rewrite this.token_kind = TOK_EOF
+        rewrite this.token_str = ""
+        rewrite this.token_num = 0.0
+        rewrite this.token_line = 1
+        rewrite this.token_col = 1
+        rewrite this.token_offset = 0
+        rewrite this.error_msg = ""
+        rewrite this.has_error = false
+    }
+
+    fun is_digit(b: uint8) -> bool {
+        return b >= 48 && b <= 57
+    }
+
+    fun hex_val(b: uint8) -> int64 {
+        if b >= 48 && b <= 57 {
+            return cast(b - 48, "int64")
+        }
+        if b >= 65 && b <= 70 {
+            return cast(b - 65 + 10, "int64")
+        }
+        if b >= 97 && b <= 102 {
+            return cast(b - 97 + 10, "int64")
+        }
+        return -1
+    }
+
+    fun set_err(msg: string) -> int32 {
+        rewrite this.has_error = true
+        rewrite this.error_msg = msg
+        rewrite this.token_kind = TOK_ERROR
+        return TOK_ERROR
+    }
+
+    public fun scan() -> int32 {
+        while this.pos < this.len {
+            set b: uint8 = this.text[this.pos]
+            if b == 32 || b == 9 || b == 13 {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+            } elif b == 10 {
+                rewrite this.pos = this.pos + 1
+                rewrite this.line = this.line + 1
+                rewrite this.col = 1
+            } else {
+                break
+            }
+        }
+
+        rewrite this.token_offset = this.pos
+        rewrite this.token_line = this.line
+        rewrite this.token_col = this.col
+
+        if this.pos >= this.len {
+            rewrite this.token_kind = TOK_EOF
+            rewrite this.token_str = ""
+            return TOK_EOF
+        }
+
+        set b: uint8 = this.text[this.pos]
+
+        if b == 123 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_LBRACE
+            return TOK_LBRACE
+        }
+        if b == 125 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_RBRACE
+            return TOK_RBRACE
+        }
+        if b == 91 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_LBRACKET
+            return TOK_LBRACKET
+        }
+        if b == 93 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_RBRACKET
+            return TOK_RBRACKET
+        }
+        if b == 58 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_COLON
+            return TOK_COLON
+        }
+        if b == 44 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            rewrite this.token_kind = TOK_COMMA
+            return TOK_COMMA
+        }
+
+        if b == 47 {
+            if this.pos + 1 < this.len {
+                set next_b: uint8 = this.text[this.pos + 1]
+                if next_b == 47 {
+                    set start: int64 = this.pos
+                    rewrite this.pos = this.pos + 2
+                    rewrite this.col = this.col + 2
+                    while this.pos < this.len && this.text[this.pos] != 10 {
+                        rewrite this.pos = this.pos + 1
+                        rewrite this.col = this.col + 1
+                    }
+                    rewrite this.token_kind = TOK_LINE_COMMENT
+                    rewrite this.token_str = slice(this.text, start, this.pos)
+                    return TOK_LINE_COMMENT
+                }
+                if next_b == 42 {
+                    set start: int64 = this.pos
+                    rewrite this.pos = this.pos + 2
+                    rewrite this.col = this.col + 2
+                    set closed = false
+                    while this.pos + 1 < this.len {
+                        if this.text[this.pos] == 10 {
+                            rewrite this.pos = this.pos + 1
+                            rewrite this.line = this.line + 1
+                            rewrite this.col = 1
+                        } elif this.text[this.pos] == 42 && this.text[this.pos + 1] == 47 {
+                            rewrite this.pos = this.pos + 2
+                            rewrite this.col = this.col + 2
+                            rewrite closed = true
+                            break
+                        } else {
+                            rewrite this.pos = this.pos + 1
+                            rewrite this.col = this.col + 1
+                        }
+                    }
+                    if !closed {
+                        return this.set_err("unterminated block comment")
+                    }
+                    rewrite this.token_kind = TOK_BLOCK_COMMENT
+                    rewrite this.token_str = slice(this.text, start, this.pos)
+                    return TOK_BLOCK_COMMENT
+                }
+            }
+            return this.set_err("unexpected character '/'")
+        }
+
+        if b == 34 {
+            return this.scan_string()
+        }
+
+        if b == 45 || this.is_digit(b) {
+            return this.scan_number()
+        }
+
+        if b == 116 {
+            if this.pos + 4 <= this.len
+                && this.text[this.pos + 1] == 114
+                && this.text[this.pos + 2] == 117
+                && this.text[this.pos + 3] == 101 {
+                rewrite this.pos = this.pos + 4
+                rewrite this.col = this.col + 4
+                rewrite this.token_kind = TOK_TRUE
+                rewrite this.token_str = "true"
+                return TOK_TRUE
+            }
+        }
+
+        if b == 102 {
+            if this.pos + 5 <= this.len
+                && this.text[this.pos + 1] == 97
+                && this.text[this.pos + 2] == 108
+                && this.text[this.pos + 3] == 115
+                && this.text[this.pos + 4] == 101 {
+                rewrite this.pos = this.pos + 5
+                rewrite this.col = this.col + 5
+                rewrite this.token_kind = TOK_FALSE
+                rewrite this.token_str = "false"
+                return TOK_FALSE
+            }
+        }
+
+        if b == 110 {
+            if this.pos + 4 <= this.len
+                && this.text[this.pos + 1] == 117
+                && this.text[this.pos + 2] == 108
+                && this.text[this.pos + 3] == 108 {
+                rewrite this.pos = this.pos + 4
+                rewrite this.col = this.col + 4
+                rewrite this.token_kind = TOK_NULL
+                rewrite this.token_str = "null"
+                return TOK_NULL
+            }
+        }
+
+        return this.set_err("unexpected character in json input")
+    }
+
+    fun scan_string() -> int32 {
+        rewrite this.pos = this.pos + 1
+        rewrite this.col = this.col + 1
+        set start: int64 = this.pos
+        set has_escape: bool = false
+
+        while this.pos < this.len {
+            set b: uint8 = this.text[this.pos]
+            if b == 34 {
+                if !has_escape {
+                    rewrite this.token_kind = TOK_STRING
+                    rewrite this.token_str = slice(this.text, start, this.pos)
+                    rewrite this.pos = this.pos + 1
+                    rewrite this.col = this.col + 1
+                    return TOK_STRING
+                }
+                break
+            }
+            if b == 92 {
+                rewrite has_escape = true
+                break
+            }
+            if b == 10 {
+                return this.set_err("unescaped newline in string literal")
+            }
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+        }
+
+        if !has_escape {
+            return this.set_err("unterminated string literal")
+        }
+
+        set res: string = slice(this.text, start, this.pos)
+
+        while this.pos < this.len {
+            set b: uint8 = this.text[this.pos]
+            if b == 34 {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+                rewrite this.token_kind = TOK_STRING
+                rewrite this.token_str = res
+                return TOK_STRING
+            }
+
+            if b == 92 {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+                if this.pos >= this.len {
+                    return this.set_err("unexpected end of string escape")
+                }
+                set esc: uint8 = this.text[this.pos]
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+
+                if esc == 34 {
+                    rewrite res = res + "\""
+                } elif esc == 92 {
+                    rewrite res = res + "\\"
+                } elif esc == 47 {
+                    rewrite res = res + "/"
+                } elif esc == 98 {
+                    set ch: char = cast(8, "char")
+                    rewrite res = res + cast(ch, "string")
+                } elif esc == 102 {
+                    set ch: char = cast(12, "char")
+                    rewrite res = res + cast(ch, "string")
+                } elif esc == 110 {
+                    rewrite res = res + "\n"
+                } elif esc == 114 {
+                    rewrite res = res + "\r"
+                } elif esc == 116 {
+                    rewrite res = res + "\t"
+                } elif esc == 117 {
+                    if this.pos + 4 > this.len {
+                        return this.set_err("unexpected end of unicode escape")
+                    }
+                    set h0 = this.hex_val(this.text[this.pos])
+                    set h1 = this.hex_val(this.text[this.pos + 1])
+                    set h2 = this.hex_val(this.text[this.pos + 2])
+                    set h3 = this.hex_val(this.text[this.pos + 3])
+                    if h0 < 0 || h1 < 0 || h2 < 0 || h3 < 0 {
+                        return this.set_err("invalid unicode escape sequence")
+                    }
+                    set cp = (h0 << 12) | (h1 << 8) | (h2 << 4) | h3
+                    rewrite this.pos = this.pos + 4
+                    rewrite this.col = this.col + 4
+
+                    if cp >= 55296 && cp <= 56319 && this.pos + 6 <= this.len {
+                        if this.text[this.pos] == 92 && this.text[this.pos + 1] == 117 {
+                            set l0 = this.hex_val(this.text[this.pos + 2])
+                            set l1 = this.hex_val(this.text[this.pos + 3])
+                            set l2 = this.hex_val(this.text[this.pos + 4])
+                            set l3 = this.hex_val(this.text[this.pos + 5])
+                            if l0 >= 0 && l1 >= 0 && l2 >= 0 && l3 >= 0 {
+                                set low_cp = (l0 << 12) | (l1 << 8) | (l2 << 4) | l3
+                                if low_cp >= 56320 && low_cp <= 57343 {
+                                    rewrite cp = 65536 + ((cp - 55296) << 10) + (low_cp - 56320)
+                                    rewrite this.pos = this.pos + 6
+                                    rewrite this.col = this.col + 6
+                                }
+                            }
+                        }
+                    }
+
+                    set ch: char = cast(cp, "char")
+                    rewrite res = res + cast(ch, "string")
+                } else {
+                    return this.set_err("invalid escape character in string")
+                }
+            } elif b == 10 {
+                return this.set_err("unescaped newline in string literal")
+            } else {
+                set chunk_start: int64 = this.pos
+                while this.pos < this.len && this.text[this.pos] != 34 && this.text[this.pos] != 92 && this.text[this.pos] != 10 {
+                    rewrite this.pos = this.pos + 1
+                    rewrite this.col = this.col + 1
+                }
+                rewrite res = res + slice(this.text, chunk_start, this.pos)
+            }
+        }
+
+        return this.set_err("unterminated string literal")
+    }
+
+    fun scan_number() -> int32 {
+        set start: int64 = this.pos
+        if this.text[this.pos] == 45 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+        }
+
+        if this.pos >= this.len || !this.is_digit(this.text[this.pos]) {
+            return this.set_err("expected digit in number")
+        }
+
+        while this.pos < this.len && this.is_digit(this.text[this.pos]) {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+        }
+
+        if this.pos < this.len && this.text[this.pos] == 46 {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            if this.pos >= this.len || !this.is_digit(this.text[this.pos]) {
+                return this.set_err("expected digit after decimal point")
+            }
+            while this.pos < this.len && this.is_digit(this.text[this.pos]) {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+            }
+        }
+
+        if this.pos < this.len && (this.text[this.pos] == 101 || this.text[this.pos] == 69) {
+            rewrite this.pos = this.pos + 1
+            rewrite this.col = this.col + 1
+            if this.pos < this.len && (this.text[this.pos] == 43 || this.text[this.pos] == 45) {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+            }
+            if this.pos >= this.len || !this.is_digit(this.text[this.pos]) {
+                return this.set_err("expected digit in exponent")
+            }
+            while this.pos < this.len && this.is_digit(this.text[this.pos]) {
+                rewrite this.pos = this.pos + 1
+                rewrite this.col = this.col + 1
+            }
+        }
+
+        set num_str = slice(this.text, start, this.pos)
+        set parsed = parse_float(num_str)
+        if parsed == null {
+            return this.set_err("failed to parse number")
+        }
+
+        rewrite this.token_kind = TOK_NUMBER
+        rewrite this.token_str = num_str
+        rewrite this.token_num = parsed ?? 0.0
+        return TOK_NUMBER
+    }
+}

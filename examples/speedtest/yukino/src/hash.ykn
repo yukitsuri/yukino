@@ -1,0 +1,630 @@
+load .common: MIX_SEED, mix, fill_byte, alloc_u8, free_u8, alloc_u32, free_u32
+
+static HASH_BUF_BYTES: int64 = 4194304
+static SHA_PASSES: int32 = 16
+static CRC_PASSES: int32 = 32
+static FNV_PASSES: int32 = 64
+static SHA_BLOCK_BYTES: int64 = 64
+static SHA_ROUNDS: int64 = 64
+static CRC_POLY: uint32 = 0xedb88320u32
+
+fun make_buf() -> bytes {
+    set buf = alloc_u8(HASH_BUF_BYTES)
+    for i in 0..HASH_BUF_BYTES {
+        rewrite buf[i] = fill_byte(cast(i, "uint32"))
+    }
+    return buf
+}
+
+#[stable, inline_always]
+fun ror(x: uint32, n: uint32) -> uint32 {
+    return (x >> n) | (x << (32u32 - n))
+}
+
+fun init_sha_k() -> uint32[] {
+    set k = alloc_u32(64)
+    rewrite k[0] = 0x428a2f98u32; rewrite k[1] = 0x71374491u32; rewrite k[2] = 0xb5c0fbcfu32; rewrite k[3] = 0xe9b5dba5u32
+    rewrite k[4] = 0x3956c25bu32; rewrite k[5] = 0x59f111f1u32; rewrite k[6] = 0x923f82a4u32; rewrite k[7] = 0xab1c5ed5u32
+    rewrite k[8] = 0xd807aa98u32; rewrite k[9] = 0x12835b01u32; rewrite k[10] = 0x243185beu32; rewrite k[11] = 0x550c7dc3u32
+    rewrite k[12] = 0x72be5d74u32; rewrite k[13] = 0x80deb1feu32; rewrite k[14] = 0x9bdc06a7u32; rewrite k[15] = 0xc19bf174u32
+    rewrite k[16] = 0xe49b69c1u32; rewrite k[17] = 0xefbe4786u32; rewrite k[18] = 0x0fc19dc6u32; rewrite k[19] = 0x240ca1ccu32
+    rewrite k[20] = 0x2de92c6fu32; rewrite k[21] = 0x4a7484aau32; rewrite k[22] = 0x5cb0a9dcu32; rewrite k[23] = 0x76f988dau32
+    rewrite k[24] = 0x983e5152u32; rewrite k[25] = 0xa831c66du32; rewrite k[26] = 0xb00327c8u32; rewrite k[27] = 0xbf597fc7u32
+    rewrite k[28] = 0xc6e00bf3u32; rewrite k[29] = 0xd5a79147u32; rewrite k[30] = 0x06ca6351u32; rewrite k[31] = 0x14292967u32
+    rewrite k[32] = 0x27b70a85u32; rewrite k[33] = 0x2e1b2138u32; rewrite k[34] = 0x4d2c6dfcu32; rewrite k[35] = 0x53380d13u32
+    rewrite k[36] = 0x650a7354u32; rewrite k[37] = 0x766a0abbu32; rewrite k[38] = 0x81c2c92eu32; rewrite k[39] = 0x92722c85u32
+    rewrite k[40] = 0xa2bfe8a1u32; rewrite k[41] = 0xa81a664bu32; rewrite k[42] = 0xc24b8b70u32; rewrite k[43] = 0xc76c51a3u32
+    rewrite k[44] = 0xd192e819u32; rewrite k[45] = 0xd6990624u32; rewrite k[46] = 0xf40e3585u32; rewrite k[47] = 0x106aa070u32
+    rewrite k[48] = 0x19a4c116u32; rewrite k[49] = 0x1e376c08u32; rewrite k[50] = 0x2748774cu32; rewrite k[51] = 0x34b0bcb5u32
+    rewrite k[52] = 0x391c0cb3u32; rewrite k[53] = 0x4ed8aa4au32; rewrite k[54] = 0x5b9cca4fu32; rewrite k[55] = 0x682e6ff3u32
+    rewrite k[56] = 0x748f82eeu32; rewrite k[57] = 0x78a5636fu32; rewrite k[58] = 0x84c87814u32; rewrite k[59] = 0x8cc70208u32
+    rewrite k[60] = 0x90befffau32; rewrite k[61] = 0xa4506cebu32; rewrite k[62] = 0xbef9a3f7u32; rewrite k[63] = 0xc67178f2u32
+    return k
+}
+
+// Flat scalar state: cv0..cv7 - state/round vars, b0..b15 - block buffer
+// and rolling schedule window. No heap allocations, no dangling pointers.
+public class Sha256 {
+    cv0: uint32
+    cv1: uint32
+    cv2: uint32
+    cv3: uint32
+    cv4: uint32
+    cv5: uint32
+    cv6: uint32
+    cv7: uint32
+    b0: uint32
+    b1: uint32
+    b2: uint32
+    b3: uint32
+    b4: uint32
+    b5: uint32
+    b6: uint32
+    b7: uint32
+    b8: uint32
+    b9: uint32
+    b10: uint32
+    b11: uint32
+    b12: uint32
+    b13: uint32
+    b14: uint32
+    b15: uint32
+    t1: uint32
+    t2: uint32
+    fill: int64
+    total: uint64
+
+    fun init() {
+        rewrite this.cv0 = 0x6a09e667u32
+        rewrite this.cv1 = 0xbb67ae85u32
+        rewrite this.cv2 = 0x3c6ef372u32
+        rewrite this.cv3 = 0xa54ff53au32
+        rewrite this.cv4 = 0x510e527fu32
+        rewrite this.cv5 = 0x9b05688cu32
+        rewrite this.cv6 = 0x1f83d9abu32
+        rewrite this.cv7 = 0x5be0cd19u32
+        rewrite this.fill = 0
+        rewrite this.total = 0u64
+    }
+
+    // Write one byte at off into b0..b15 (big-endian).
+    fun set_buf_byte(off: int64, val: uint8) {
+        set v: uint32 = cast(val, "uint32")
+        if off == 0 {
+            rewrite this.b0 = (this.b0 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 1 {
+            rewrite this.b0 = (this.b0 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 2 {
+            rewrite this.b0 = (this.b0 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 3 {
+            rewrite this.b0 = (this.b0 & 0xffffff00u32) | v
+        } elif off == 4 {
+            rewrite this.b1 = (this.b1 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 5 {
+            rewrite this.b1 = (this.b1 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 6 {
+            rewrite this.b1 = (this.b1 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 7 {
+            rewrite this.b1 = (this.b1 & 0xffffff00u32) | v
+        } elif off == 8 {
+            rewrite this.b2 = (this.b2 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 9 {
+            rewrite this.b2 = (this.b2 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 10 {
+            rewrite this.b2 = (this.b2 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 11 {
+            rewrite this.b2 = (this.b2 & 0xffffff00u32) | v
+        } elif off == 12 {
+            rewrite this.b3 = (this.b3 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 13 {
+            rewrite this.b3 = (this.b3 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 14 {
+            rewrite this.b3 = (this.b3 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 15 {
+            rewrite this.b3 = (this.b3 & 0xffffff00u32) | v
+        } elif off == 16 {
+            rewrite this.b4 = (this.b4 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 17 {
+            rewrite this.b4 = (this.b4 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 18 {
+            rewrite this.b4 = (this.b4 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 19 {
+            rewrite this.b4 = (this.b4 & 0xffffff00u32) | v
+        } elif off == 20 {
+            rewrite this.b5 = (this.b5 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 21 {
+            rewrite this.b5 = (this.b5 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 22 {
+            rewrite this.b5 = (this.b5 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 23 {
+            rewrite this.b5 = (this.b5 & 0xffffff00u32) | v
+        } elif off == 24 {
+            rewrite this.b6 = (this.b6 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 25 {
+            rewrite this.b6 = (this.b6 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 26 {
+            rewrite this.b6 = (this.b6 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 27 {
+            rewrite this.b6 = (this.b6 & 0xffffff00u32) | v
+        } elif off == 28 {
+            rewrite this.b7 = (this.b7 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 29 {
+            rewrite this.b7 = (this.b7 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 30 {
+            rewrite this.b7 = (this.b7 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 31 {
+            rewrite this.b7 = (this.b7 & 0xffffff00u32) | v
+        } elif off == 32 {
+            rewrite this.b8 = (this.b8 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 33 {
+            rewrite this.b8 = (this.b8 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 34 {
+            rewrite this.b8 = (this.b8 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 35 {
+            rewrite this.b8 = (this.b8 & 0xffffff00u32) | v
+        } elif off == 36 {
+            rewrite this.b9 = (this.b9 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 37 {
+            rewrite this.b9 = (this.b9 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 38 {
+            rewrite this.b9 = (this.b9 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 39 {
+            rewrite this.b9 = (this.b9 & 0xffffff00u32) | v
+        } elif off == 40 {
+            rewrite this.b10 = (this.b10 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 41 {
+            rewrite this.b10 = (this.b10 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 42 {
+            rewrite this.b10 = (this.b10 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 43 {
+            rewrite this.b10 = (this.b10 & 0xffffff00u32) | v
+        } elif off == 44 {
+            rewrite this.b11 = (this.b11 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 45 {
+            rewrite this.b11 = (this.b11 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 46 {
+            rewrite this.b11 = (this.b11 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 47 {
+            rewrite this.b11 = (this.b11 & 0xffffff00u32) | v
+        } elif off == 48 {
+            rewrite this.b12 = (this.b12 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 49 {
+            rewrite this.b12 = (this.b12 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 50 {
+            rewrite this.b12 = (this.b12 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 51 {
+            rewrite this.b12 = (this.b12 & 0xffffff00u32) | v
+        } elif off == 52 {
+            rewrite this.b13 = (this.b13 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 53 {
+            rewrite this.b13 = (this.b13 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 54 {
+            rewrite this.b13 = (this.b13 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 55 {
+            rewrite this.b13 = (this.b13 & 0xffffff00u32) | v
+        } elif off == 56 {
+            rewrite this.b14 = (this.b14 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 57 {
+            rewrite this.b14 = (this.b14 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 58 {
+            rewrite this.b14 = (this.b14 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 59 {
+            rewrite this.b14 = (this.b14 & 0xffffff00u32) | v
+        } elif off == 60 {
+            rewrite this.b15 = (this.b15 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 61 {
+            rewrite this.b15 = (this.b15 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 62 {
+            rewrite this.b15 = (this.b15 & 0xffff00ffu32) | (v << 8u32)
+        } else {
+            rewrite this.b15 = (this.b15 & 0xffffff00u32) | v
+        }
+    }
+
+    // Load a 64-byte block into b0..b15.
+    fun load_block(ref p: bytes, base: int64) {
+        rewrite this.b0 = (cast(p[base], "uint32") << 24u32) | (cast(p[base + 1], "uint32") << 16u32) | (cast(p[base + 2], "uint32") << 8u32) | cast(p[base + 3], "uint32")
+        rewrite this.b1 = (cast(p[base + 4], "uint32") << 24u32) | (cast(p[base + 5], "uint32") << 16u32) | (cast(p[base + 6], "uint32") << 8u32) | cast(p[base + 7], "uint32")
+        rewrite this.b2 = (cast(p[base + 8], "uint32") << 24u32) | (cast(p[base + 9], "uint32") << 16u32) | (cast(p[base + 10], "uint32") << 8u32) | cast(p[base + 11], "uint32")
+        rewrite this.b3 = (cast(p[base + 12], "uint32") << 24u32) | (cast(p[base + 13], "uint32") << 16u32) | (cast(p[base + 14], "uint32") << 8u32) | cast(p[base + 15], "uint32")
+        rewrite this.b4 = (cast(p[base + 16], "uint32") << 24u32) | (cast(p[base + 17], "uint32") << 16u32) | (cast(p[base + 18], "uint32") << 8u32) | cast(p[base + 19], "uint32")
+        rewrite this.b5 = (cast(p[base + 20], "uint32") << 24u32) | (cast(p[base + 21], "uint32") << 16u32) | (cast(p[base + 22], "uint32") << 8u32) | cast(p[base + 23], "uint32")
+        rewrite this.b6 = (cast(p[base + 24], "uint32") << 24u32) | (cast(p[base + 25], "uint32") << 16u32) | (cast(p[base + 26], "uint32") << 8u32) | cast(p[base + 27], "uint32")
+        rewrite this.b7 = (cast(p[base + 28], "uint32") << 24u32) | (cast(p[base + 29], "uint32") << 16u32) | (cast(p[base + 30], "uint32") << 8u32) | cast(p[base + 31], "uint32")
+        rewrite this.b8 = (cast(p[base + 32], "uint32") << 24u32) | (cast(p[base + 33], "uint32") << 16u32) | (cast(p[base + 34], "uint32") << 8u32) | cast(p[base + 35], "uint32")
+        rewrite this.b9 = (cast(p[base + 36], "uint32") << 24u32) | (cast(p[base + 37], "uint32") << 16u32) | (cast(p[base + 38], "uint32") << 8u32) | cast(p[base + 39], "uint32")
+        rewrite this.b10 = (cast(p[base + 40], "uint32") << 24u32) | (cast(p[base + 41], "uint32") << 16u32) | (cast(p[base + 42], "uint32") << 8u32) | cast(p[base + 43], "uint32")
+        rewrite this.b11 = (cast(p[base + 44], "uint32") << 24u32) | (cast(p[base + 45], "uint32") << 16u32) | (cast(p[base + 46], "uint32") << 8u32) | cast(p[base + 47], "uint32")
+        rewrite this.b12 = (cast(p[base + 48], "uint32") << 24u32) | (cast(p[base + 49], "uint32") << 16u32) | (cast(p[base + 50], "uint32") << 8u32) | cast(p[base + 51], "uint32")
+        rewrite this.b13 = (cast(p[base + 52], "uint32") << 24u32) | (cast(p[base + 53], "uint32") << 16u32) | (cast(p[base + 54], "uint32") << 8u32) | cast(p[base + 55], "uint32")
+        rewrite this.b14 = (cast(p[base + 56], "uint32") << 24u32) | (cast(p[base + 57], "uint32") << 16u32) | (cast(p[base + 58], "uint32") << 8u32) | cast(p[base + 59], "uint32")
+        rewrite this.b15 = (cast(p[base + 60], "uint32") << 24u32) | (cast(p[base + 61], "uint32") << 16u32) | (cast(p[base + 62], "uint32") << 8u32) | cast(p[base + 63], "uint32")
+    }
+
+    // Compress b0..b15 into cv0..cv7. Unrolled: cv slots rotate a..h,
+    // b0..b15 roll the message schedule.
+    fun compress(ref k: uint32[]) {
+        set h0: uint32 = this.cv0
+        set h1: uint32 = this.cv1
+        set h2: uint32 = this.cv2
+        set h3: uint32 = this.cv3
+        set h4: uint32 = this.cv4
+        set h5: uint32 = this.cv5
+        set h6: uint32 = this.cv6
+        set h7: uint32 = this.cv7
+
+        // rounds 0..15 (W[0..15] = b0..b15)
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[0] + this.b0
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[1] + this.b1
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[2] + this.b2
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[3] + this.b3
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[4] + this.b4
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[5] + this.b5
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[6] + this.b6
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[7] + this.b7
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[8] + this.b8
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[9] + this.b9
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[10] + this.b10
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[11] + this.b11
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[12] + this.b12
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[13] + this.b13
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[14] + this.b14
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[15] + this.b15
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+
+        // schedule expansion: W[16..31] into b0..b15
+        rewrite this.b0 = this.b0 + (ror(this.b1, 7u32) ^ ror(this.b1, 18u32) ^ (this.b1 >> 3u32)) + this.b9 + (ror(this.b14, 17u32) ^ ror(this.b14, 19u32) ^ (this.b14 >> 10u32))
+        rewrite this.b1 = this.b1 + (ror(this.b2, 7u32) ^ ror(this.b2, 18u32) ^ (this.b2 >> 3u32)) + this.b10 + (ror(this.b15, 17u32) ^ ror(this.b15, 19u32) ^ (this.b15 >> 10u32))
+        rewrite this.b2 = this.b2 + (ror(this.b3, 7u32) ^ ror(this.b3, 18u32) ^ (this.b3 >> 3u32)) + this.b11 + (ror(this.b0, 17u32) ^ ror(this.b0, 19u32) ^ (this.b0 >> 10u32))
+        rewrite this.b3 = this.b3 + (ror(this.b4, 7u32) ^ ror(this.b4, 18u32) ^ (this.b4 >> 3u32)) + this.b12 + (ror(this.b1, 17u32) ^ ror(this.b1, 19u32) ^ (this.b1 >> 10u32))
+        rewrite this.b4 = this.b4 + (ror(this.b5, 7u32) ^ ror(this.b5, 18u32) ^ (this.b5 >> 3u32)) + this.b13 + (ror(this.b2, 17u32) ^ ror(this.b2, 19u32) ^ (this.b2 >> 10u32))
+        rewrite this.b5 = this.b5 + (ror(this.b6, 7u32) ^ ror(this.b6, 18u32) ^ (this.b6 >> 3u32)) + this.b14 + (ror(this.b3, 17u32) ^ ror(this.b3, 19u32) ^ (this.b3 >> 10u32))
+        rewrite this.b6 = this.b6 + (ror(this.b7, 7u32) ^ ror(this.b7, 18u32) ^ (this.b7 >> 3u32)) + this.b15 + (ror(this.b4, 17u32) ^ ror(this.b4, 19u32) ^ (this.b4 >> 10u32))
+        rewrite this.b7 = this.b7 + (ror(this.b8, 7u32) ^ ror(this.b8, 18u32) ^ (this.b8 >> 3u32)) + this.b0 + (ror(this.b5, 17u32) ^ ror(this.b5, 19u32) ^ (this.b5 >> 10u32))
+        rewrite this.b8 = this.b8 + (ror(this.b9, 7u32) ^ ror(this.b9, 18u32) ^ (this.b9 >> 3u32)) + this.b1 + (ror(this.b6, 17u32) ^ ror(this.b6, 19u32) ^ (this.b6 >> 10u32))
+        rewrite this.b9 = this.b9 + (ror(this.b10, 7u32) ^ ror(this.b10, 18u32) ^ (this.b10 >> 3u32)) + this.b2 + (ror(this.b7, 17u32) ^ ror(this.b7, 19u32) ^ (this.b7 >> 10u32))
+        rewrite this.b10 = this.b10 + (ror(this.b11, 7u32) ^ ror(this.b11, 18u32) ^ (this.b11 >> 3u32)) + this.b3 + (ror(this.b8, 17u32) ^ ror(this.b8, 19u32) ^ (this.b8 >> 10u32))
+        rewrite this.b11 = this.b11 + (ror(this.b12, 7u32) ^ ror(this.b12, 18u32) ^ (this.b12 >> 3u32)) + this.b4 + (ror(this.b9, 17u32) ^ ror(this.b9, 19u32) ^ (this.b9 >> 10u32))
+        rewrite this.b12 = this.b12 + (ror(this.b13, 7u32) ^ ror(this.b13, 18u32) ^ (this.b13 >> 3u32)) + this.b5 + (ror(this.b10, 17u32) ^ ror(this.b10, 19u32) ^ (this.b10 >> 10u32))
+        rewrite this.b13 = this.b13 + (ror(this.b14, 7u32) ^ ror(this.b14, 18u32) ^ (this.b14 >> 3u32)) + this.b6 + (ror(this.b11, 17u32) ^ ror(this.b11, 19u32) ^ (this.b11 >> 10u32))
+        rewrite this.b14 = this.b14 + (ror(this.b15, 7u32) ^ ror(this.b15, 18u32) ^ (this.b15 >> 3u32)) + this.b7 + (ror(this.b12, 17u32) ^ ror(this.b12, 19u32) ^ (this.b12 >> 10u32))
+        rewrite this.b15 = this.b15 + (ror(this.b0, 7u32) ^ ror(this.b0, 18u32) ^ (this.b0 >> 3u32)) + this.b8 + (ror(this.b13, 17u32) ^ ror(this.b13, 19u32) ^ (this.b13 >> 10u32))
+
+        // rounds 16..31 (W[16..31] = b0..b15)
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[16] + this.b0
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[17] + this.b1
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[18] + this.b2
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[19] + this.b3
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[20] + this.b4
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[21] + this.b5
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[22] + this.b6
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[23] + this.b7
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[24] + this.b8
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[25] + this.b9
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[26] + this.b10
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[27] + this.b11
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[28] + this.b12
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[29] + this.b13
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[30] + this.b14
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[31] + this.b15
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+
+        // schedule expansion: W[32..47] into b0..b15
+        rewrite this.b0 = this.b0 + (ror(this.b1, 7u32) ^ ror(this.b1, 18u32) ^ (this.b1 >> 3u32)) + this.b9 + (ror(this.b14, 17u32) ^ ror(this.b14, 19u32) ^ (this.b14 >> 10u32))
+        rewrite this.b1 = this.b1 + (ror(this.b2, 7u32) ^ ror(this.b2, 18u32) ^ (this.b2 >> 3u32)) + this.b10 + (ror(this.b15, 17u32) ^ ror(this.b15, 19u32) ^ (this.b15 >> 10u32))
+        rewrite this.b2 = this.b2 + (ror(this.b3, 7u32) ^ ror(this.b3, 18u32) ^ (this.b3 >> 3u32)) + this.b11 + (ror(this.b0, 17u32) ^ ror(this.b0, 19u32) ^ (this.b0 >> 10u32))
+        rewrite this.b3 = this.b3 + (ror(this.b4, 7u32) ^ ror(this.b4, 18u32) ^ (this.b4 >> 3u32)) + this.b12 + (ror(this.b1, 17u32) ^ ror(this.b1, 19u32) ^ (this.b1 >> 10u32))
+        rewrite this.b4 = this.b4 + (ror(this.b5, 7u32) ^ ror(this.b5, 18u32) ^ (this.b5 >> 3u32)) + this.b13 + (ror(this.b2, 17u32) ^ ror(this.b2, 19u32) ^ (this.b2 >> 10u32))
+        rewrite this.b5 = this.b5 + (ror(this.b6, 7u32) ^ ror(this.b6, 18u32) ^ (this.b6 >> 3u32)) + this.b14 + (ror(this.b3, 17u32) ^ ror(this.b3, 19u32) ^ (this.b3 >> 10u32))
+        rewrite this.b6 = this.b6 + (ror(this.b7, 7u32) ^ ror(this.b7, 18u32) ^ (this.b7 >> 3u32)) + this.b15 + (ror(this.b4, 17u32) ^ ror(this.b4, 19u32) ^ (this.b4 >> 10u32))
+        rewrite this.b7 = this.b7 + (ror(this.b8, 7u32) ^ ror(this.b8, 18u32) ^ (this.b8 >> 3u32)) + this.b0 + (ror(this.b5, 17u32) ^ ror(this.b5, 19u32) ^ (this.b5 >> 10u32))
+        rewrite this.b8 = this.b8 + (ror(this.b9, 7u32) ^ ror(this.b9, 18u32) ^ (this.b9 >> 3u32)) + this.b1 + (ror(this.b6, 17u32) ^ ror(this.b6, 19u32) ^ (this.b6 >> 10u32))
+        rewrite this.b9 = this.b9 + (ror(this.b10, 7u32) ^ ror(this.b10, 18u32) ^ (this.b10 >> 3u32)) + this.b2 + (ror(this.b7, 17u32) ^ ror(this.b7, 19u32) ^ (this.b7 >> 10u32))
+        rewrite this.b10 = this.b10 + (ror(this.b11, 7u32) ^ ror(this.b11, 18u32) ^ (this.b11 >> 3u32)) + this.b3 + (ror(this.b8, 17u32) ^ ror(this.b8, 19u32) ^ (this.b8 >> 10u32))
+        rewrite this.b11 = this.b11 + (ror(this.b12, 7u32) ^ ror(this.b12, 18u32) ^ (this.b12 >> 3u32)) + this.b4 + (ror(this.b9, 17u32) ^ ror(this.b9, 19u32) ^ (this.b9 >> 10u32))
+        rewrite this.b12 = this.b12 + (ror(this.b13, 7u32) ^ ror(this.b13, 18u32) ^ (this.b13 >> 3u32)) + this.b5 + (ror(this.b10, 17u32) ^ ror(this.b10, 19u32) ^ (this.b10 >> 10u32))
+        rewrite this.b13 = this.b13 + (ror(this.b14, 7u32) ^ ror(this.b14, 18u32) ^ (this.b14 >> 3u32)) + this.b6 + (ror(this.b11, 17u32) ^ ror(this.b11, 19u32) ^ (this.b11 >> 10u32))
+        rewrite this.b14 = this.b14 + (ror(this.b15, 7u32) ^ ror(this.b15, 18u32) ^ (this.b15 >> 3u32)) + this.b7 + (ror(this.b12, 17u32) ^ ror(this.b12, 19u32) ^ (this.b12 >> 10u32))
+        rewrite this.b15 = this.b15 + (ror(this.b0, 7u32) ^ ror(this.b0, 18u32) ^ (this.b0 >> 3u32)) + this.b8 + (ror(this.b13, 17u32) ^ ror(this.b13, 19u32) ^ (this.b13 >> 10u32))
+
+        // rounds 32..47 (W[32..47] = b0..b15)
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[32] + this.b0
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[33] + this.b1
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[34] + this.b2
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[35] + this.b3
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[36] + this.b4
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[37] + this.b5
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[38] + this.b6
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[39] + this.b7
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[40] + this.b8
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[41] + this.b9
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[42] + this.b10
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[43] + this.b11
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[44] + this.b12
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[45] + this.b13
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[46] + this.b14
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[47] + this.b15
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+
+        // schedule expansion: W[48..63] into b0..b15
+        rewrite this.b0 = this.b0 + (ror(this.b1, 7u32) ^ ror(this.b1, 18u32) ^ (this.b1 >> 3u32)) + this.b9 + (ror(this.b14, 17u32) ^ ror(this.b14, 19u32) ^ (this.b14 >> 10u32))
+        rewrite this.b1 = this.b1 + (ror(this.b2, 7u32) ^ ror(this.b2, 18u32) ^ (this.b2 >> 3u32)) + this.b10 + (ror(this.b15, 17u32) ^ ror(this.b15, 19u32) ^ (this.b15 >> 10u32))
+        rewrite this.b2 = this.b2 + (ror(this.b3, 7u32) ^ ror(this.b3, 18u32) ^ (this.b3 >> 3u32)) + this.b11 + (ror(this.b0, 17u32) ^ ror(this.b0, 19u32) ^ (this.b0 >> 10u32))
+        rewrite this.b3 = this.b3 + (ror(this.b4, 7u32) ^ ror(this.b4, 18u32) ^ (this.b4 >> 3u32)) + this.b12 + (ror(this.b1, 17u32) ^ ror(this.b1, 19u32) ^ (this.b1 >> 10u32))
+        rewrite this.b4 = this.b4 + (ror(this.b5, 7u32) ^ ror(this.b5, 18u32) ^ (this.b5 >> 3u32)) + this.b13 + (ror(this.b2, 17u32) ^ ror(this.b2, 19u32) ^ (this.b2 >> 10u32))
+        rewrite this.b5 = this.b5 + (ror(this.b6, 7u32) ^ ror(this.b6, 18u32) ^ (this.b6 >> 3u32)) + this.b14 + (ror(this.b3, 17u32) ^ ror(this.b3, 19u32) ^ (this.b3 >> 10u32))
+        rewrite this.b6 = this.b6 + (ror(this.b7, 7u32) ^ ror(this.b7, 18u32) ^ (this.b7 >> 3u32)) + this.b15 + (ror(this.b4, 17u32) ^ ror(this.b4, 19u32) ^ (this.b4 >> 10u32))
+        rewrite this.b7 = this.b7 + (ror(this.b8, 7u32) ^ ror(this.b8, 18u32) ^ (this.b8 >> 3u32)) + this.b0 + (ror(this.b5, 17u32) ^ ror(this.b5, 19u32) ^ (this.b5 >> 10u32))
+        rewrite this.b8 = this.b8 + (ror(this.b9, 7u32) ^ ror(this.b9, 18u32) ^ (this.b9 >> 3u32)) + this.b1 + (ror(this.b6, 17u32) ^ ror(this.b6, 19u32) ^ (this.b6 >> 10u32))
+        rewrite this.b9 = this.b9 + (ror(this.b10, 7u32) ^ ror(this.b10, 18u32) ^ (this.b10 >> 3u32)) + this.b2 + (ror(this.b7, 17u32) ^ ror(this.b7, 19u32) ^ (this.b7 >> 10u32))
+        rewrite this.b10 = this.b10 + (ror(this.b11, 7u32) ^ ror(this.b11, 18u32) ^ (this.b11 >> 3u32)) + this.b3 + (ror(this.b8, 17u32) ^ ror(this.b8, 19u32) ^ (this.b8 >> 10u32))
+        rewrite this.b11 = this.b11 + (ror(this.b12, 7u32) ^ ror(this.b12, 18u32) ^ (this.b12 >> 3u32)) + this.b4 + (ror(this.b9, 17u32) ^ ror(this.b9, 19u32) ^ (this.b9 >> 10u32))
+        rewrite this.b12 = this.b12 + (ror(this.b13, 7u32) ^ ror(this.b13, 18u32) ^ (this.b13 >> 3u32)) + this.b5 + (ror(this.b10, 17u32) ^ ror(this.b10, 19u32) ^ (this.b10 >> 10u32))
+        rewrite this.b13 = this.b13 + (ror(this.b14, 7u32) ^ ror(this.b14, 18u32) ^ (this.b14 >> 3u32)) + this.b6 + (ror(this.b11, 17u32) ^ ror(this.b11, 19u32) ^ (this.b11 >> 10u32))
+        rewrite this.b14 = this.b14 + (ror(this.b15, 7u32) ^ ror(this.b15, 18u32) ^ (this.b15 >> 3u32)) + this.b7 + (ror(this.b12, 17u32) ^ ror(this.b12, 19u32) ^ (this.b12 >> 10u32))
+        rewrite this.b15 = this.b15 + (ror(this.b0, 7u32) ^ ror(this.b0, 18u32) ^ (this.b0 >> 3u32)) + this.b8 + (ror(this.b13, 17u32) ^ ror(this.b13, 19u32) ^ (this.b13 >> 10u32))
+
+        // rounds 48..63 (W[48..63] = b0..b15)
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[48] + this.b0
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[49] + this.b1
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[50] + this.b2
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[51] + this.b3
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[52] + this.b4
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[53] + this.b5
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[54] + this.b6
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[55] + this.b7
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[56] + this.b8
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[57] + this.b9
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[58] + this.b10
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[59] + this.b11
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[60] + this.b12
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[61] + this.b13
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[62] + this.b14
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+        rewrite this.t1 = this.cv7 + (ror(this.cv4, 6u32) ^ ror(this.cv4, 11u32) ^ ror(this.cv4, 25u32)) + ((this.cv4 & this.cv5) ^ ((~this.cv4) & this.cv6)) + k[63] + this.b15
+        rewrite this.t2 = (ror(this.cv0, 2u32) ^ ror(this.cv0, 13u32) ^ ror(this.cv0, 22u32)) + ((this.cv0 & this.cv1) ^ (this.cv0 & this.cv2) ^ (this.cv1 & this.cv2))
+        rewrite this.cv7 = this.cv6; rewrite this.cv6 = this.cv5; rewrite this.cv5 = this.cv4; rewrite this.cv4 = this.cv3 + this.t1; rewrite this.cv3 = this.cv2; rewrite this.cv2 = this.cv1; rewrite this.cv1 = this.cv0; rewrite this.cv0 = this.t1 + this.t2
+
+        // fold back into saved state
+        rewrite this.cv0 = h0 + this.cv0
+        rewrite this.cv1 = h1 + this.cv1
+        rewrite this.cv2 = h2 + this.cv2
+        rewrite this.cv3 = h3 + this.cv3
+        rewrite this.cv4 = h4 + this.cv4
+        rewrite this.cv5 = h5 + this.cv5
+        rewrite this.cv6 = h6 + this.cv6
+        rewrite this.cv7 = h7 + this.cv7
+    }
+
+    // Full blocks word-packed, tail bytes via set_buf_byte.
+    fun update(ref p: bytes, start: int64, len: int64, ref k: uint32[]) {
+        if len <= 0 { return }
+        set off: int64 = start
+        set end: int64 = start + len
+        while off < end {
+            if this.fill == 0 && off + 64 <= end {
+                this.load_block(ref p, off)
+                this.compress(ref k)
+                rewrite off = off + 64
+            } else {
+                this.set_buf_byte(this.fill, p[off])
+                rewrite this.fill = this.fill + 1
+                if this.fill == 64 {
+                    rewrite this.fill = 0
+                    this.compress(ref k)
+                }
+                rewrite off = off + 1
+            }
+        }
+        rewrite this.total = this.total + cast(len, "uint64")
+    }
+
+    // Pad, final compress, fold state into uint64.
+    fun final(ref k: uint32[]) -> uint64 {
+        set bits: uint64 = this.total * 8u64
+        this.set_buf_byte(this.fill, 0x80u8)
+        rewrite this.fill = this.fill + 1
+        if this.fill > 56 {
+            while this.fill < 64 {
+                this.set_buf_byte(this.fill, 0u8)
+                rewrite this.fill = this.fill + 1
+            }
+            rewrite this.fill = 0
+            this.compress(ref k)
+        }
+        while this.fill < 56 {
+            this.set_buf_byte(this.fill, 0u8)
+            rewrite this.fill = this.fill + 1
+        }
+        set i: int64 = 0
+        while i < 8 {
+            this.set_buf_byte(63 - i, cast(bits >> cast(8 * i, "uint64"), "uint8"))
+            rewrite i = i + 1
+        }
+        this.compress(ref k)
+        set res: uint64 = MIX_SEED
+        rewrite res = mix(res, cast(this.cv0, "uint64"))
+        rewrite res = mix(res, cast(this.cv1, "uint64"))
+        rewrite res = mix(res, cast(this.cv2, "uint64"))
+        rewrite res = mix(res, cast(this.cv3, "uint64"))
+        rewrite res = mix(res, cast(this.cv4, "uint64"))
+        rewrite res = mix(res, cast(this.cv5, "uint64"))
+        rewrite res = mix(res, cast(this.cv6, "uint64"))
+        rewrite res = mix(res, cast(this.cv7, "uint64"))
+        return res
+    }
+}
+
+public fun sha256_test() -> uint64 {
+    set buf = make_buf()
+    set k = init_sha_k()
+    set sha = init Sha256()
+    for pass in 0..SHA_PASSES {
+        sha.update(ref buf, 0, HASH_BUF_BYTES, ref k)
+    }
+    set res = sha.final(ref k)
+    free_u8(buf)
+    free_u32(k)
+    return res
+}
+
+public fun crc32_test() -> uint64 {
+    set buf = make_buf()
+    set table = alloc_u32(256)
+    for n in 0..256 {
+        set c: uint32 = cast(n, "uint32")
+        for i in 0..8 {
+            if c & 1u32 != 0u32 {
+                rewrite c = (c >> 1u32) ^ CRC_POLY
+            } else {
+                rewrite c = c >> 1u32
+            }
+        }
+        rewrite table[n] = c
+    }
+    set crc: uint32 = 0xffffffffu32
+    for pass in 0..CRC_PASSES {
+        for i in 0..HASH_BUF_BYTES {
+            set idx: int64 = cast((crc ^ cast(buf[i], "uint32")) & 0xffu32, "int64")
+            rewrite crc = table[idx] ^ (crc >> 8u32)
+        }
+    }
+    set res: uint64 = mix(MIX_SEED, cast(~crc, "uint64"))
+    free_u8(buf)
+    free_u32(table)
+    return res
+}
+
+public fun fnv_test() -> uint64 {
+    set buf = make_buf()
+    set h: uint64 = MIX_SEED
+    for pass in 0..FNV_PASSES {
+        for i in 0..HASH_BUF_BYTES {
+            rewrite h = mix(h, cast(buf[i], "uint64"))
+        }
+    }
+    free_u8(buf)
+    return h
+}

@@ -1,0 +1,49 @@
+load .common: CryptoError
+load .hmac: hmac_sha256
+
+public fun pbkdf2_sha256(ref password: bytes, ref salt: bytes, iterations: int32, key_len: int64) -> bytes {
+    if iterations <= 0 {
+        panic(CryptoError { message: "pbkdf2 iterations must be positive", code: 71 })
+    }
+    if key_len < 0 {
+        panic(CryptoError { message: "pbkdf2 key_len cannot be negative", code: 72 })
+    }
+    if key_len == 0 { return cast("", "bytes") }
+
+    set l: int64 = (key_len + 31) / 32
+    set out_bytes: uint8[] = []
+    set block_idx: int64 = 1
+    while block_idx <= l {
+        set salt_buf: uint8[] = []
+        for i in 0..salt.len() {
+            salt_buf.push(salt[i])
+        }
+        set bi: uint32 = cast(block_idx, "uint32")
+        salt_buf.push(cast((bi >> 24u32) & 255u32, "uint8"))
+        salt_buf.push(cast((bi >> 16u32) & 255u32, "uint8"))
+        salt_buf.push(cast((bi >> 8u32) & 255u32, "uint8"))
+        salt_buf.push(cast(bi & 255u32, "uint8"))
+
+        set salt_data: bytes = from_raw_parts(salt_buf.as_ptr(), salt_buf.len(), salt_buf.len())
+        set u_prev: bytes = hmac_sha256(ref password, ref salt_data)
+        set u_accum: uint8[] = []
+        for k in 0..32 {
+            u_accum.push(u_prev[k])
+        }
+
+        set iter: int32 = 2
+        while iter <= iterations {
+            rewrite u_prev = hmac_sha256(ref password, ref u_prev)
+            for k in 0..32 {
+                rewrite u_accum[k] = u_accum[k] ^ u_prev[k]
+            }
+            rewrite iter = iter + 1
+        }
+
+        for k in 0..32 {
+            out_bytes.push(u_accum[k])
+        }
+        rewrite block_idx = block_idx + 1
+    }
+    return from_raw_parts(out_bytes.as_ptr(), key_len, key_len)
+}

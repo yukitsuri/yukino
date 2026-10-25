@@ -1,0 +1,42 @@
+[package]
+name = "yukic-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "yukic"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-span = { workspace = true }
+yukic-diagnostics = { workspace = true }
+yukic-target = { workspace = true }
+yukic-lexer = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-parser = { workspace = true }
+yukic-resolve = { workspace = true }
+yukic-macro = { workspace = true }
+yukic-types = { workspace = true }
+yukic-borrow = { workspace = true }
+yukic-dce = { workspace = true }
+yukic-codegen = { workspace = true }
+yukic-opt = { workspace = true }
+clap = { workspace = true }
+inkwell = { workspace = true }
+thiserror = { workspace = true }
+owo-colors = { workspace = true }
+toml = { workspace = true }
+indexmap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+yukino-builtin = { workspace = true }
+
+[build-dependencies]

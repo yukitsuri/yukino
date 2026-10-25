@@ -1,0 +1,347 @@
+load ...compress: deflate_compress, deflate_decompress, crc32
+load ..files: file_read_text, file_write_text, file_exists, file_open_write, file_remove
+load ..dirs: dir_create_all, dir_walk, dir_exists
+load ..paths: path_join, path_parent
+load .pass: zipcrypto_decrypt, zipcrypto_encrypt
+
+public struct ZipEntry {
+    path: string
+    size: int64
+    compressed_size: int64
+    crc32: uint32
+    method: uint16
+    is_dir: bool
+    is_encrypted: bool
+}
+
+public struct ZipError {
+    message: string
+    code: int32
+}
+
+fun panic_zip_error(msg: string, code: int32) {
+    panic(ZipError { message: msg, code: code })
+}
+
+fun read_u16(ref data: bytes, offset: int64) -> uint16 {
+    set b0 = cast(data[offset], "uint16")
+    set b1 = cast(data[offset + 1], "uint16")
+    return b0 | (b1 << 8)
+}
+
+fun read_u32(ref data: bytes, offset: int64) -> uint32 {
+    set b0 = cast(data[offset], "uint32")
+    set b1 = cast(data[offset + 1], "uint32")
+    set b2 = cast(data[offset + 2], "uint32")
+    set b3 = cast(data[offset + 3], "uint32")
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
+fun find_eocd(ref data: bytes) -> int64 {
+    if data.len() < 22 { return -1 }
+    set max_search: int64 = if data.len() > 65557 { 65557 } else { data.len() }
+    set start = data.len() - 22
+    set min_offset = data.len() - max_search
+    set offset = start
+    while offset >= min_offset {
+        if data[offset] == 80u8 && data[offset + 1] == 75u8 && data[offset + 2] == 5u8 && data[offset + 3] == 6u8 {
+            return offset
+        }
+        rewrite offset = offset - 1
+    }
+    return -1
+}
+
+public fun zip_list(archive_path: string) -> ZipEntry[] {
+    if !file_exists(archive_path.cp()) {
+        panic_zip_error("archive file not found: " + archive_path.cp(), 404)
+    }
+    set data: bytes = cast(file_read_text(archive_path), "bytes")
+    set eocd_pos = find_eocd(ref data)
+    if eocd_pos < 0 {
+        panic_zip_error("invalid zip archive: missing EOCD", 301)
+    }
+    set total_entries = read_u16(ref data, eocd_pos + 10)
+    set cd_offset = cast(read_u32(ref data, eocd_pos + 16), "int64")
+    set entries: ZipEntry[] = []
+    set curr = cd_offset
+    for i in 0..cast(total_entries, "int64") {
+        if curr + 46 > data.len() { break }
+        if data[curr] != 80u8 || data[curr + 1] != 75u8 || data[curr + 2] != 1u8 || data[curr + 3] != 2u8 {
+            break
+        }
+        set flags = read_u16(ref data, curr + 8)
+        set method = read_u16(ref data, curr + 10)
+        set crc = read_u32(ref data, curr + 16)
+        set comp_size = cast(read_u32(ref data, curr + 20), "int64")
+        set uncomp_size = cast(read_u32(ref data, curr + 24), "int64")
+        set name_len = cast(read_u16(ref data, curr + 28), "int64")
+        set extra_len = cast(read_u16(ref data, curr + 30), "int64")
+        set comment_len = cast(read_u16(ref data, curr + 32), "int64")
+        set name_bytes = data[(curr + 46)..(curr + 46 + name_len)]
+        set name_str = cast(name_bytes, "string")
+        set is_dir = name_str.len() > 0 && name_str[name_str.len() - 1] == 47u8
+        set is_enc = (flags & 1u16) != 0u16
+        entries.push(ZipEntry {
+            path: name_str,
+            size: uncomp_size,
+            compressed_size: comp_size,
+            crc32: crc,
+            method: method,
+            is_dir: is_dir,
+            is_encrypted: is_enc,
+        })
+        rewrite curr = curr + 46 + name_len + extra_len + comment_len
+    }
+    return entries
+}
+
+public fun zip_unpack_with_password(archive_path: string, dest_dir: string, password: string) -> bool {
+    if !file_exists(archive_path.cp()) {
+        panic_zip_error("archive file not found: " + archive_path.cp(), 404)
+    }
+    set data: bytes = cast(file_read_text(archive_path), "bytes")
+    set eocd_pos = find_eocd(ref data)
+    if eocd_pos < 0 {
+        panic_zip_error("invalid zip archive: missing EOCD", 301)
+    }
+    set total_entries = read_u16(ref data, eocd_pos + 10)
+    set cd_offset = cast(read_u32(ref data, eocd_pos + 16), "int64")
+    dir_create_all(dest_dir.cp())
+    set curr = cd_offset
+    for i in 0..cast(total_entries, "int64") {
+        if curr + 46 > data.len() { break }
+        set flags = read_u16(ref data, curr + 8)
+        set method = read_u16(ref data, curr + 10)
+        set expected_crc = read_u32(ref data, curr + 16)
+        set comp_size = cast(read_u32(ref data, curr + 20), "int64")
+        set name_len = cast(read_u16(ref data, curr + 28), "int64")
+        set extra_len = cast(read_u16(ref data, curr + 30), "int64")
+        set comment_len = cast(read_u16(ref data, curr + 32), "int64")
+        set local_offset = cast(read_u32(ref data, curr + 42), "int64")
+        set name_bytes = data[(curr + 46)..(curr + 46 + name_len)]
+        set name_str = cast(name_bytes, "string")
+        set is_dir = name_str.len() > 0 && name_str[name_str.len() - 1] == 47u8
+        set is_enc = (flags & 1u16) != 0u16
+        set target_path = path_join(dest_dir.cp(), name_str.cp())
+        if is_dir {
+            dir_create_all(target_path)
+        } else {
+            set parent = path_parent(target_path.cp())
+            if parent.len() > 0 && !dir_exists(parent.cp()) {
+                dir_create_all(parent)
+            }
+            set loc_name_len = cast(read_u16(ref data, local_offset + 26), "int64")
+            set loc_extra_len = cast(read_u16(ref data, local_offset + 28), "int64")
+            set payload_offset = local_offset + 30 + loc_name_len + loc_extra_len
+            set payload = data[payload_offset..(payload_offset + comp_size)]
+            set raw_payload = payload.cp()
+            if is_enc {
+                if password.len() == 0 {
+                    panic_zip_error("file '" + name_str.cp() + "' is password protected", 302)
+                }
+                set dec = zipcrypto_decrypt(password.cp(), payload)
+                rewrite raw_payload = dec[12..]
+            }
+            set uncomp_bytes: bytes = cast("", "bytes")
+            if method == 0u16 {
+                rewrite uncomp_bytes = raw_payload
+            } elif method == 8u16 {
+                rewrite uncomp_bytes = deflate_decompress(raw_payload)
+            } else {
+                panic_zip_error("unsupported compression method: ${method}", 303)
+            }
+            set actual_crc = crc32(uncomp_bytes.cp())
+            if expected_crc != 0u32 && actual_crc != expected_crc {
+                panic_zip_error("CRC32 checksum mismatch for '" + name_str.cp() + "'", 304)
+            }
+            file_write_text(target_path, cast(uncomp_bytes, "string"))
+        }
+        rewrite curr = curr + 46 + name_len + extra_len + comment_len
+    }
+    return true
+}
+
+public fun zip_unpack(archive_path: string, dest_dir: string) -> bool {
+    return zip_unpack_with_password(archive_path, dest_dir, "")
+}
+
+public fun zip_pack_with_password(archive_path: string, paths: string[], password: string, method: uint16 = 8) -> bool {
+    set file = file_open_write(archive_path.cp())
+    set cd_tmp = archive_path.cp() + ".cd.tmp"
+    set cd_file = file_open_write(cd_tmp.cp())
+    set total_records: uint16 = 0
+    set current_offset: uint32 = 0
+    set cd_size: uint32 = 0
+    for i in 0..paths.len() {
+        set p = paths[i].cp()
+        if !file_exists(p.cp()) && !dir_exists(p.cp()) {
+            file.close()
+            cd_file.close()
+            file_remove(cd_tmp.cp())
+            panic_zip_error("path does not exist: " + p.cp(), 404)
+        }
+        set file_list: string[] = []
+        if dir_exists(p.cp()) {
+            file_list.push(p.cp() + "/")
+            set subs = dir_walk(p.cp())
+            for i in 0..subs.len() { file_list.push(subs[i].cp()) }
+        } else { file_list.push(p.cp()) }
+        for i in 0..file_list.len() {
+            set item = file_list[i].cp()
+            set is_dir = item.len() > 0 && item[item.len() - 1] == 47u8
+            set name_bytes = cast(item.cp(), "bytes")
+            set nlen = cast(name_bytes.len(), "uint16")
+            set uncomp_data: bytes = cast("", "bytes")
+            if !is_dir {
+                rewrite uncomp_data = cast(file_read_text(item), "bytes")
+            }
+            set uncomp_size = cast(uncomp_data.len(), "uint32")
+            set uncomp_crc: uint32 = if is_dir { 0u32 } else { crc32(uncomp_data.cp()) }
+            set comp_data: bytes = uncomp_data.cp()
+            set use_method: uint16 = if is_dir { 0u16 } else { method }
+            if use_method == 8u16 && !is_dir {
+                rewrite comp_data = deflate_compress(uncomp_data)
+            }
+            set is_enc = password.len() > 0 && !is_dir
+            if is_enc {
+                set enc_header: uint8[12]
+                for i in 0..11 { rewrite enc_header[i] = 88u8 }
+                set header_bytes: bytes = from_raw_parts(enc_header.as_ptr(), 12, 12)
+                set combined_payload: bytes = cast(header_bytes + comp_data, "bytes")
+                rewrite comp_data = zipcrypto_encrypt(password.cp(), combined_payload)
+            }
+            set comp_size = cast(comp_data.len(), "uint32")
+            set loc_hdr: uint8[30]
+            rewrite loc_hdr[0] = 80u8
+            rewrite loc_hdr[1] = 75u8
+            rewrite loc_hdr[2] = 3u8
+            rewrite loc_hdr[3] = 4u8
+            rewrite loc_hdr[4] = 20u8
+            rewrite loc_hdr[5] = 0u8
+            rewrite loc_hdr[6] = if is_enc { 1u8 } else { 0u8 }
+            rewrite loc_hdr[7] = 0u8
+            rewrite loc_hdr[8] = cast(use_method & 255u16, "uint8")
+            rewrite loc_hdr[9] = cast((use_method >> 8) & 255u16, "uint8")
+            rewrite loc_hdr[10] = 0u8
+            rewrite loc_hdr[11] = 0u8
+            rewrite loc_hdr[12] = 0u8
+            rewrite loc_hdr[13] = 0u8
+            rewrite loc_hdr[14] = cast(uncomp_crc & 255u32, "uint8")
+            rewrite loc_hdr[15] = cast((uncomp_crc >> 8) & 255u32, "uint8")
+            rewrite loc_hdr[16] = cast((uncomp_crc >> 16) & 255u32, "uint8")
+            rewrite loc_hdr[17] = cast((uncomp_crc >> 24) & 255u32, "uint8")
+            rewrite loc_hdr[18] = cast(comp_size & 255u32, "uint8")
+            rewrite loc_hdr[19] = cast((comp_size >> 8) & 255u32, "uint8")
+            rewrite loc_hdr[20] = cast((comp_size >> 16) & 255u32, "uint8")
+            rewrite loc_hdr[21] = cast((comp_size >> 24) & 255u32, "uint8")
+            rewrite loc_hdr[22] = cast(uncomp_size & 255u32, "uint8")
+            rewrite loc_hdr[23] = cast((uncomp_size >> 8) & 255u32, "uint8")
+            rewrite loc_hdr[24] = cast((uncomp_size >> 16) & 255u32, "uint8")
+            rewrite loc_hdr[25] = cast((uncomp_size >> 24) & 255u32, "uint8")
+            rewrite loc_hdr[26] = cast(nlen & 255u16, "uint8")
+            rewrite loc_hdr[27] = cast((nlen >> 8) & 255u16, "uint8")
+            rewrite loc_hdr[28] = 0u8
+            rewrite loc_hdr[29] = 0u8
+            file.write(loc_hdr.as_ptr(), 30)
+            file.write(name_bytes.as_ptr(), cast(name_bytes.len(), "int64"))
+            if comp_size > 0u32 {
+                file.write(comp_data.as_ptr(), cast(comp_size, "int64"))
+            }
+
+            set cd_hdr: uint8[46]
+            rewrite cd_hdr[0] = 80u8
+            rewrite cd_hdr[1] = 75u8
+            rewrite cd_hdr[2] = 1u8
+            rewrite cd_hdr[3] = 2u8
+            rewrite cd_hdr[4] = 20u8
+            rewrite cd_hdr[5] = 0u8
+            rewrite cd_hdr[6] = 20u8
+            rewrite cd_hdr[7] = 0u8
+            rewrite cd_hdr[8] = if is_enc { 1u8 } else { 0u8 }
+            rewrite cd_hdr[9] = 0u8
+            rewrite cd_hdr[10] = cast(use_method & 255u16, "uint8")
+            rewrite cd_hdr[11] = cast((use_method >> 8) & 255u16, "uint8")
+            rewrite cd_hdr[12] = 0u8
+            rewrite cd_hdr[13] = 0u8
+            rewrite cd_hdr[14] = 0u8
+            rewrite cd_hdr[15] = 0u8
+            rewrite cd_hdr[16] = cast(uncomp_crc & 255u32, "uint8")
+            rewrite cd_hdr[17] = cast((uncomp_crc >> 8) & 255u32, "uint8")
+            rewrite cd_hdr[18] = cast((uncomp_crc >> 16) & 255u32, "uint8")
+            rewrite cd_hdr[19] = cast((uncomp_crc >> 24) & 255u32, "uint8")
+            rewrite cd_hdr[20] = cast(comp_size & 255u32, "uint8")
+            rewrite cd_hdr[21] = cast((comp_size >> 8) & 255u32, "uint8")
+            rewrite cd_hdr[22] = cast((comp_size >> 16) & 255u32, "uint8")
+            rewrite cd_hdr[23] = cast((comp_size >> 24) & 255u32, "uint8")
+            rewrite cd_hdr[24] = cast(uncomp_size & 255u32, "uint8")
+            rewrite cd_hdr[25] = cast((uncomp_size >> 8) & 255u32, "uint8")
+            rewrite cd_hdr[26] = cast((uncomp_size >> 16) & 255u32, "uint8")
+            rewrite cd_hdr[27] = cast((uncomp_size >> 24) & 255u32, "uint8")
+            rewrite cd_hdr[28] = cast(nlen & 255u16, "uint8")
+            rewrite cd_hdr[29] = cast((nlen >> 8) & 255u16, "uint8")
+            rewrite cd_hdr[30] = 0u8
+            rewrite cd_hdr[31] = 0u8
+            rewrite cd_hdr[32] = 0u8
+            rewrite cd_hdr[33] = 0u8
+            rewrite cd_hdr[34] = 0u8
+            rewrite cd_hdr[35] = 0u8
+            rewrite cd_hdr[36] = 0u8
+            rewrite cd_hdr[37] = 0u8
+            set ext_attr: uint32 = if is_dir { 1106051088u32 } else { 2175008768u32 }
+            rewrite cd_hdr[38] = cast(ext_attr & 255u32, "uint8")
+            rewrite cd_hdr[39] = cast((ext_attr >> 8) & 255u32, "uint8")
+            rewrite cd_hdr[40] = cast((ext_attr >> 16) & 255u32, "uint8")
+            rewrite cd_hdr[41] = cast((ext_attr >> 24) & 255u32, "uint8")
+            rewrite cd_hdr[42] = cast(current_offset & 255u32, "uint8")
+            rewrite cd_hdr[43] = cast((current_offset >> 8) & 255u32, "uint8")
+            rewrite cd_hdr[44] = cast((current_offset >> 16) & 255u32, "uint8")
+            rewrite cd_hdr[45] = cast((current_offset >> 24) & 255u32, "uint8")
+            cd_file.write(cd_hdr.as_ptr(), 46)
+            cd_file.write(name_bytes.as_ptr(), cast(name_bytes.len(), "int64"))
+            rewrite current_offset = current_offset + 30u32 + cast(name_bytes.len(), "uint32") + comp_size
+            rewrite cd_size = cd_size + 46u32 + cast(name_bytes.len(), "uint32")
+            rewrite total_records = total_records + 1u16
+        }
+    }
+    cd_file.close()
+    if cd_size > 0u32 {
+        set cd_bytes: bytes = cast(file_read_text(cd_tmp.cp()), "bytes")
+        file.write(cd_bytes.as_ptr(), cast(cd_bytes.len(), "int64"))
+    }
+    file_remove(cd_tmp)
+    set eocd_hdr: uint8[22]
+    rewrite eocd_hdr[0] = 80u8
+    rewrite eocd_hdr[1] = 75u8
+    rewrite eocd_hdr[2] = 5u8
+    rewrite eocd_hdr[3] = 6u8
+    rewrite eocd_hdr[4] = 0u8
+    rewrite eocd_hdr[5] = 0u8
+    rewrite eocd_hdr[6] = 0u8
+    rewrite eocd_hdr[7] = 0u8
+    rewrite eocd_hdr[8] = cast(total_records & 255u16, "uint8")
+    rewrite eocd_hdr[9] = cast((total_records >> 8) & 255u16, "uint8")
+    rewrite eocd_hdr[10] = cast(total_records & 255u16, "uint8")
+    rewrite eocd_hdr[11] = cast((total_records >> 8) & 255u16, "uint8")
+    rewrite eocd_hdr[12] = cast(cd_size & 255u32, "uint8")
+    rewrite eocd_hdr[13] = cast((cd_size >> 8) & 255u32, "uint8")
+    rewrite eocd_hdr[14] = cast((cd_size >> 16) & 255u32, "uint8")
+    rewrite eocd_hdr[15] = cast((cd_size >> 24) & 255u32, "uint8")
+    rewrite eocd_hdr[16] = cast(current_offset & 255u32, "uint8")
+    rewrite eocd_hdr[17] = cast((current_offset >> 8) & 255u32, "uint8")
+    rewrite eocd_hdr[18] = cast((current_offset >> 16) & 255u32, "uint8")
+    rewrite eocd_hdr[19] = cast((current_offset >> 24) & 255u32, "uint8")
+    rewrite eocd_hdr[20] = 0u8
+    rewrite eocd_hdr[21] = 0u8
+    file.write(eocd_hdr.as_ptr(), 22)
+    file.close()
+    return true
+}
+
+public fun zip_pack(archive_path: string, paths: string[], method: uint16 = 8) -> bool {
+    return zip_pack_with_password(archive_path, paths, "", method)
+}
+
+public fun zip_pack_dir(archive_path: string, dir_path: string, method: uint16 = 8) -> bool {
+    return zip_pack(archive_path, [dir_path], method)
+}

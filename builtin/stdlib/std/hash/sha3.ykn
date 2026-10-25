@@ -1,0 +1,477 @@
+load ..fs.files: file_size, open_read, File
+load .common: HashError, bytes_to_hex
+
+fun rotl64(x: uint64, n: int64) -> uint64 {
+    if n == 0 { return x }
+    set nu: uint64 = cast(n, "uint64")
+    set diff: uint64 = cast(64 - n, "uint64")
+    return (x << nu) | (x >> diff)
+}
+
+fun keccak_rho(x: int64, y: int64) -> int64 {
+    set idx: int64 = x + y * 5
+    switch idx {
+        0 -> { return 0 }
+        1 -> { return 1 }
+        2 -> { return 62 }
+        3 -> { return 28 }
+        4 -> { return 27 }
+        5 -> { return 36 }
+        6 -> { return 44 }
+        7 -> { return 6 }
+        8 -> { return 55 }
+        9 -> { return 20 }
+        10 -> { return 3 }
+        11 -> { return 10 }
+        12 -> { return 43 }
+        13 -> { return 25 }
+        14 -> { return 39 }
+        15 -> { return 41 }
+        16 -> { return 45 }
+        17 -> { return 15 }
+        18 -> { return 21 }
+        19 -> { return 8 }
+        20 -> { return 18 }
+        21 -> { return 2 }
+        22 -> { return 61 }
+        23 -> { return 56 }
+        24 -> { return 14 }
+        else -> { return 0 }
+    }
+    return 0
+}
+
+fun keccak_rc(round: int64) -> uint64 {
+    switch round {
+        0 -> { return 0x0000000000000001u64 }
+        1 -> { return 0x0000000000008082u64 }
+        2 -> { return 0x800000000000808au64 }
+        3 -> { return 0x8000000080008000u64 }
+        4 -> { return 0x000000000000808bu64 }
+        5 -> { return 0x0000000080000001u64 }
+        6 -> { return 0x8000000080008081u64 }
+        7 -> { return 0x8000000000008009u64 }
+        8 -> { return 0x000000000000008au64 }
+        9 -> { return 0x0000000000000088u64 }
+        10 -> { return 0x0000000080008009u64 }
+        11 -> { return 0x000000008000000au64 }
+        12 -> { return 0x000000008000808bu64 }
+        13 -> { return 0x800000000000008bu64 }
+        14 -> { return 0x8000000000008089u64 }
+        15 -> { return 0x8000000000008003u64 }
+        16 -> { return 0x8000000000008002u64 }
+        17 -> { return 0x8000000000000080u64 }
+        18 -> { return 0x000000000000800au64 }
+        19 -> { return 0x800000008000000au64 }
+        20 -> { return 0x8000000080008081u64 }
+        21 -> { return 0x8000000000008080u64 }
+        22 -> { return 0x0000000080000001u64 }
+        23 -> { return 0x8000000080008008u64 }
+        else -> { return 0u64 }
+    }
+    return 0u64
+}
+
+fun keccak_f1600(ref ~st: uint64[]) {
+    set c: uint64[5]
+    set d: uint64[5]
+    set b: uint64[25]
+
+    for round in 0..24 {
+        for x in 0..5 {
+            rewrite c[x] = st[x] ^ st[x + 5] ^ st[x + 10] ^ st[x + 15] ^ st[x + 20]
+        }
+        for x in 0..5 {
+            set xm1: int64 = if x == 0 { 4 } else { x - 1 }
+            set xp1: int64 = if x == 4 { 0 } else { x + 1 }
+            rewrite d[x] = c[xm1] ^ rotl64(c[xp1], 1)
+        }
+        for x in 0..5 {
+            set dx: uint64 = d[x]
+            for y in 0..5 {
+                rewrite st[x + y * 5] = st[x + y * 5] ^ dx
+            }
+        }
+
+        for x in 0..5 {
+            for y in 0..5 {
+                set r: int64 = keccak_rho(x, y)
+                set pi_x: int64 = y
+                set pi_y: int64 = (2 * x + 3 * y) % 5
+                rewrite b[pi_x + pi_y * 5] = rotl64(st[x + y * 5], r)
+            }
+        }
+
+        for x in 0..5 {
+            set xp1: int64 = (x + 1) % 5
+            set xp2: int64 = (x + 2) % 5
+            for y in 0..5 {
+                set y5: int64 = y * 5
+                rewrite st[x + y5] = b[x + y5] ^ ((~b[xp1 + y5]) & b[xp2 + y5])
+            }
+        }
+
+        rewrite st[0] = st[0] ^ keccak_rc(round)
+    }
+}
+
+fun load64_le(ref data: bytes, offset: int64) -> uint64 {
+    return cast(data[offset], "uint64") |
+           (cast(data[offset + 1], "uint64") << 8u64) |
+           (cast(data[offset + 2], "uint64") << 16u64) |
+           (cast(data[offset + 3], "uint64") << 24u64) |
+           (cast(data[offset + 4], "uint64") << 32u64) |
+           (cast(data[offset + 5], "uint64") << 40u64) |
+           (cast(data[offset + 6], "uint64") << 48u64) |
+           (cast(data[offset + 7], "uint64") << 56u64)
+}
+
+fun init_buf200() -> uint8[] {
+    set res: uint8[] = []
+    for i in 0..200 {
+        res.push(0u8)
+    }
+    return res
+}
+
+fun init_a25() -> uint64[] {
+    set res: uint64[] = []
+    for i in 0..25 {
+        res.push(0u64)
+    }
+    return res
+}
+
+public class Sha3_256 {
+    a: uint64[]
+    buf: uint8[]
+    buf_len: int32
+
+    // slice fields are allocated by sha3_256_init()
+    public fun init() {
+        rewrite this.buf_len = 0
+    }
+
+    // guard against direct init Sha3_256() usage
+    fun ensure_ready() {
+        if this.a.len() != 25 || this.buf.len() != 200 {
+            panic(HashError {
+                message: "Sha3_256 is not initialized; use sha3_256_init()",
+                code: 105,
+            })
+        }
+    }
+
+    public fun reset() {
+        this.ensure_ready()
+        for i in 0..25 {
+            rewrite this.a[i] = 0u64
+        }
+        rewrite this.buf_len = 0
+    }
+
+    public fun update(data: bytes) {
+        this.ensure_ready()
+        set len: int64 = data.len()
+        set p: int64 = 0
+        set rem: int64 = len
+
+        if this.buf_len > 0 {
+            set need: int32 = 136 - this.buf_len
+            if cast(rem, "int32") < need {
+                for i in 0..rem {
+                    rewrite this.buf[cast(this.buf_len, "int64") + i] = data[p + i]
+                }
+                rewrite this.buf_len = this.buf_len + cast(rem, "int32")
+                return
+            }
+            set need_64: int64 = cast(need, "int64")
+            for i in 0..need_64 {
+                rewrite this.buf[cast(this.buf_len, "int64") + i] = data[p + i]
+            }
+            set bdata: bytes = cast(from_raw_parts(this.buf.as_ptr(), 136), "bytes")
+            for i in 0..17 {
+                rewrite this.a[i] = this.a[i] ^ load64_le(ref bdata, i * 8)
+            }
+            keccak_f1600(ref ~this.a)
+            rewrite p = p + need_64
+            rewrite rem = rem - need_64
+            rewrite this.buf_len = 0
+        }
+
+        set blocks: int64 = rem / 136
+        for i in 0..blocks {
+            for j in 0..17 {
+                rewrite this.a[j] = this.a[j] ^ load64_le(ref data, p + j * 8)
+            }
+            keccak_f1600(ref ~this.a)
+            rewrite p = p + 136
+            rewrite rem = rem - 136
+        }
+
+        if rem > 0 {
+            for i in 0..rem {
+                rewrite this.buf[i] = data[p + i]
+            }
+            rewrite this.buf_len = cast(rem, "int32")
+        }
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        this.update(d)
+    }
+
+    public fun finish() -> bytes {
+        this.ensure_ready()
+        rewrite this.buf[cast(this.buf_len, "int64")] = 0x06u8
+        rewrite this.buf_len = this.buf_len + 1
+        while this.buf_len < 136 {
+            rewrite this.buf[cast(this.buf_len, "int64")] = 0u8
+            rewrite this.buf_len = this.buf_len + 1
+        }
+        rewrite this.buf[135] = this.buf[135] | 0x80u8
+
+        set bdata: bytes = cast(from_raw_parts(this.buf.as_ptr(), 136), "bytes")
+        for i in 0..17 {
+            rewrite this.a[i] = this.a[i] ^ load64_le(ref bdata, i * 8)
+        }
+        keccak_f1600(ref ~this.a)
+
+        set out: uint8[32]
+        for i in 0..4 {
+            set w: uint64 = this.a[i]
+            for j in 0..8 {
+                set shift: uint64 = cast(j * 8, "uint64")
+                rewrite out[i * 8 + j] = cast((w >> shift) & 255u64, "uint8")
+            }
+        }
+        return cast(from_raw_parts(out.as_ptr(), 32), "bytes")
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = this.finish()
+        return bytes_to_hex(ref b)
+    }
+}
+
+public class Sha3_512 {
+    a: uint64[]
+    buf: uint8[]
+    buf_len: int32
+
+    // slice fields are allocated by sha3_512_init()
+    public fun init() {
+        rewrite this.buf_len = 0
+    }
+
+    // guard against direct init Sha3_512() usage
+    fun ensure_ready() {
+        if this.a.len() != 25 || this.buf.len() != 200 {
+            panic(HashError {
+                message: "Sha3_512 is not initialized; use sha3_512_init()",
+                code: 105,
+            })
+        }
+    }
+
+    public fun reset() {
+        this.ensure_ready()
+        for i in 0..25 {
+            rewrite this.a[i] = 0u64
+        }
+        rewrite this.buf_len = 0
+    }
+
+    public fun update(data: bytes) {
+        this.ensure_ready()
+        set len: int64 = data.len()
+        set p: int64 = 0
+        set rem: int64 = len
+
+        if this.buf_len > 0 {
+            set need: int32 = 72 - this.buf_len
+            if cast(rem, "int32") < need {
+                for i in 0..rem {
+                    rewrite this.buf[cast(this.buf_len, "int64") + i] = data[p + i]
+                }
+                rewrite this.buf_len = this.buf_len + cast(rem, "int32")
+                return
+            }
+            set need_64: int64 = cast(need, "int64")
+            for i in 0..need_64 {
+                rewrite this.buf[cast(this.buf_len, "int64") + i] = data[p + i]
+            }
+            set bdata: bytes = cast(from_raw_parts(this.buf.as_ptr(), 72), "bytes")
+            for i in 0..9 {
+                rewrite this.a[i] = this.a[i] ^ load64_le(ref bdata, i * 8)
+            }
+            keccak_f1600(ref ~this.a)
+            rewrite p = p + need_64
+            rewrite rem = rem - need_64
+            rewrite this.buf_len = 0
+        }
+
+        set blocks: int64 = rem / 72
+        for i in 0..blocks {
+            for j in 0..9 {
+                rewrite this.a[j] = this.a[j] ^ load64_le(ref data, p + j * 8)
+            }
+            keccak_f1600(ref ~this.a)
+            rewrite p = p + 72
+            rewrite rem = rem - 72
+        }
+
+        if rem > 0 {
+            for i in 0..rem {
+                rewrite this.buf[i] = data[p + i]
+            }
+            rewrite this.buf_len = cast(rem, "int32")
+        }
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        this.update(d)
+    }
+
+    public fun finish() -> bytes {
+        this.ensure_ready()
+        rewrite this.buf[cast(this.buf_len, "int64")] = 0x06u8
+        rewrite this.buf_len = this.buf_len + 1
+        while this.buf_len < 72 {
+            rewrite this.buf[cast(this.buf_len, "int64")] = 0u8
+            rewrite this.buf_len = this.buf_len + 1
+        }
+        rewrite this.buf[71] = this.buf[71] | 0x80u8
+
+        set bdata: bytes = cast(from_raw_parts(this.buf.as_ptr(), 72), "bytes")
+        for i in 0..9 {
+            rewrite this.a[i] = this.a[i] ^ load64_le(ref bdata, i * 8)
+        }
+        keccak_f1600(ref ~this.a)
+
+        set out: uint8[64]
+        for i in 0..8 {
+            set w: uint64 = this.a[i]
+            for j in 0..8 {
+                set shift: uint64 = cast(j * 8, "uint64")
+                rewrite out[i * 8 + j] = cast((w >> shift) & 255u64, "uint8")
+            }
+        }
+        return cast(from_raw_parts(out.as_ptr(), 64), "bytes")
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = this.finish()
+        return bytes_to_hex(ref b)
+    }
+}
+
+public fun sha3_256_init() -> Sha3_256 {
+    set st = init Sha3_256()
+    rewrite st.a = init_a25()
+    rewrite st.buf = init_buf200()
+    return st
+}
+
+public fun sha3_256(ref data: bytes) -> bytes {
+    set st: Sha3_256 = sha3_256_init()
+    set d: bytes = cast(from_raw_parts(data.as_ptr(), data.len()), "bytes")
+    st.update(d)
+    return st.finish()
+}
+
+public fun sha3_256_str(s: string) -> string {
+    set st: Sha3_256 = sha3_256_init()
+    st.update_str(s)
+    return st.finish_hex()
+}
+
+public fun sha3_256_file(path: string) -> string {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "file not found or cannot get size",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set st: Sha3_256 = sha3_256_init()
+    if sz == 0 {
+        f.close()
+        return st.finish_hex()
+    }
+    set buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(buf.as_ptr(), to_read)
+        if n <= 0 {
+            f.close()
+            panic(HashError {
+                message: "error reading file",
+                code: 104,
+            })
+        }
+        set chunk: bytes = cast(from_raw_parts(buf.as_ptr(), n), "bytes")
+        st.update(chunk)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return st.finish_hex()
+}
+
+public fun sha3_512_init() -> Sha3_512 {
+    set st = init Sha3_512()
+    rewrite st.a = init_a25()
+    rewrite st.buf = init_buf200()
+    return st
+}
+
+public fun sha3_512(ref data: bytes) -> bytes {
+    set st: Sha3_512 = sha3_512_init()
+    set d: bytes = cast(from_raw_parts(data.as_ptr(), data.len()), "bytes")
+    st.update(d)
+    return st.finish()
+}
+
+public fun sha3_512_str(s: string) -> string {
+    set st: Sha3_512 = sha3_512_init()
+    st.update_str(s)
+    return st.finish_hex()
+}
+
+public fun sha3_512_file(path: string) -> string {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "file not found or cannot get size",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set st: Sha3_512 = sha3_512_init()
+    if sz == 0 {
+        f.close()
+        return st.finish_hex()
+    }
+    set buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(buf.as_ptr(), to_read)
+        if n <= 0 {
+            f.close()
+            panic(HashError {
+                message: "error reading file",
+                code: 104,
+            })
+        }
+        set chunk: bytes = cast(from_raw_parts(buf.as_ptr(), n), "bytes")
+        st.update(chunk)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return st.finish_hex()
+}

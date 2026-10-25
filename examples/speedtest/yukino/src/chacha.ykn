@@ -1,0 +1,67 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u32, free_u32
+
+static CHACHA_BLOCKS: int32 = 2000000
+static CHACHA_WORDS: int64 = 16
+static CHACHA_DOUBLE_ROUNDS: int32 = 10
+
+#[stable, inline_always]
+fun rol(x: uint32, n: uint32) -> uint32 {
+    return (x << n) | (x >> (32u32 - n))
+}
+
+#[inline_always]
+fun quarter(ref ~s: uint32[], a: int64, b: int64, c: int64, d: int64) {
+    rewrite s[a] = s[a] + s[b]
+    rewrite s[d] = rol(s[d] ^ s[a], 16u32)
+    rewrite s[c] = s[c] + s[d]
+    rewrite s[b] = rol(s[b] ^ s[c], 12u32)
+    rewrite s[a] = s[a] + s[b]
+    rewrite s[d] = rol(s[d] ^ s[a], 8u32)
+    rewrite s[c] = s[c] + s[d]
+    rewrite s[b] = rol(s[b] ^ s[c], 7u32)
+}
+
+#[inline_always]
+fun chacha_block(ref input: uint32[], ref ~out: uint32[]) {
+    for i in 0..CHACHA_WORDS {
+        rewrite out[i] = input[i]
+    }
+    for r in 0..CHACHA_DOUBLE_ROUNDS {
+        quarter(ref ~out, 0, 4, 8, 12)
+        quarter(ref ~out, 1, 5, 9, 13)
+        quarter(ref ~out, 2, 6, 10, 14)
+        quarter(ref ~out, 3, 7, 11, 15)
+        quarter(ref ~out, 0, 5, 10, 15)
+        quarter(ref ~out, 1, 6, 11, 12)
+        quarter(ref ~out, 2, 7, 8, 13)
+        quarter(ref ~out, 3, 4, 9, 14)
+    }
+    for i in 0..CHACHA_WORDS {
+        rewrite out[i] = out[i] + input[i]
+    }
+}
+
+public fun chacha_test() -> uint64 {
+    set st = alloc_u32(CHACHA_WORDS)
+    set out = alloc_u32(CHACHA_WORDS)
+    set r = init Rng(RNG_SEED)
+    rewrite st[0] = 0x61707865u32
+    rewrite st[1] = 0x3320646eu32
+    rewrite st[2] = 0x79622d32u32
+    rewrite st[3] = 0x6b206574u32
+    for i in 4..CHACHA_WORDS {
+        rewrite st[i] = cast(r.next(), "uint32")
+    }
+    set acc: uint32 = 0
+    for c in 0..CHACHA_BLOCKS {
+        rewrite st[12] = cast(c, "uint32")
+        chacha_block(ref st, ref ~out)
+        for i in 0..CHACHA_WORDS {
+            rewrite acc = acc ^ out[i]
+        }
+    }
+    set res: uint64 = mix(MIX_SEED, cast(acc, "uint64"))
+    free_u32(st)
+    free_u32(out)
+    return res
+}

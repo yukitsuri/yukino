@@ -1,0 +1,571 @@
+load ..fs.files: File, open_read, file_size
+load .common: HashError, bytes_to_hex
+
+
+static B3_CHUNK_START: uint32 = 1u32
+static B3_CHUNK_END: uint32 = 2u32
+static B3_PARENT: uint32 = 4u32
+static B3_ROOT: uint32 = 8u32
+
+fun b3_iv(i: int64) -> uint32 {
+    switch i {
+        0 -> { return 0x6a09e667u32 }
+        1 -> { return 0xbb67ae85u32 }
+        2 -> { return 0x3c6ef372u32 }
+        3 -> { return 0xa54ff53au32 }
+        4 -> { return 0x510e527fu32 }
+        5 -> { return 0x9b05688cu32 }
+        6 -> { return 0x1f83d9abu32 }
+        7 -> { return 0x5be0cd19u32 }
+        else -> { return 0u32 }
+    }
+    return 0u32
+}
+
+fun b3_perm(i: int64) -> int64 {
+    switch i {
+        0 -> { return 2 }
+        1 -> { return 6 }
+        2 -> { return 3 }
+        3 -> { return 10 }
+        4 -> { return 7 }
+        5 -> { return 0 }
+        6 -> { return 4 }
+        7 -> { return 13 }
+        8 -> { return 1 }
+        9 -> { return 11 }
+        10 -> { return 12 }
+        11 -> { return 5 }
+        12 -> { return 9 }
+        13 -> { return 14 }
+        14 -> { return 15 }
+        15 -> { return 8 }
+        else -> { return 0 }
+    }
+    return 0
+}
+
+fun rotr32(x: uint32, n: int64) -> uint32 {
+    set nu: uint32 = cast(n, "uint32")
+    set diff: uint32 = cast(32 - n, "uint32")
+    return (x >> nu) | (x << diff)
+}
+
+fun b3_g(ref ~v: uint32[], a: int64, b: int64, c: int64, d: int64, mx: uint32, my: uint32) {
+    rewrite v[a] = v[a] + v[b] + mx
+    rewrite v[d] = rotr32(v[d] ^ v[a], 16)
+    rewrite v[c] = v[c] + v[d]
+    rewrite v[b] = rotr32(v[b] ^ v[c], 12)
+    rewrite v[a] = v[a] + v[b] + my
+    rewrite v[d] = rotr32(v[d] ^ v[a], 8)
+    rewrite v[c] = v[c] + v[d]
+    rewrite v[b] = rotr32(v[b] ^ v[c], 7)
+}
+
+fun b3_round(ref ~v: uint32[], ref m: uint32[]) {
+    b3_g(ref ~v, 0, 4, 8, 12, m[0], m[1])
+    b3_g(ref ~v, 1, 5, 9, 13, m[2], m[3])
+    b3_g(ref ~v, 2, 6, 10, 14, m[4], m[5])
+    b3_g(ref ~v, 3, 7, 11, 15, m[6], m[7])
+    b3_g(ref ~v, 0, 5, 10, 15, m[8], m[9])
+    b3_g(ref ~v, 1, 6, 11, 12, m[10], m[11])
+    b3_g(ref ~v, 2, 7, 8, 13, m[12], m[13])
+    b3_g(ref ~v, 3, 4, 9, 14, m[14], m[15])
+}
+
+fun b3_compress(ref cv: uint32[], ref block_words: uint32[], block_len: uint32, counter: uint64, flags: uint32) -> uint32[] {
+    set v: uint32[] = []
+    for i in 0..8 {
+        v.push(cv[i])
+    }
+    for i in 0..4 {
+        v.push(b3_iv(i))
+    }
+    v.push(cast(counter & 0xffffffffu64, "uint32"))
+    v.push(cast((counter >> 32u64) & 0xffffffffu64, "uint32"))
+    v.push(block_len)
+    v.push(flags)
+
+    set m: uint32[] = []
+    for i in 0..16 {
+        m.push(block_words[i])
+    }
+
+    for round in 0..7 {
+        b3_round(ref ~v, ref m)
+        set next_m: uint32[16]
+        for i in 0..16 {
+            rewrite next_m[i] = m[b3_perm(i)]
+        }
+        for i in 0..16 {
+            rewrite m[i] = next_m[i]
+        }
+    }
+
+    set out: uint32[] = []
+    for i in 0..8 {
+        out.push(v[i] ^ v[i + 8])
+    }
+    for i in 0..8 {
+        out.push(v[i + 8] ^ cv[i])
+    }
+    return out
+}
+
+fun b3_words_to_bytes(ref w: uint32[]) -> bytes {
+    set out: uint8[32]
+    for i in 0..8 {
+        set word: uint32 = w[i]
+        rewrite out[i * 4] = cast(word & 255u32, "uint8")
+        rewrite out[i * 4 + 1] = cast((word >> 8u32) & 255u32, "uint8")
+        rewrite out[i * 4 + 2] = cast((word >> 16u32) & 255u32, "uint8")
+        rewrite out[i * 4 + 3] = cast((word >> 24u32) & 255u32, "uint8")
+    }
+    return from_raw_parts(out.as_ptr(), 32, 32)
+}
+
+
+fun init_iv() -> uint32[] {
+    set res: uint32[] = []
+    for i in 0..8 {
+        res.push(b3_iv(i))
+    }
+    return res
+}
+
+fun b3_parent_cv(ref left: uint32[], ref right: uint32[]) -> uint32[] {
+    set iv = init_iv()
+    set m: uint32[] = []
+    for i in 0..8 {
+        m.push(left[i])
+    }
+    for i in 0..8 {
+        m.push(right[i])
+    }
+    set out = b3_compress(ref iv, ref m, 64u32, 0u64, B3_PARENT)
+    set res: uint32[] = []
+    for i in 0..8 {
+        res.push(out[i])
+    }
+    return res
+}
+
+public class Blake3 {
+    cv0: uint32
+    cv1: uint32
+    cv2: uint32
+    cv3: uint32
+    cv4: uint32
+    cv5: uint32
+    cv6: uint32
+    cv7: uint32
+
+    chunk_counter: uint64
+    blocks_compressed: int32
+    chunk_buf_len: int32
+
+    b0: uint32
+    b1: uint32
+    b2: uint32
+    b3: uint32
+    b4: uint32
+    b5: uint32
+    b6: uint32
+    b7: uint32
+    b8: uint32
+    b9: uint32
+    b10: uint32
+    b11: uint32
+    b12: uint32
+    b13: uint32
+    b14: uint32
+    b15: uint32
+
+    cv_stack_len: int32
+    stack: uint32[]
+
+    public fun init() {
+        rewrite this.cv0 = 0x6a09e667u32
+        rewrite this.cv1 = 0xbb67ae85u32
+        rewrite this.cv2 = 0x3c6ef372u32
+        rewrite this.cv3 = 0xa54ff53au32
+        rewrite this.cv4 = 0x510e527fu32
+        rewrite this.cv5 = 0x9b05688cu32
+        rewrite this.cv6 = 0x1f83d9abu32
+        rewrite this.cv7 = 0x5be0cd19u32
+        rewrite this.chunk_counter = 0u64
+        rewrite this.blocks_compressed = 0
+        rewrite this.chunk_buf_len = 0
+        rewrite this.b0 = 0u32
+        rewrite this.b1 = 0u32
+        rewrite this.b2 = 0u32
+        rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32
+        rewrite this.b5 = 0u32
+        rewrite this.b6 = 0u32
+        rewrite this.b7 = 0u32
+        rewrite this.b8 = 0u32
+        rewrite this.b9 = 0u32
+        rewrite this.b10 = 0u32
+        rewrite this.b11 = 0u32
+        rewrite this.b12 = 0u32
+        rewrite this.b13 = 0u32
+        rewrite this.b14 = 0u32
+        rewrite this.b15 = 0u32
+        rewrite this.cv_stack_len = 0
+    }
+
+    // stack is allocated by blake3_init()
+    fun ensure_ready() {
+        if this.stack.len() != 432 {
+            panic(HashError {
+                message: "Blake3 is not initialized; use blake3_init()",
+                code: 105,
+            })
+        }
+    }
+
+    public fun reset() {
+        this.ensure_ready()
+        rewrite this.cv0 = 0x6a09e667u32
+        rewrite this.cv1 = 0xbb67ae85u32
+        rewrite this.cv2 = 0x3c6ef372u32
+        rewrite this.cv3 = 0xa54ff53au32
+        rewrite this.cv4 = 0x510e527fu32
+        rewrite this.cv5 = 0x9b05688cu32
+        rewrite this.cv6 = 0x1f83d9abu32
+        rewrite this.cv7 = 0x5be0cd19u32
+        rewrite this.chunk_counter = 0u64
+        rewrite this.blocks_compressed = 0
+        rewrite this.chunk_buf_len = 0
+        rewrite this.b0 = 0u32
+        rewrite this.b1 = 0u32
+        rewrite this.b2 = 0u32
+        rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32
+        rewrite this.b5 = 0u32
+        rewrite this.b6 = 0u32
+        rewrite this.b7 = 0u32
+        rewrite this.b8 = 0u32
+        rewrite this.b9 = 0u32
+        rewrite this.b10 = 0u32
+        rewrite this.b11 = 0u32
+        rewrite this.b12 = 0u32
+        rewrite this.b13 = 0u32
+        rewrite this.b14 = 0u32
+        rewrite this.b15 = 0u32
+        rewrite this.cv_stack_len = 0
+    }
+
+
+    fun chunk_len() -> int64 {
+        return cast(this.blocks_compressed, "int64") * 64 + cast(this.chunk_buf_len, "int64")
+    }
+
+    fun chunk_start_flag() -> uint32 {
+        if this.blocks_compressed == 0 { return 1u32 }
+        return 0u32
+    }
+
+    fun collect_cv() -> uint32[] {
+        set res: uint32[] = []
+        res.push(this.cv0)
+        res.push(this.cv1)
+        res.push(this.cv2)
+        res.push(this.cv3)
+        res.push(this.cv4)
+        res.push(this.cv5)
+        res.push(this.cv6)
+        res.push(this.cv7)
+        return res
+    }
+
+    fun set_cv_all(out: uint32[]) {
+        rewrite this.cv0 = out[0]
+        rewrite this.cv1 = out[1]
+        rewrite this.cv2 = out[2]
+        rewrite this.cv3 = out[3]
+        rewrite this.cv4 = out[4]
+        rewrite this.cv5 = out[5]
+        rewrite this.cv6 = out[6]
+        rewrite this.cv7 = out[7]
+    }
+
+    fun collect_buf_words() -> uint32[] {
+        set res: uint32[] = []
+        res.push(this.b0)
+        res.push(this.b1)
+        res.push(this.b2)
+        res.push(this.b3)
+        res.push(this.b4)
+        res.push(this.b5)
+        res.push(this.b6)
+        res.push(this.b7)
+        res.push(this.b8)
+        res.push(this.b9)
+        res.push(this.b10)
+        res.push(this.b11)
+        res.push(this.b12)
+        res.push(this.b13)
+        res.push(this.b14)
+        res.push(this.b15)
+        return res
+    }
+
+    fun set_buf_byte(offset: int64, b: uint8) {
+        set w_idx: int64 = offset / 4
+        set shift: uint32 = cast((offset % 4) * 8, "uint32")
+        set mask: uint32 = 0xffffffffu32 ^ (0xffu32 << shift)
+        set val: uint32 = cast(b, "uint32") << shift
+        switch w_idx {
+            0 -> { rewrite this.b0 = (this.b0 & mask) | val }
+            1 -> { rewrite this.b1 = (this.b1 & mask) | val }
+            2 -> { rewrite this.b2 = (this.b2 & mask) | val }
+            3 -> { rewrite this.b3 = (this.b3 & mask) | val }
+            4 -> { rewrite this.b4 = (this.b4 & mask) | val }
+            5 -> { rewrite this.b5 = (this.b5 & mask) | val }
+            6 -> { rewrite this.b6 = (this.b6 & mask) | val }
+            7 -> { rewrite this.b7 = (this.b7 & mask) | val }
+            8 -> { rewrite this.b8 = (this.b8 & mask) | val }
+            9 -> { rewrite this.b9 = (this.b9 & mask) | val }
+            10 -> { rewrite this.b10 = (this.b10 & mask) | val }
+            11 -> { rewrite this.b11 = (this.b11 & mask) | val }
+            12 -> { rewrite this.b12 = (this.b12 & mask) | val }
+            13 -> { rewrite this.b13 = (this.b13 & mask) | val }
+            14 -> { rewrite this.b14 = (this.b14 & mask) | val }
+            15 -> { rewrite this.b15 = (this.b15 & mask) | val }
+            else -> {}
+        }
+    }
+
+    fun clear_buf() {
+        rewrite this.b0 = 0u32
+        rewrite this.b1 = 0u32
+        rewrite this.b2 = 0u32
+        rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32
+        rewrite this.b5 = 0u32
+        rewrite this.b6 = 0u32
+        rewrite this.b7 = 0u32
+        rewrite this.b8 = 0u32
+        rewrite this.b9 = 0u32
+        rewrite this.b10 = 0u32
+        rewrite this.b11 = 0u32
+        rewrite this.b12 = 0u32
+        rewrite this.b13 = 0u32
+        rewrite this.b14 = 0u32
+        rewrite this.b15 = 0u32
+    }
+
+    fun root_output() -> bytes {
+        set bwords = this.collect_buf_words()
+        set cv = this.collect_cv()
+        set flags: uint32 = this.chunk_start_flag() | B3_CHUNK_END | B3_ROOT
+        set out = b3_compress(ref cv, ref bwords, cast(this.chunk_buf_len, "uint32"), this.chunk_counter, flags)
+        return b3_words_to_bytes(ref out)
+    }
+
+    fun reset_chunk_state(new_counter: uint64) {
+        rewrite this.cv0 = 0x6a09e667u32
+        rewrite this.cv1 = 0xbb67ae85u32
+        rewrite this.cv2 = 0x3c6ef372u32
+        rewrite this.cv3 = 0xa54ff53au32
+        rewrite this.cv4 = 0x510e527fu32
+        rewrite this.cv5 = 0x9b05688cu32
+        rewrite this.cv6 = 0x1f83d9abu32
+        rewrite this.cv7 = 0x5be0cd19u32
+        rewrite this.chunk_counter = new_counter
+        rewrite this.blocks_compressed = 0
+        rewrite this.chunk_buf_len = 0
+        this.clear_buf()
+    }
+
+    fun chunk_output_cv() -> uint32[] {
+        set bwords = this.collect_buf_words()
+        set cv = this.collect_cv()
+        set flags: uint32 = this.chunk_start_flag() | B3_CHUNK_END
+        set out = b3_compress(ref cv, ref bwords, cast(this.chunk_buf_len, "uint32"), this.chunk_counter, flags)
+        set res: uint32[] = []
+        for i in 0..8 {
+            res.push(out[i])
+        }
+        return res
+    }
+
+    fun push_cv(cv: uint32[]) {
+        set base: int64 = cast(this.cv_stack_len, "int64") * 8
+        for i in 0..8 {
+            rewrite this.stack[base + i] = cv[i]
+        }
+        rewrite this.cv_stack_len = this.cv_stack_len + 1
+    }
+
+    fun pop_cv() -> uint32[] {
+        rewrite this.cv_stack_len = this.cv_stack_len - 1
+        set base: int64 = cast(this.cv_stack_len, "int64") * 8
+        set res: uint32[] = []
+        for i in 0..8 {
+            res.push(this.stack[base + i])
+        }
+        return res
+    }
+
+    fun add_chunk_cv(new_cv: uint32[], total_chunks: uint64) {
+        set cur_cv = new_cv
+        set tc = total_chunks
+        while tc & 1u64 == 0u64 {
+            set left = this.pop_cv()
+            rewrite cur_cv = b3_parent_cv(ref left, ref cur_cv)
+            rewrite tc = tc >> 1u64
+        }
+        this.push_cv(cur_cv)
+    }
+
+    public fun update(data: bytes) {
+        this.ensure_ready()
+        set len: int64 = data.len()
+        set p: int64 = 0
+        while p < len {
+            if this.chunk_len() == 1024 {
+                set chunk_cv = this.chunk_output_cv()
+                set total_chunks: uint64 = this.chunk_counter + 1u64
+                this.add_chunk_cv(chunk_cv, total_chunks)
+                this.reset_chunk_state(total_chunks)
+            }
+
+            if this.chunk_buf_len == 64 {
+                if this.blocks_compressed < 15 {
+                    set bwords = this.collect_buf_words()
+                    set cv = this.collect_cv()
+                    set flags: uint32 = this.chunk_start_flag()
+                    set out = b3_compress(ref cv, ref bwords, 64u32, this.chunk_counter, flags)
+                    this.set_cv_all(out)
+                    rewrite this.blocks_compressed = this.blocks_compressed + 1
+                    rewrite this.chunk_buf_len = 0
+                    this.clear_buf()
+                }
+            }
+
+            set want_block: int32 = 64 - this.chunk_buf_len
+            set want_chunk: int64 = 1024 - this.chunk_len()
+            set rem_input: int64 = len - p
+            set take_chunk: int64 = if want_chunk < rem_input { want_chunk } else { rem_input }
+            set take: int64 = if cast(want_block, "int64") < take_chunk { cast(want_block, "int64") } else { take_chunk }
+            for i in 0..take {
+                this.set_buf_byte(cast(this.chunk_buf_len, "int64") + i, data[p + i])
+            }
+            rewrite this.chunk_buf_len = this.chunk_buf_len + cast(take, "int32")
+            rewrite p = p + take
+        }
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        this.update(d)
+    }
+
+    public fun finish() -> bytes {
+        this.ensure_ready()
+        if this.cv_stack_len == 0 {
+            return this.root_output()
+        }
+
+        set bwords = this.collect_buf_words()
+        set cv = this.collect_cv()
+        set flags: uint32 = this.chunk_start_flag() | B3_CHUNK_END
+        set cur_out = b3_compress(ref cv, ref bwords, cast(this.chunk_buf_len, "uint32"), this.chunk_counter, flags)
+        set cur_cv: uint32[] = []
+        for i in 0..8 {
+            cur_cv.push(cur_out[i])
+        }
+
+        set remaining: int32 = this.cv_stack_len
+        while remaining > 1 {
+            rewrite remaining = remaining - 1
+            set base: int64 = cast(remaining, "int64") * 8
+            set left: uint32[] = []
+            for i in 0..8 {
+                left.push(this.stack[base + i])
+            }
+            rewrite cur_cv = b3_parent_cv(ref left, ref cur_cv)
+        }
+
+        set root_left: uint32[] = []
+        for i in 0..8 {
+            root_left.push(this.stack[i])
+        }
+        set iv = init_iv()
+        set parent_m: uint32[] = []
+        for i in 0..8 {
+            parent_m.push(root_left[i])
+        }
+        for i in 0..8 {
+            parent_m.push(cur_cv[i])
+        }
+        set root_out = b3_compress(ref iv, ref parent_m, 64u32, 0u64, B3_PARENT | B3_ROOT)
+        return b3_words_to_bytes(ref root_out)
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = this.finish()
+        return bytes_to_hex(ref b)
+    }
+}
+
+public fun blake3_init() -> Blake3 {
+    set st: Blake3 = init Blake3()
+    set s: uint32[] = []
+    for i in 0..432 {
+        s.push(0u32)
+    }
+    rewrite st.stack = s
+    return st
+}
+
+public fun blake3(ref data: bytes) -> bytes {
+    set st: Blake3 = blake3_init()
+    set d: bytes = from_raw_parts(data.as_ptr(), data.len(), data.len())
+    st.update(d)
+    return st.finish()
+}
+
+public fun blake3_str(s: string) -> string {
+    set st: Blake3 = blake3_init()
+    st.update_str(s)
+    return st.finish_hex()
+}
+
+public fun blake3_file(path: string) -> string {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "file not found or cannot get size",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set st: Blake3 = blake3_init()
+    if sz == 0 {
+        f.close()
+        return st.finish_hex()
+    }
+    set buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(buf.as_ptr(), to_read)
+        if n <= 0 {
+            f.close()
+            panic(HashError {
+                message: "error reading file",
+                code: 104,
+            })
+        }
+        set chunk: bytes = from_raw_parts(buf.as_ptr(), n, n)
+        st.update(chunk)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return st.finish_hex()
+}
+

@@ -1,0 +1,265 @@
+load ..io: print, flush, set_mouse_mode, is_mouse_enabled, poll_readable, read_char
+
+public static MOUSE_BTN_LEFT: int32 = 0
+public static MOUSE_BTN_MIDDLE: int32 = 1
+public static MOUSE_BTN_RIGHT: int32 = 2
+public static MOUSE_BTN_NONE: int32 = 3
+public static MOUSE_BTN_BACK: int32 = 4
+public static MOUSE_BTN_FORWARD: int32 = 5
+
+public static MOUSE_DOWN: int32 = 0
+public static MOUSE_UP: int32 = 1
+public static MOUSE_DRAG: int32 = 2
+public static MOUSE_MOVE: int32 = 3
+public static MOUSE_SCROLL_UP: int32 = 4
+public static MOUSE_SCROLL_DOWN: int32 = 5
+public static MOUSE_SCROLL_LEFT: int32 = 6
+public static MOUSE_SCROLL_RIGHT: int32 = 7
+
+public class MouseEvent {
+    public kind: int32
+    public button: int32
+    public x: int32
+    public y: int32
+    public ctrl: bool
+    public alt: bool
+    public shift: bool
+
+    public fun init(kind: int32, button: int32, x: int32, y: int32, ctrl: bool = false, alt: bool = false, shift: bool = false) {
+        rewrite this.kind = kind
+        rewrite this.button = button
+        rewrite this.x = x
+        rewrite this.y = y
+        rewrite this.ctrl = ctrl
+        rewrite this.alt = alt
+        rewrite this.shift = shift
+    }
+
+    public fun is_down() -> bool {
+        return this.kind == MOUSE_DOWN
+    }
+
+    public fun is_up() -> bool {
+        return this.kind == MOUSE_UP
+    }
+
+    public fun is_drag() -> bool {
+        return this.kind == MOUSE_DRAG
+    }
+
+    public fun is_move() -> bool {
+        return this.kind == MOUSE_MOVE
+    }
+
+    public fun is_scroll_up() -> bool {
+        return this.kind == MOUSE_SCROLL_UP
+    }
+
+    public fun is_scroll_down() -> bool {
+        return this.kind == MOUSE_SCROLL_DOWN
+    }
+
+    public fun is_scroll_left() -> bool {
+        return this.kind == MOUSE_SCROLL_LEFT
+    }
+
+    public fun is_scroll_right() -> bool {
+        return this.kind == MOUSE_SCROLL_RIGHT
+    }
+
+    public fun is_left_click() -> bool {
+        return this.kind == MOUSE_DOWN && this.button == MOUSE_BTN_LEFT
+    }
+
+    public fun is_right_click() -> bool {
+        return this.kind == MOUSE_DOWN && this.button == MOUSE_BTN_RIGHT
+    }
+
+    public fun is_middle_click() -> bool {
+        return this.kind == MOUSE_DOWN && this.button == MOUSE_BTN_MIDDLE
+    }
+
+    public fun to_string() -> string {
+        set prefix = ""
+        if this.ctrl { rewrite prefix = prefix + "Ctrl+" }
+        if this.alt { rewrite prefix = prefix + "Alt+" }
+        if this.shift { rewrite prefix = prefix + "Shift+" }
+
+        set action_s = "Unknown"
+        if this.kind == MOUSE_DOWN { rewrite action_s = "Down" }
+        elif this.kind == MOUSE_UP { rewrite action_s = "Up" }
+        elif this.kind == MOUSE_DRAG { rewrite action_s = "Drag" }
+        elif this.kind == MOUSE_MOVE { rewrite action_s = "Move" }
+        elif this.kind == MOUSE_SCROLL_UP { rewrite action_s = "ScrollUp" }
+        elif this.kind == MOUSE_SCROLL_DOWN { rewrite action_s = "ScrollDown" }
+        elif this.kind == MOUSE_SCROLL_LEFT { rewrite action_s = "ScrollLeft" }
+        elif this.kind == MOUSE_SCROLL_RIGHT { rewrite action_s = "ScrollRight" }
+
+        set btn_s = "None"
+        if this.button == MOUSE_BTN_LEFT { rewrite btn_s = "Left" }
+        elif this.button == MOUSE_BTN_MIDDLE { rewrite btn_s = "Middle" }
+        elif this.button == MOUSE_BTN_RIGHT { rewrite btn_s = "Right" }
+        elif this.button == MOUSE_BTN_BACK { rewrite btn_s = "Back" }
+        elif this.button == MOUSE_BTN_FORWARD { rewrite btn_s = "Forward" }
+
+        return prefix + "MouseEvent(" + action_s + ", btn=" + btn_s + ", x=" + cast(this.x, "string") + ", y=" + cast(this.y, "string") + ")"
+    }
+}
+
+public fun mouse_event(kind: int32, button: int32, x: int32, y: int32, ctrl: bool = false, alt: bool = false, shift: bool = false) -> MouseEvent {
+    return init MouseEvent(kind, button, x, y, ctrl, alt, shift)
+}
+
+public fun enable_mouse() {
+    set_mouse_mode(true)
+    print("\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h")
+    flush()
+}
+
+public fun disable_mouse() {
+    print("\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l")
+    flush()
+    set_mouse_mode(false)
+}
+
+public fun enable_mouse_capture() { enable_mouse() }
+public fun disable_mouse_capture() { disable_mouse() }
+
+public fun is_mouse_active() -> bool { return is_mouse_enabled() }
+
+public fun toggle_mouse() -> bool {
+    if is_mouse_enabled() { disable_mouse(); return false }
+    enable_mouse()
+    return true
+}
+
+public fun toggle_mouse_capture() -> bool {
+    return toggle_mouse()
+}
+
+public fun enable_mouse_motion() {
+    print("\x1b[?1003h")
+    flush()
+}
+
+public fun disable_mouse_motion() {
+    print("\x1b[?1003l")
+    flush()
+}
+
+fun decode_button_type(low_bits: int32, is_extra: bool) -> int32 {
+    if is_extra {
+        if low_bits == 0 { return MOUSE_BTN_BACK }
+        if low_bits == 1 { return MOUSE_BTN_FORWARD }
+        return MOUSE_BTN_NONE
+    }
+    if low_bits == 0 { return MOUSE_BTN_LEFT }
+    if low_bits == 1 { return MOUSE_BTN_MIDDLE }
+    if low_bits == 2 { return MOUSE_BTN_RIGHT }
+    return MOUSE_BTN_NONE
+}
+
+public fun decode_mouse_sgr(code: int32, x_raw: int32, y_raw: int32, is_release: bool) -> MouseEvent {
+    set is_shift = (code & 4) != 0
+    set is_alt = (code & 8) != 0
+    set is_ctrl = (code & 16) != 0
+    set is_motion = (code & 32) != 0
+    set is_wheel = (code & 64) != 0
+    set is_extra = (code & 128) != 0
+
+    set x: int32 = 0
+    if x_raw > 0 { rewrite x = x_raw - 1 }
+    set y: int32 = 0
+    if y_raw > 0 { rewrite y = y_raw - 1 }
+
+    if is_wheel {
+        set wheel_dir = code & 3
+        set kind: int32 = MOUSE_SCROLL_UP
+        if wheel_dir == 1 { rewrite kind = MOUSE_SCROLL_DOWN }
+        elif wheel_dir == 2 { rewrite kind = MOUSE_SCROLL_LEFT }
+        elif wheel_dir == 3 { rewrite kind = MOUSE_SCROLL_RIGHT }
+        return mouse_event(kind, MOUSE_BTN_NONE, x, y, is_ctrl, is_alt, is_shift)
+    }
+
+    if is_motion {
+        set low = code & 3
+        if low == 3 {
+            return mouse_event(MOUSE_MOVE, MOUSE_BTN_NONE, x, y, is_ctrl, is_alt, is_shift)
+        }
+        set btn = decode_button_type(low, is_extra)
+        return mouse_event(MOUSE_DRAG, btn, x, y, is_ctrl, is_alt, is_shift)
+    }
+
+    set kind: int32 = if is_release { MOUSE_UP } else { MOUSE_DOWN }
+    set btn = decode_button_type(code & 3, is_extra)
+    return mouse_event(kind, btn, x, y, is_ctrl, is_alt, is_shift)
+}
+
+public fun parse_mouse_sgr() -> MouseEvent? {
+    set n1: int32 = 0
+    set n2: int32 = 0
+    set n3: int32 = 0
+    set part: int32 = 0
+    set curr = read_char()
+
+    while curr >= 0 {
+        if curr >= 48 && curr <= 57 {
+            if part == 0 {
+                rewrite n1 = n1 * 10 + (curr - 48)
+            } elif part == 1 {
+                rewrite n2 = n2 * 10 + (curr - 48)
+            } else {
+                rewrite n3 = n3 * 10 + (curr - 48)
+            }
+        } elif curr == 59 {
+            rewrite part = part + 1
+        } elif curr == 77 {
+            return decode_mouse_sgr(n1, n2, n3, false)
+        } elif curr == 109 {
+            return decode_mouse_sgr(n1, n2, n3, true)
+        } else { return null }
+        if !poll_readable(25) { return null }
+        rewrite curr = read_char()
+    }
+    return null
+}
+
+public fun parse_mouse_x10() -> MouseEvent? {
+    if !poll_readable(25) { return null }
+    set b = read_char()
+    if !poll_readable(25) { return null }
+    set x = read_char()
+    if !poll_readable(25) { return null }
+    set y = read_char()
+    if b < 32 || x < 32 || y < 32 { return null }
+
+    set code = b - 32
+    set x_pos = x - 32
+    set y_pos = y - 32
+    set is_release = (code & 3) == 3
+    return decode_mouse_sgr(code, x_pos, y_pos, is_release)
+}
+
+public fun try_read_mouse() -> MouseEvent? {
+    if !poll_readable(0) { return null }
+    return read_mouse()
+}
+
+public fun read_mouse() -> MouseEvent? {
+    set c = read_char()
+    if c < 0 { return null }
+    if c != 27 { return null }
+    if !poll_readable(25) { return null }
+
+    set next_b = read_char()
+    if next_b != 91 { return null }
+    if !poll_readable(25) { return null }
+
+    set cmd = read_char()
+    if cmd == 60 {
+        return parse_mouse_sgr()
+    } elif cmd == 77 {
+        return parse_mouse_x10()
+    }
+    return null
+}

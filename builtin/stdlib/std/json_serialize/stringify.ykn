@@ -1,0 +1,178 @@
+load ..strings: slice
+load ..json_parser.value: JsonValue, JSON_NULL, JSON_BOOL, JSON_NUMBER, JSON_STRING, JSON_ARRAY, JSON_OBJECT
+
+fun hex_digit(v: int64) -> string {
+    if v == 0 { return "0" }
+    if v == 1 { return "1" }
+    if v == 2 { return "2" }
+    if v == 3 { return "3" }
+    if v == 4 { return "4" }
+    if v == 5 { return "5" }
+    if v == 6 { return "6" }
+    if v == 7 { return "7" }
+    if v == 8 { return "8" }
+    if v == 9 { return "9" }
+    if v == 10 { return "a" }
+    if v == 11 { return "b" }
+    if v == 12 { return "c" }
+    if v == 13 { return "d" }
+    if v == 14 { return "e" }
+    if v == 15 { return "f" }
+    return "0"
+}
+
+public fun escape_json_string(s: string) -> string {
+    set res = "\""
+    set len = s.len()
+    set i: int64 = 0
+    set chunk_start: int64 = 0
+
+    while i < len {
+        set b = s[i]
+        if b == 34 || b == 92 || b == 8 || b == 12 || b == 10 || b == 13 || b == 9 || b < 32 {
+            if i > chunk_start {
+                rewrite res = res + slice(s, chunk_start, i)
+            }
+            if b == 34 {
+                rewrite res = res + "\\\""
+            } elif b == 92 {
+                rewrite res = res + "\\\\"
+            } elif b == 8 {
+                rewrite res = res + "\\b"
+            } elif b == 12 {
+                rewrite res = res + "\\f"
+            } elif b == 10 {
+                rewrite res = res + "\\n"
+            } elif b == 13 {
+                rewrite res = res + "\\r"
+            } elif b == 9 {
+                rewrite res = res + "\\t"
+            } else {
+                set b_i: int64 = cast(b, "int64")
+                set hi = (b_i >> 4) & 15
+                set lo = b_i & 15
+                rewrite res = res + "\\u00" + hex_digit(hi) + hex_digit(lo)
+            }
+            rewrite chunk_start = i + 1
+        }
+        rewrite i = i + 1
+    }
+
+    if chunk_start < len {
+        rewrite res = res + slice(s, chunk_start, len)
+    }
+
+    rewrite res = res + "\""
+    return res
+}
+
+fun format_number(n: float64) -> string {
+    if n != n { return "null" }
+    set i_val: int64 = cast(n, "int64")
+    if cast(i_val, "float64") == n {
+        return "${i_val}"
+    }
+    return "${n}"
+}
+
+public fun serialize_compact(val: JsonValue) -> string {
+    if val.kind == JSON_NULL { return "null" }
+    if val.kind == JSON_BOOL {
+        if val.bool_val { return "true" }
+        return "false"
+    }
+    if val.kind == JSON_NUMBER {
+        return format_number(val.num_val)
+    }
+    if val.kind == JSON_STRING {
+        return escape_json_string(val.str_val)
+    }
+    if val.kind == JSON_ARRAY {
+        set res = "["
+        set i: int64 = 0
+        set count = val.array_val.len()
+        while i < count {
+            if i > 0 {
+                rewrite res = res + ","
+            }
+            rewrite res = res + serialize_compact(val.array_val[i])
+            rewrite i = i + 1
+        }
+        rewrite res = res + "]"
+        return res
+    }
+    if val.kind == JSON_OBJECT {
+        set res = "{"
+        set i: int64 = 0
+        set count = val.obj_keys.len()
+        while i < count {
+            if i > 0 {
+                rewrite res = res + ","
+            }
+            rewrite res = res + escape_json_string(val.obj_keys[i]) + ":" + serialize_compact(val.obj_vals[i])
+            rewrite i = i + 1
+        }
+        rewrite res = res + "}"
+        return res
+    }
+    return "null"
+}
+
+fun indent_spaces(unit: string, level: int64) -> string {
+    set res = ""
+    set i: int64 = 0
+    while i < level {
+        rewrite res = res + unit
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun serialize_pretty_internal(val: JsonValue, unit: string, level: int64) -> string {
+    if val.kind == JSON_NULL { return "null" }
+    if val.kind == JSON_BOOL {
+        if val.bool_val { return "true" }
+        return "false"
+    }
+    if val.kind == JSON_NUMBER {
+        return format_number(val.num_val)
+    }
+    if val.kind == JSON_STRING {
+        return escape_json_string(val.str_val)
+    }
+    if val.kind == JSON_ARRAY {
+        set count = val.array_val.len()
+        if count == 0 { return "[]" }
+        set res = "[\n"
+        set i: int64 = 0
+        while i < count {
+            if i > 0 {
+                rewrite res = res + ",\n"
+            }
+            rewrite res = res + indent_spaces(unit.cp(), level + 1) + serialize_pretty_internal(val.array_val[i], unit.cp(), level + 1)
+            rewrite i = i + 1
+        }
+        rewrite res = res + "\n" + indent_spaces(unit.cp(), level) + "]"
+        return res
+    }
+    if val.kind == JSON_OBJECT {
+        set count = val.obj_keys.len()
+        if count == 0 { return "{}" }
+        set res = "{\n"
+        set i: int64 = 0
+        while i < count {
+            if i > 0 { rewrite res = res + ",\n" }
+            set key_str = escape_json_string(val.obj_keys[i])
+            set val_str = serialize_pretty_internal(val.obj_vals[i], unit.cp(), level + 1)
+            rewrite res = res + indent_spaces(unit.cp(), level + 1) + key_str + ": " + val_str
+            rewrite i = i + 1
+        }
+        rewrite res = res + "\n" + indent_spaces(unit.cp(), level) + "}"
+        return res
+    }
+    return "null"
+}
+
+public fun serialize_pretty(val: JsonValue, indent: string) -> string {
+    return serialize_pretty_internal(val, indent, 0)
+}

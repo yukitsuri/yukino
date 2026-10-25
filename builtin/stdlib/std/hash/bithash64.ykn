@@ -1,0 +1,378 @@
+load ..fs.files: file_size, open_read, File
+load .common: HashError
+
+static P0: uint64 = 0x9e3779b97f4a7c15u64
+static P1: uint64 = 0x6c62272e07bb0142u64
+static P2: uint64 = 0x94d049bb133111ebu64
+static P3: uint64 = 0xbf58476d1ce4e5b9u64
+
+public static BITHASH64_SEED_DEFAULT: uint64 = 0u64
+
+fun mum(a: uint64, b: uint64) -> uint64 {
+    set a0: uint64 = a & 0xffffffffu64
+    set a1: uint64 = a >> 32
+    set b0: uint64 = b & 0xffffffffu64
+    set b1: uint64 = b >> 32
+    set p0: uint64 = a0 * b0
+    set p1: uint64 = a0 * b1
+    set p2: uint64 = a1 * b0
+    set p3: uint64 = a1 * b1
+    set t: uint64 = (p0 >> 32) + (p1 & 0xffffffffu64) + (p2 & 0xffffffffu64)
+    set hi: uint64 = p3 + (p1 >> 32) + (p2 >> 32) + (t >> 32)
+    set lo: uint64 = a * b
+    return hi ^ lo
+}
+
+fun mix(a: uint64, b: uint64) -> uint64 {
+    return mum(a ^ P0, b ^ P1)
+}
+
+fun load64(ref data: bytes, offset: int64) -> uint64 {
+    return cast(data[offset], "uint64") |
+           (cast(data[offset + 1], "uint64") << 8) |
+           (cast(data[offset + 2], "uint64") << 16) |
+           (cast(data[offset + 3], "uint64") << 24) |
+           (cast(data[offset + 4], "uint64") << 32) |
+           (cast(data[offset + 5], "uint64") << 40) |
+           (cast(data[offset + 6], "uint64") << 48) |
+           (cast(data[offset + 7], "uint64") << 56)
+}
+
+fun load32(ref data: bytes, offset: int64) -> uint64 {
+    return cast(data[offset], "uint64") |
+           (cast(data[offset + 1], "uint64") << 8) |
+           (cast(data[offset + 2], "uint64") << 16) |
+           (cast(data[offset + 3], "uint64") << 24)
+}
+
+fun tail(ref data: bytes, offset: int64, len: int64, state_in: uint64) -> uint64 {
+    set state: uint64 = state_in
+    set p: int64 = offset
+    set rem: int64 = len
+    if rem >= 16 {
+        rewrite state = mum(state ^ load64(ref data, p), P2)
+        rewrite state = mum(state ^ load64(ref data, p + 8), P3)
+        rewrite p = p + 16
+        rewrite rem = rem - 16
+    }
+    if rem >= 8 {
+        rewrite state = mum(state ^ load64(ref data, p), P0)
+        rewrite p = p + 8
+        rewrite rem = rem - 8
+    }
+    if rem >= 4 {
+        rewrite state = state ^ (load32(ref data, p) | (load32(ref data, p + rem - 4) << 32))
+        rewrite state = mum(state, P1)
+        rewrite p = p + 4
+        rewrite rem = rem - 4
+    }
+    if rem > 0 {
+        set v: uint64 = cast(data[p], "uint64") |
+                       (cast(data[p + (rem >> 1)], "uint64") << 8) |
+                       (cast(data[p + rem - 1], "uint64") << 16)
+        rewrite state = mum(state ^ v, P2)
+    }
+    return state
+}
+
+fun finalize(s0: uint64, s1: uint64, s2: uint64, s3: uint64, len: uint64) -> uint64 {
+    set h: uint64 = mix(s0, s1) ^ mix(s2, s3)
+    rewrite h = mum(h ^ len, P3)
+    rewrite h = h ^ (h >> 33)
+    rewrite h = h * P0
+    rewrite h = h ^ (h >> 29)
+    rewrite h = h * P2
+    rewrite h = h ^ (h >> 32)
+    return h
+}
+
+public fun bithash64(ref data: bytes, seed: uint64 = 0u64) -> uint64 {
+    set s0: uint64 = seed ^ P0
+    set s1: uint64 = seed ^ P1
+    set s2: uint64 = seed ^ P2
+    set s3: uint64 = seed ^ P3
+
+    set len: int64 = data.len()
+    set blocks: int64 = len / 32
+    set remaining: int64 = len % 32
+    set p: int64 = 0
+
+    for i in 0..blocks {
+        rewrite s0 = mum(s0 ^ load64(ref data, p), P1)
+        rewrite s1 = mum(s1 ^ load64(ref data, p + 8), P2)
+        rewrite s2 = mum(s2 ^ load64(ref data, p + 16), P3)
+        rewrite s3 = mum(s3 ^ load64(ref data, p + 24), P0)
+        rewrite p = p + 32
+    }
+
+    set t: uint64 = tail(ref data, blocks * 32, remaining, s0 ^ s1 ^ s2 ^ s3)
+    return finalize(s0, s1, s2, s3, t ^ cast(len, "uint64"))
+}
+
+public fun bithash64_str(s: string, seed: uint64 = 0u64) -> uint64 {
+    set d: bytes = cast(s, "bytes")
+    return bithash64(ref d, seed)
+}
+
+public fun bithash64_u64_to_hex(val: uint64) -> string {
+    set hex_chars = "0123456789abcdef"
+    set res: string = ""
+    for i in 0..16 {
+        set shift = (15 - i) * 4
+        set nibble = cast((val >> shift) & 15u64, "int64")
+        rewrite res = res + hex_chars[nibble..nibble + 1]
+    }
+    return res
+}
+
+public fun bithash64_hex(s: string, seed: uint64 = 0u64) -> string {
+    return bithash64_u64_to_hex(bithash64_str(s, seed))
+}
+
+public fun bithash64_bytes_hex(ref data: bytes, seed: uint64 = 0u64) -> string {
+    return bithash64_u64_to_hex(bithash64(ref data, seed))
+}
+
+public class BitHash64 {
+    s0: uint64
+    s1: uint64
+    s2: uint64
+    s3: uint64
+    total_len: int64
+    b0: uint32
+    b1: uint32
+    b2: uint32
+    b3: uint32
+    b4: uint32
+    b5: uint32
+    b6: uint32
+    b7: uint32
+    buf_len: int32
+
+    public fun init(seed: uint64 = 0u64) {
+        rewrite this.s0 = seed ^ P0
+        rewrite this.s1 = seed ^ P1
+        rewrite this.s2 = seed ^ P2
+        rewrite this.s3 = seed ^ P3
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u32; rewrite this.b1 = 0u32; rewrite this.b2 = 0u32; rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32; rewrite this.b5 = 0u32; rewrite this.b6 = 0u32; rewrite this.b7 = 0u32
+        rewrite this.buf_len = 0
+    }
+
+    public fun reset(seed: uint64 = 0u64) {
+        rewrite this.s0 = seed ^ P0
+        rewrite this.s1 = seed ^ P1
+        rewrite this.s2 = seed ^ P2
+        rewrite this.s3 = seed ^ P3
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u32; rewrite this.b1 = 0u32; rewrite this.b2 = 0u32; rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32; rewrite this.b5 = 0u32; rewrite this.b6 = 0u32; rewrite this.b7 = 0u32
+        rewrite this.buf_len = 0
+    }
+
+    // write one byte at offset off (0..31) via masks and shifts (LE layout)
+    public fun set_buf_byte(off: int64, val: uint8) {
+        set v: uint32 = cast(val, "uint32")
+        if off == 0 {
+            rewrite this.b0 = (this.b0 & 0xffffff00u32) | v
+        } elif off == 1 {
+            rewrite this.b0 = (this.b0 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 2 {
+            rewrite this.b0 = (this.b0 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 3 {
+            rewrite this.b0 = (this.b0 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 4 {
+            rewrite this.b1 = (this.b1 & 0xffffff00u32) | v
+        } elif off == 5 {
+            rewrite this.b1 = (this.b1 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 6 {
+            rewrite this.b1 = (this.b1 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 7 {
+            rewrite this.b1 = (this.b1 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 8 {
+            rewrite this.b2 = (this.b2 & 0xffffff00u32) | v
+        } elif off == 9 {
+            rewrite this.b2 = (this.b2 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 10 {
+            rewrite this.b2 = (this.b2 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 11 {
+            rewrite this.b2 = (this.b2 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 12 {
+            rewrite this.b3 = (this.b3 & 0xffffff00u32) | v
+        } elif off == 13 {
+            rewrite this.b3 = (this.b3 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 14 {
+            rewrite this.b3 = (this.b3 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 15 {
+            rewrite this.b3 = (this.b3 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 16 {
+            rewrite this.b4 = (this.b4 & 0xffffff00u32) | v
+        } elif off == 17 {
+            rewrite this.b4 = (this.b4 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 18 {
+            rewrite this.b4 = (this.b4 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 19 {
+            rewrite this.b4 = (this.b4 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 20 {
+            rewrite this.b5 = (this.b5 & 0xffffff00u32) | v
+        } elif off == 21 {
+            rewrite this.b5 = (this.b5 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 22 {
+            rewrite this.b5 = (this.b5 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 23 {
+            rewrite this.b5 = (this.b5 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 24 {
+            rewrite this.b6 = (this.b6 & 0xffffff00u32) | v
+        } elif off == 25 {
+            rewrite this.b6 = (this.b6 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 26 {
+            rewrite this.b6 = (this.b6 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 27 {
+            rewrite this.b6 = (this.b6 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 28 {
+            rewrite this.b7 = (this.b7 & 0xffffff00u32) | v
+        } elif off == 29 {
+            rewrite this.b7 = (this.b7 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 30 {
+            rewrite this.b7 = (this.b7 & 0xff00ffffu32) | (v << 16u32)
+        } else {
+            rewrite this.b7 = (this.b7 & 0x00ffffffu32) | (v << 24u32)
+        }
+    }
+
+    fun buf_to_local() -> bytes {
+        set bdata: uint8[32]
+        rewrite bdata[0] = cast(this.b0 & 255u32, "uint8")
+        rewrite bdata[1] = cast((this.b0 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[2] = cast((this.b0 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[3] = cast((this.b0 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[4] = cast(this.b1 & 255u32, "uint8")
+        rewrite bdata[5] = cast((this.b1 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[6] = cast((this.b1 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[7] = cast((this.b1 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[8] = cast(this.b2 & 255u32, "uint8")
+        rewrite bdata[9] = cast((this.b2 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[10] = cast((this.b2 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[11] = cast((this.b2 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[12] = cast(this.b3 & 255u32, "uint8")
+        rewrite bdata[13] = cast((this.b3 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[14] = cast((this.b3 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[15] = cast((this.b3 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[16] = cast(this.b4 & 255u32, "uint8")
+        rewrite bdata[17] = cast((this.b4 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[18] = cast((this.b4 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[19] = cast((this.b4 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[20] = cast(this.b5 & 255u32, "uint8")
+        rewrite bdata[21] = cast((this.b5 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[22] = cast((this.b5 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[23] = cast((this.b5 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[24] = cast(this.b6 & 255u32, "uint8")
+        rewrite bdata[25] = cast((this.b6 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[26] = cast((this.b6 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[27] = cast((this.b6 >> 24u32) & 255u32, "uint8")
+        rewrite bdata[28] = cast(this.b7 & 255u32, "uint8")
+        rewrite bdata[29] = cast((this.b7 >> 8u32) & 255u32, "uint8")
+        rewrite bdata[30] = cast((this.b7 >> 16u32) & 255u32, "uint8")
+        rewrite bdata[31] = cast((this.b7 >> 24u32) & 255u32, "uint8")
+        return cast(from_raw_parts(bdata.as_ptr(), cast(this.buf_len, "int64")), "bytes")
+    }
+
+    public fun update(data: bytes) {
+        set len: int64 = data.len()
+        rewrite this.total_len = this.total_len + len
+        set p: int64 = 0
+        set rem: int64 = len
+
+        if this.buf_len > 0 {
+            set need: int32 = 32 - this.buf_len
+            if cast(rem, "int32") < need {
+                for i in 0..rem {
+                    this.set_buf_byte(cast(this.buf_len, "int64") + i, data[p + i])
+                }
+                rewrite this.buf_len = this.buf_len + cast(rem, "int32")
+                return
+            }
+            set need_64: int64 = cast(need, "int64")
+            for i in 0..need_64 {
+                this.set_buf_byte(cast(this.buf_len, "int64") + i, data[p + i])
+            }
+            rewrite this.s0 = mum(this.s0 ^ (cast(this.b0, "uint64") | (cast(this.b1, "uint64") << 32u64)), P1)
+            rewrite this.s1 = mum(this.s1 ^ (cast(this.b2, "uint64") | (cast(this.b3, "uint64") << 32u64)), P2)
+            rewrite this.s2 = mum(this.s2 ^ (cast(this.b4, "uint64") | (cast(this.b5, "uint64") << 32u64)), P3)
+            rewrite this.s3 = mum(this.s3 ^ (cast(this.b6, "uint64") | (cast(this.b7, "uint64") << 32u64)), P0)
+            rewrite p = p + need_64
+            rewrite rem = rem - need_64
+            rewrite this.buf_len = 0
+        }
+
+        set blocks: int64 = rem / 32
+        for i in 0..blocks {
+            rewrite this.s0 = mum(this.s0 ^ load64(ref data, p), P1)
+            rewrite this.s1 = mum(this.s1 ^ load64(ref data, p + 8), P2)
+            rewrite this.s2 = mum(this.s2 ^ load64(ref data, p + 16), P3)
+            rewrite this.s3 = mum(this.s3 ^ load64(ref data, p + 24), P0)
+            rewrite p = p + 32
+            rewrite rem = rem - 32
+        }
+
+        if rem > 0 {
+            for i in 0..rem {
+                this.set_buf_byte(i, data[p + i])
+            }
+            rewrite this.buf_len = cast(rem, "int32")
+        }
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        this.update(d)
+    }
+
+    public fun finish() -> uint64 {
+        set bdata: bytes = this.buf_to_local()
+        set t: uint64 = tail(ref bdata, 0, cast(this.buf_len, "int64"), this.s0 ^ this.s1 ^ this.s2 ^ this.s3)
+        return finalize(this.s0, this.s1, this.s2, this.s3, t ^ cast(this.total_len, "uint64"))
+    }
+
+    public fun finish_hex() -> string {
+        return bithash64_u64_to_hex(this.finish())
+    }
+}
+
+public fun bithash64_file(path: string, seed: uint64 = 0u64) -> uint64 {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "failed to access file for bithash64",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set h = init BitHash64(seed)
+    set io_buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(io_buf.as_ptr(), to_read)
+        if n <= 0 { break }
+        set bdata: bytes = cast(from_raw_parts(io_buf.as_ptr(), n), "bytes")
+        h.update(bdata)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return h.finish()
+}
+
+public fun bithash64_file_hex(path: string, seed: uint64 = 0u64) -> string {
+    return bithash64_u64_to_hex(bithash64_file(path, seed))
+}
+
+public fun bithash64_files_equal(path_a: string, path_b: string) -> bool {
+    set sz_a: int64 = file_size(path_a.cp())
+    set sz_b: int64 = file_size(path_b.cp())
+    if sz_a != sz_b { return false }
+    set ha: uint64 = bithash64_file(path_a, BITHASH64_SEED_DEFAULT)
+    set hb: uint64 = bithash64_file(path_b, BITHASH64_SEED_DEFAULT)
+    return ha == hb
+}

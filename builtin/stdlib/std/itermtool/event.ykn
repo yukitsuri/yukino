@@ -1,0 +1,227 @@
+load ..io: poll_readable, read_char
+load .key: *
+load .mouse: *
+
+public static EVENT_NONE: int32 = 0
+public static EVENT_KEY: int32 = 1
+public static EVENT_MOUSE: int32 = 2
+
+public class Event {
+    public kind: int32
+    public key: KeyEvent?
+    public mouse: MouseEvent?
+
+    public fun init(kind: int32, key: KeyEvent? = null, mouse: MouseEvent? = null) {
+        rewrite this.kind = kind
+        rewrite this.key = key
+        rewrite this.mouse = mouse
+    }
+
+    public fun is_key() -> bool {
+        return this.kind == EVENT_KEY
+    }
+
+    public fun is_mouse() -> bool {
+        return this.kind == EVENT_MOUSE
+    }
+
+    public fun to_string() -> string {
+        if this.kind == EVENT_KEY && this.key != null {
+            set k = this.key ?? key_special(KEY_UNKNOWN)
+            return "Event::Key(" + k.to_string() + ")"
+        } elif this.kind == EVENT_MOUSE && this.mouse != null {
+            set m = this.mouse ?? mouse_event(0, 0, 0, 0)
+            return "Event::Mouse(" + m.to_string() + ")"
+        }
+        return "Event::None"
+    }
+}
+
+public fun event_key(k: KeyEvent) -> Event {
+    return init Event(EVENT_KEY, k, null)
+}
+
+public fun event_mouse(m: MouseEvent) -> Event {
+    return init Event(EVENT_MOUSE, null, m)
+}
+
+fun byte_to_str(b: uint8) -> string {
+    set arr: uint8[] = [b]
+    return from_raw_parts(arr.as_ptr(), 1)
+}
+
+public fun poll_event(timeout_ms: int64 = 0) -> bool {
+    return poll_readable(timeout_ms)
+}
+
+fun parse_tilde_key(num: int32, is_ctrl: bool, is_alt: bool, is_shift: bool) -> KeyEvent {
+    if num == 1 || num == 7 { return key_special(KEY_HOME, is_ctrl, is_alt, is_shift) }
+    if num == 4 || num == 8 { return key_special(KEY_END, is_ctrl, is_alt, is_shift) }
+    if num == 2 { return key_special(KEY_INSERT, is_ctrl, is_alt, is_shift) }
+    if num == 3 { return key_special(KEY_DELETE, is_ctrl, is_alt, is_shift) }
+    if num == 5 { return key_special(KEY_PAGE_UP, is_ctrl, is_alt, is_shift) }
+    if num == 6 { return key_special(KEY_PAGE_DOWN, is_ctrl, is_alt, is_shift) }
+    if num == 11 { return key_special(KEY_F1, is_ctrl, is_alt, is_shift) }
+    if num == 12 { return key_special(KEY_F2, is_ctrl, is_alt, is_shift) }
+    if num == 13 { return key_special(KEY_F3, is_ctrl, is_alt, is_shift) }
+    if num == 14 { return key_special(KEY_F4, is_ctrl, is_alt, is_shift) }
+    if num == 15 { return key_special(KEY_F5, is_ctrl, is_alt, is_shift) }
+    if num == 17 { return key_special(KEY_F6, is_ctrl, is_alt, is_shift) }
+    if num == 18 { return key_special(KEY_F7, is_ctrl, is_alt, is_shift) }
+    if num == 19 { return key_special(KEY_F8, is_ctrl, is_alt, is_shift) }
+    if num == 20 { return key_special(KEY_F9, is_ctrl, is_alt, is_shift) }
+    if num == 21 { return key_special(KEY_F10, is_ctrl, is_alt, is_shift) }
+    if num == 23 { return key_special(KEY_F11, is_ctrl, is_alt, is_shift) }
+    if num == 24 { return key_special(KEY_F12, is_ctrl, is_alt, is_shift) }
+    return key_special(KEY_UNKNOWN)
+}
+
+fun parse_csi_with_first(b: int32) -> KeyEvent {
+    if b < 0 { return key_special(KEY_UNKNOWN) }
+    if b == 65 { return key_special(KEY_UP) }
+    if b == 66 { return key_special(KEY_DOWN) }
+    if b == 67 { return key_special(KEY_RIGHT) }
+    if b == 68 { return key_special(KEY_LEFT) }
+    if b == 72 { return key_special(KEY_HOME) }
+    if b == 70 { return key_special(KEY_END) }
+
+    set num1: int32 = 0
+    set num2: int32 = 0
+    set has_semicolon = false
+    set curr = b
+
+    while curr >= 48 && curr <= 57 {
+        if !has_semicolon {
+            rewrite num1 = num1 * 10 + (curr - 48)
+        } else {
+            rewrite num2 = num2 * 10 + (curr - 48)
+        }
+        if !poll_event(10) { break }
+        rewrite curr = read_char()
+        if curr == 59 {
+            rewrite has_semicolon = true
+            if !poll_event(10) { break }
+            rewrite curr = read_char()
+        }
+    }
+
+    set is_shift = num2 == 2 || num2 == 4 || num2 == 6 || num2 == 8
+    set is_alt = num2 == 3 || num2 == 4 || num2 == 7 || num2 == 8
+    set is_ctrl = num2 == 5 || num2 == 6 || num2 == 7 || num2 == 8
+
+    if curr == 65 { return key_special(KEY_UP, is_ctrl, is_alt, is_shift) }
+    if curr == 66 { return key_special(KEY_DOWN, is_ctrl, is_alt, is_shift) }
+    if curr == 67 { return key_special(KEY_RIGHT, is_ctrl, is_alt, is_shift) }
+    if curr == 68 { return key_special(KEY_LEFT, is_ctrl, is_alt, is_shift) }
+    if curr == 72 { return key_special(KEY_HOME, is_ctrl, is_alt, is_shift) }
+    if curr == 70 { return key_special(KEY_END, is_ctrl, is_alt, is_shift) }
+
+    if curr == 126 {
+        return parse_tilde_key(num1, is_ctrl, is_alt, is_shift)
+    }
+
+    return key_special(KEY_UNKNOWN)
+}
+
+fun parse_ss3() -> KeyEvent {
+    set b = read_char()
+    if b == 80 { return key_special(KEY_F1) }
+    if b == 81 { return key_special(KEY_F2) }
+    if b == 82 { return key_special(KEY_F3) }
+    if b == 83 { return key_special(KEY_F4) }
+    if b == 72 { return key_special(KEY_HOME) }
+    if b == 70 { return key_special(KEY_END) }
+    return key_special(KEY_UNKNOWN)
+}
+
+fun read_utf8_char(c: int32) -> string {
+    set byte_count = 2
+    if c >= 224 && c <= 239 { rewrite byte_count = 3 }
+    if c >= 240 { rewrite byte_count = 4 }
+
+    set utf_bytes: uint8[] = [cast(c, "uint8")]
+    for i in 1..byte_count {
+        if poll_event(20) {
+            set follow = read_char()
+            if follow >= 128 && follow <= 191 {
+                utf_bytes.push(cast(follow, "uint8"))
+            }
+        }
+    }
+    return from_raw_parts(utf_bytes.as_ptr(), utf_bytes.len())
+}
+
+public fun read_event() -> Event {
+    set c = read_char()
+    if c < 0 { return init Event(EVENT_NONE, null, null) }
+
+    if c == 10 || c == 13 { return event_key(key_special(KEY_ENTER)) }
+    if c == 9 { return event_key(key_special(KEY_TAB)) }
+    if c == 8 || c == 127 { return event_key(key_special(KEY_BACKSPACE)) }
+
+    if c == 27 {
+        if !poll_event(25) { return event_key(key_special(KEY_ESC)) }
+        set next_b = read_char()
+        if next_b == 91 {
+            set b = read_char()
+            if b == 60 {
+                set m = parse_mouse_sgr()
+                if m != null { return init Event(EVENT_MOUSE, null, m) }
+                return event_key(key_special(KEY_UNKNOWN))
+            } elif b == 77 {
+                set m = parse_mouse_x10()
+                if m != null { return init Event(EVENT_MOUSE, null, m) }
+                return event_key(key_special(KEY_UNKNOWN))
+            }
+            return event_key(parse_csi_with_first(b))
+        } elif next_b == 79 {
+            return event_key(parse_ss3())
+        } elif next_b >= 32 && next_b <= 126 {
+            set char_s = byte_to_str(cast(next_b, "uint8"))
+            return event_key(key_char(char_s, false, true, false))
+        }
+        return event_key(key_special(KEY_ESC))
+    }
+
+    if c == 32 { return event_key(key_special(KEY_SPACE)) }
+
+    if c >= 1 && c <= 26 {
+        set ch_code: uint8 = cast(c + 96, "uint8")
+        set char_s = byte_to_str(ch_code)
+        return event_key(key_char(char_s, true, false, false))
+    }
+
+    if c >= 33 && c <= 126 {
+        set char_s = byte_to_str(cast(c, "uint8"))
+        return event_key(key_char(char_s, false, false, false))
+    }
+
+    if c >= 192 && c <= 247 {
+        set utf_str = read_utf8_char(c)
+        return event_key(key_char(utf_str, false, false, false))
+    }
+
+    return event_key(key_special(KEY_UNKNOWN))
+}
+
+public fun try_read_event() -> Event? {
+    if poll_event(0) {
+        return read_event()
+    }
+    return null
+}
+
+public fun read_key() -> KeyEvent {
+    set ev = read_event()
+    if ev.kind == EVENT_KEY && ev.key != null {
+        return ev.key ?? key_special(KEY_UNKNOWN)
+    }
+    return key_special(KEY_UNKNOWN)
+}
+
+public fun try_read_key() -> KeyEvent? {
+    if poll_event(0) {
+        return read_key()
+    }
+    return null
+}

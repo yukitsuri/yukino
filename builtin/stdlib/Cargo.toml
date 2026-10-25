@@ -1,0 +1,30 @@
+[package]
+name = "yukistd-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+path = "core/lib.rs"
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+lzma-rs = { version = "0.3" }
+zstd = { version = "0.13", default-features = false }
+bzip2 = { version = "0.6" }
+lz4_flex = { version = "0.11", default-features = false, features = ["frame", "std"] }
+crc32fast = { version = "1.4" }
+aes = "0.8"
+ctr = "0.9"
+cbc = "0.1"
+cipher = "0.4"
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha1 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1.15"
+webpki-roots = "1.0"
+polling = "3.11"
+rustls-pemfile = "2.2.0"
+regex = { version = "1.11", default-features = false, features = ["std", "unicode"] }
+libsqlite3-sys = { version = "0.38.2", features = ["bundled"] }

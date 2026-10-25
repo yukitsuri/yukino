@@ -1,0 +1,58 @@
+load .common: MIX_SEED, mix, alloc_u8, free_u8, alloc_u64, free_u64
+
+static TAPE_SIZE: int64 = 30000
+static PROG_MAX: int64 = 64
+
+public fun bf_test() -> uint64 {
+    set tape = alloc_u8(TAPE_SIZE)
+    set jump = alloc_u64(PROG_MAX)
+    set stack = alloc_u64(PROG_MAX)
+    set sp: int64 = 0
+    set prog = "-[>-[>-[>+<-]<-]<-]"
+    set len: int64 = prog.len()
+
+    for pc in 0..len {
+        set ch: char = prog[pc]
+        if ch == '[' {
+            rewrite stack[sp] = cast(pc, "uint64")
+            rewrite sp = sp + 1
+        }
+        if ch == ']' {
+            rewrite sp = sp - 1
+            set open: int64 = cast(stack[sp], "int64")
+            rewrite jump[open] = cast(pc, "uint64")
+            rewrite jump[pc] = cast(open, "uint64")
+        }
+    }
+
+    set steps: uint64 = 0
+    set pc: int64 = 0
+    set ptr: int64 = 0
+    while pc < len {
+        set ch: char = prog[pc]
+        if ch == '+' {
+            rewrite tape[ptr] = tape[ptr] + 1u8
+        } elif ch == '-' {
+            rewrite tape[ptr] = tape[ptr] - 1u8
+        } elif ch == '>' {
+            rewrite ptr = ptr + 1
+        } elif ch == '<' {
+            rewrite ptr = ptr - 1
+        } elif ch == '[' {
+            if tape[ptr] == 0u8 {
+                rewrite pc = cast(jump[pc], "int64")
+            }
+        } elif ch == ']' {
+            if tape[ptr] != 0u8 {
+                rewrite pc = cast(jump[pc], "int64")
+            }
+        }
+        rewrite pc = pc + 1
+        rewrite steps = steps + 1
+    }
+    set res: uint64 = mix(mix(MIX_SEED, steps), cast(tape[3], "uint64"))
+    free_u8(tape)
+    free_u64(jump)
+    free_u64(stack)
+    return res
+}

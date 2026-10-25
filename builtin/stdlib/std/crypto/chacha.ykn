@@ -1,0 +1,146 @@
+load .common: CryptoError, load32_le, store32_le
+
+fun rotl32(v: uint32, n: int64) -> uint32 {
+    set s: uint32 = cast(n, "uint32")
+    set diff: uint32 = cast(32 - n, "uint32")
+    return (v << s) | (v >> diff)
+}
+
+fun quarter_round(ref ~st: uint32[], a: int64, b: int64, c: int64, d: int64) {
+    rewrite st[a] = st[a] + st[b]
+    rewrite st[d] = rotl32(st[d] ^ st[a], 16)
+    rewrite st[c] = st[c] + st[d]
+    rewrite st[b] = rotl32(st[b] ^ st[c], 12)
+    rewrite st[a] = st[a] + st[b]
+    rewrite st[d] = rotl32(st[d] ^ st[a], 8)
+    rewrite st[c] = st[c] + st[d]
+    rewrite st[b] = rotl32(st[b] ^ st[c], 7)
+}
+
+public fun chacha20_block(ref key: bytes, ref nonce: bytes, counter: uint32) -> bytes {
+    if key.len() != 32 {
+        panic(CryptoError { message: "chacha20 key must be 32 bytes", code: 11 })
+    }
+    if nonce.len() != 12 {
+        panic(CryptoError { message: "chacha20 nonce must be 12 bytes", code: 12 })
+    }
+    set st: uint32[] = []
+    st.push(0x61707865u32)
+    st.push(0x3320646eu32)
+    st.push(0x79622d32u32)
+    st.push(0x6b206574u32)
+    for i in 0..8 {
+        st.push(load32_le(ref key, i * 4))
+    }
+    st.push(counter)
+    for i in 0..3 {
+        st.push(load32_le(ref nonce, i * 4))
+    }
+    set work: uint32[] = []
+    for i in 0..16 {
+        work.push(st[i])
+    }
+    for i in 0..10 {
+        quarter_round(ref ~work, 0, 4, 8, 12)
+        quarter_round(ref ~work, 1, 5, 9, 13)
+        quarter_round(ref ~work, 2, 6, 10, 14)
+        quarter_round(ref ~work, 3, 7, 11, 15)
+        quarter_round(ref ~work, 0, 5, 10, 15)
+        quarter_round(ref ~work, 1, 6, 11, 12)
+        quarter_round(ref ~work, 2, 7, 8, 13)
+        quarter_round(ref ~work, 3, 4, 9, 14)
+    }
+    set out_bytes: uint8[] = []
+    for i in 0..64 {
+        out_bytes.push(0u8)
+    }
+    for i in 0..16 {
+        set sum: uint32 = work[i] + st[i]
+        store32_le(ref ~out_bytes, i * 4, sum)
+    }
+    return from_raw_parts(out_bytes.as_ptr(), 64, 64)
+}
+
+public fun chacha20_crypt(ref key: bytes, ref nonce: bytes, counter: uint32, ref data: bytes) -> bytes {
+    set len: int64 = data.len()
+    if len == 0 { return cast("", "bytes") }
+    set res: uint8[] = []
+    for i in 0..len {
+        res.push(0u8)
+    }
+    set cur_counter: uint32 = counter
+    set offset: int64 = 0
+    while offset < len {
+        set block: bytes = chacha20_block(ref key, ref nonce, cur_counter)
+        rewrite cur_counter = cur_counter + 1u32
+        set chunk_len: int64 = if len - offset > 64 { 64 } else { len - offset }
+        for i in 0..chunk_len {
+            rewrite res[offset + i] = data[offset + i] ^ block[i]
+        }
+        rewrite offset = offset + chunk_len
+    }
+    return from_raw_parts(res.as_ptr(), len, len)
+}
+
+// key/nonce as flat
+public class ChaCha20 {
+    k0: uint32
+    k1: uint32
+    k2: uint32
+    k3: uint32
+    k4: uint32
+    k5: uint32
+    k6: uint32
+    k7: uint32
+    n0: uint32
+    n1: uint32
+    n2: uint32
+    counter: uint32
+
+    public fun init(key: bytes, nonce: bytes, counter: uint32 = 0u32) {
+        if key.len() != 32 {
+            panic(CryptoError { message: "ChaCha20 key must be 32 bytes", code: 11 })
+        }
+        if nonce.len() != 12 {
+            panic(CryptoError { message: "ChaCha20 nonce must be 12 bytes", code: 12 })
+        }
+        rewrite this.k0 = load32_le(ref key, 0)
+        rewrite this.k1 = load32_le(ref key, 4)
+        rewrite this.k2 = load32_le(ref key, 8)
+        rewrite this.k3 = load32_le(ref key, 12)
+        rewrite this.k4 = load32_le(ref key, 16)
+        rewrite this.k5 = load32_le(ref key, 20)
+        rewrite this.k6 = load32_le(ref key, 24)
+        rewrite this.k7 = load32_le(ref key, 28)
+        rewrite this.n0 = load32_le(ref nonce, 0)
+        rewrite this.n1 = load32_le(ref nonce, 4)
+        rewrite this.n2 = load32_le(ref nonce, 8)
+        rewrite this.counter = counter
+    }
+
+    public fun seek(counter: uint32) {
+        rewrite this.counter = counter
+    }
+
+    public fun apply(data: bytes) -> bytes {
+        set kb: uint8[32]
+        store32_le(ref ~kb, 0, this.k0)
+        store32_le(ref ~kb, 4, this.k1)
+        store32_le(ref ~kb, 8, this.k2)
+        store32_le(ref ~kb, 12, this.k3)
+        store32_le(ref ~kb, 16, this.k4)
+        store32_le(ref ~kb, 20, this.k5)
+        store32_le(ref ~kb, 24, this.k6)
+        store32_le(ref ~kb, 28, this.k7)
+        set nb: uint8[12]
+        store32_le(ref ~nb, 0, this.n0)
+        store32_le(ref ~nb, 4, this.n1)
+        store32_le(ref ~nb, 8, this.n2)
+        set kbytes: bytes = from_raw_parts(kb.as_ptr(), 32, 32)
+        set nbytes: bytes = from_raw_parts(nb.as_ptr(), 12, 12)
+        set out: bytes = chacha20_crypt(ref kbytes, ref nbytes, this.counter, ref data)
+        set num_blocks: uint32 = cast((data.len() + 63) / 64, "uint32")
+        rewrite this.counter = this.counter + num_blocks
+        return out
+    }
+}

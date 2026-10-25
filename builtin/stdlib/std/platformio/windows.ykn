@@ -1,0 +1,48 @@
+cfun yukistd_io_win_get_std_handle(n: int32) -> int64
+cfun yukistd_io_win_is_console(handle: int64) -> bool
+cfun yukistd_io_win_get_console_mode(handle: int64) -> int32
+cfun yukistd_io_win_set_console_mode(handle: int64, mode: int32) -> bool
+cfun yukistd_io_win_create_pipe(read_h: ptr<int64>, write_h: ptr<int64>) -> bool
+
+public static STD_INPUT_HANDLE: int32 = -10
+public static STD_OUTPUT_HANDLE: int32 = -11
+public static STD_ERROR_HANDLE: int32 = -12
+
+public struct WinPipeHandles {
+    read_handle: int64
+    write_handle: int64
+}
+
+public struct IoError {
+    message: string
+    code: int32
+}
+
+public fun get_std_handle(n: int32) -> int64 {
+    return yukistd_io_win_get_std_handle(n)
+}
+
+public fun is_console(handle: int64) -> bool {
+    return yukistd_io_win_is_console(handle)
+}
+
+public fun get_console_mode(handle: int64) -> int32 {
+    return yukistd_io_win_get_console_mode(handle)
+}
+
+public fun set_console_mode(handle: int64, mode: int32) -> bool {
+    return yukistd_io_win_set_console_mode(handle, mode)
+}
+
+public fun create_pipe() -> WinPipeHandles {
+    set r: int64 = 0
+    set w: int64 = 0
+    set ok = yukistd_io_win_create_pipe(ptr_of(r), ptr_of(w))
+    if !ok {
+        panic(IoError {
+            message: "windows create_pipe failed",
+            code: 210,
+        })
+    }
+    return WinPipeHandles { read_handle: r, write_handle: w }
+}

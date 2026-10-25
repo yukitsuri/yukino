@@ -1,0 +1,114 @@
+public static KEY_CHAR: int32 = 0
+public static KEY_ENTER: int32 = 1
+public static KEY_ESC: int32 = 2
+public static KEY_BACKSPACE: int32 = 3
+public static KEY_TAB: int32 = 4
+public static KEY_SPACE: int32 = 5
+
+public static KEY_UP: int32 = 10
+public static KEY_DOWN: int32 = 11
+public static KEY_LEFT: int32 = 12
+public static KEY_RIGHT: int32 = 13
+
+public static KEY_HOME: int32 = 14
+public static KEY_END: int32 = 15
+public static KEY_PAGE_UP: int32 = 16
+public static KEY_PAGE_DOWN: int32 = 17
+public static KEY_DELETE: int32 = 18
+public static KEY_INSERT: int32 = 19
+
+public static KEY_F1: int32 = 20
+public static KEY_F2: int32 = 21
+public static KEY_F3: int32 = 22
+public static KEY_F4: int32 = 23
+public static KEY_F5: int32 = 24
+public static KEY_F6: int32 = 25
+public static KEY_F7: int32 = 26
+public static KEY_F8: int32 = 27
+public static KEY_F9: int32 = 28
+public static KEY_F10: int32 = 29
+public static KEY_F11: int32 = 30
+public static KEY_F12: int32 = 31
+
+public static KEY_UNKNOWN: int32 = 99
+
+public class KeyEvent {
+    public code: int32
+    public char_val: string
+    public ctrl: bool
+    public alt: bool
+    public shift: bool
+
+    public fun init(code: int32, char_val: string, ctrl: bool = false, alt: bool = false, shift: bool = false) {
+        rewrite this.code = code
+        rewrite this.char_val = char_val
+        rewrite this.ctrl = ctrl
+        rewrite this.alt = alt
+        rewrite this.shift = shift
+    }
+
+    public fun is_char(c: string) -> bool {
+        return this.code == KEY_CHAR && this.char_val == c && !this.ctrl && !this.alt
+    }
+
+    public fun is_ctrl(c: string) -> bool {
+        return this.ctrl && this.char_val == c
+    }
+
+    public fun is_alt(c: string) -> bool {
+        return this.alt && this.char_val == c
+    }
+
+    public fun to_string() -> string {
+        set prefix = ""
+        if this.ctrl { rewrite prefix = prefix + "Ctrl+" }
+        if this.alt { rewrite prefix = prefix + "Alt+" }
+        if this.shift { rewrite prefix = prefix + "Shift+" }
+
+        if this.code == KEY_CHAR {
+            return prefix + "'" + this.char_val + "'"
+        } elif this.code == KEY_ENTER {
+            return prefix + "Enter"
+        } elif this.code == KEY_ESC {
+            return prefix + "Esc"
+        } elif this.code == KEY_BACKSPACE {
+            return prefix + "Backspace"
+        } elif this.code == KEY_TAB {
+            return prefix + "Tab"
+        } elif this.code == KEY_SPACE {
+            return prefix + "Space"
+        } elif this.code == KEY_UP {
+            return prefix + "Up"
+        } elif this.code == KEY_DOWN {
+            return prefix + "Down"
+        } elif this.code == KEY_LEFT {
+            return prefix + "Left"
+        } elif this.code == KEY_RIGHT {
+            return prefix + "Right"
+        } elif this.code == KEY_HOME {
+            return prefix + "Home"
+        } elif this.code == KEY_END {
+            return prefix + "End"
+        } elif this.code == KEY_PAGE_UP {
+            return prefix + "PageUp"
+        } elif this.code == KEY_PAGE_DOWN {
+            return prefix + "PageDown"
+        } elif this.code == KEY_DELETE {
+            return prefix + "Delete"
+        } elif this.code == KEY_INSERT {
+            return prefix + "Insert"
+        } elif this.code >= KEY_F1 && this.code <= KEY_F12 {
+            set f_num = this.code - KEY_F1 + 1
+            return prefix + "F" + cast(f_num, "string")
+        }
+        return prefix + "Unknown"
+    }
+}
+
+public fun key_char(c: string, ctrl: bool = false, alt: bool = false, shift: bool = false) -> KeyEvent {
+    return init KeyEvent(KEY_CHAR, c, ctrl, alt, shift)
+}
+
+public fun key_special(code: int32, ctrl: bool = false, alt: bool = false, shift: bool = false) -> KeyEvent {
+    return init KeyEvent(code, "", ctrl, alt, shift)
+}

@@ -1,0 +1,9 @@
+cfun yukistd_str_join(items_p: ptr<string>, items_len: int64, delim_p: ptr<uint8>, delim_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+
+public fun ajoin(ref arr: string[], separator: string) -> string {
+    if arr.len() == 0 { return "" }
+    set out_len: int64 = 0
+    set p = yukistd_str_join(arr.as_ptr(), arr.len(), separator.as_ptr(), separator.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null { return "" }
+    return from_raw_parts(p, out_len)
+}

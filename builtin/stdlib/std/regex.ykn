@@ -1,0 +1,416 @@
+cfun yukistd_regex_compile(pattern_p: ptr<uint8>, pattern_len: int64, flags: int32) -> ptr<void>
+cfun yukistd_regex_free(handle: ptr<void>) -> void
+cfun yukistd_regex_last_error_code() -> int32
+cfun yukistd_regex_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_regex_is_match(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64) -> bool
+cfun yukistd_regex_find(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, start_offset: int64, out_start: ptr<int64>, out_end: ptr<int64>, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_regex_find_all(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, out_count: ptr<int64>) -> ptr<RawMatch>
+cfun yukistd_regex_captures(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, out_count: ptr<int64>) -> ptr<RawCapture>
+cfun yukistd_regex_replace(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, rep_p: ptr<uint8>, rep_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_regex_replace_all(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, rep_p: ptr<uint8>, rep_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_regex_split(handle: ptr<void>, text_p: ptr<uint8>, text_len: int64, out_count: ptr<int64>) -> ptr<string>
+cfun yukistd_regex_escape(text_p: ptr<uint8>, text_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+struct RawMatch {
+    start: int64
+    end: int64
+    text_ptr: ptr<uint8>
+    text_len: int64
+}
+
+struct RawCapture {
+    index: int64
+    matched: int64
+    start: int64
+    end: int64
+    text_ptr: ptr<uint8>
+    text_len: int64
+    name_ptr: ptr<uint8>
+    name_len: int64
+}
+
+public static CASE_INSENSITIVE: int32 = 1
+public static MULTILINE: int32 = 2
+public static DOT_MATCHES_NEW_LINE: int32 = 4
+public static CRLF: int32 = 8
+public static SWAP_GREED: int32 = 16
+public static IGNORE_WHITESPACE: int32 = 32
+public static UNICODE: int32 = 64
+
+public struct RegexError {
+    message: string
+    code: int32
+}
+
+public struct Match {
+    start: int64
+    end: int64
+    text: string
+}
+
+public struct CaptureGroup {
+    index: int32
+    name: string
+    start: int64
+    end: int64
+    text: string
+    matched: bool
+}
+
+fun panic_last_regex_error(default_msg: string, default_code: int32) {
+    set code: int32 = yukistd_regex_last_error_code()
+    set out_len: int64 = 0
+    set p: ptr<uint8> = yukistd_regex_last_error_message(ptr_of(out_len))
+    set msg: string = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(RegexError { message: msg, code: code })
+}
+
+public class Captures {
+    groups: CaptureGroup[]
+
+    public fun init(groups: CaptureGroup[]) {
+        rewrite this.groups = groups
+    }
+
+    public fun len() -> int32 {
+        return cast(this.groups.len(), "int32")
+    }
+
+    public fun get(index: int32) -> Match? {
+        if index < 0 || cast(index, "int64") >= this.groups.len() {
+            return null
+        }
+        set g: CaptureGroup = this.groups[cast(index, "int64")]
+        if !g.matched {
+            return null
+        }
+        return Match {
+            start: g.start,
+            end: g.end,
+            text: g.text,
+        }
+    }
+
+    public fun get_by_name(name: string) -> Match? {
+        set i: int64 = 0
+        while i < this.groups.len() {
+            set g: CaptureGroup = this.groups[i]
+            if g.matched && g.name == name {
+                return Match {
+                    start: g.start,
+                    end: g.end,
+                    text: g.text,
+                }
+            }
+            rewrite i = i + 1
+        }
+        return null
+    }
+
+    public fun all() -> Match[] {
+        set res: Match[] = []
+        set i: int64 = 0
+        while i < this.groups.len() {
+            set g: CaptureGroup = this.groups[i]
+            if g.matched {
+                res.push(Match {
+                    start: g.start,
+                    end: g.end,
+                    text: g.text,
+                })
+            }
+            rewrite i = i + 1
+        }
+        return res
+    }
+}
+
+public class Regex {
+    public handle: ptr<void>
+    public pattern: string
+    public flags: int32
+    public is_closed: bool
+
+    public fun init(pattern: string, flags: int32 = 0) {
+        set h: ptr<void> = yukistd_regex_compile(pattern.as_ptr(), pattern.len(), flags)
+        if h == null {
+            panic_last_regex_error("failed to compile regular expression '" + pattern + "'", 101)
+        }
+        rewrite this.handle = h
+        rewrite this.pattern = pattern
+        rewrite this.flags = flags
+        rewrite this.is_closed = false
+    }
+
+    public fun is_match(text: string) -> bool {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        return yukistd_regex_is_match(this.handle, text.as_ptr(), text.len())
+    }
+
+    public fun find(text: string) -> Match? {
+        return this.find_at(text, 0)
+    }
+
+    public fun find_at(text: string, start_offset: int64) -> Match? {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set out_start: int64 = 0
+        set out_end: int64 = 0
+        set out_len: int64 = 0
+        set p: ptr<uint8> = yukistd_regex_find(
+            this.handle,
+            text.as_ptr(),
+            text.len(),
+            start_offset,
+            ptr_of(out_start),
+            ptr_of(out_end),
+            ptr_of(out_len),
+        )
+        if p == null {
+            return null
+        }
+        set match_text: string = if out_len > 0 {
+            from_raw_parts(p, out_len)
+        } else {
+            ""
+        }
+        return Match {
+            start: out_start,
+            end: out_end,
+            text: match_text,
+        }
+    }
+
+    public fun find_all(text: string) -> Match[] {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set count: int64 = 0
+        set p: ptr<RawMatch> = yukistd_regex_find_all(this.handle, text.as_ptr(), text.len(), ptr_of(count))
+        if count <= 0 || p == null {
+            set empty_p: ptr<Match> = null
+            return from_raw_parts(empty_p, 0, 0)
+        }
+        set raw_slice: RawMatch[] = from_raw_parts(p, count, count)
+        set res: Match[] = []
+        set i: int64 = 0
+        while i < count {
+            set rm: RawMatch = raw_slice[i]
+            set m_text: string = if rm.text_len > 0 && rm.text_ptr != null {
+                from_raw_parts(rm.text_ptr, rm.text_len)
+            } else {
+                ""
+            }
+            res.push(Match {
+                start: rm.start,
+                end: rm.end,
+                text: m_text,
+            })
+            rewrite i = i + 1
+        }
+        return res
+    }
+
+    public fun captures(text: string) -> Captures? {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set count: int64 = 0
+        set p: ptr<RawCapture> = yukistd_regex_captures(this.handle, text.as_ptr(), text.len(), ptr_of(count))
+        if count <= 0 || p == null {
+            return null
+        }
+        set raw_slice: RawCapture[] = from_raw_parts(p, count, count)
+        set groups: CaptureGroup[] = []
+        set i: int64 = 0
+        while i < count {
+            set rc: RawCapture = raw_slice[i]
+            set g_text: string = if rc.text_len > 0 && rc.text_ptr != null {
+                from_raw_parts(rc.text_ptr, rc.text_len)
+            } else {
+                ""
+            }
+            set g_name: string = if rc.name_len > 0 && rc.name_ptr != null {
+                from_raw_parts(rc.name_ptr, rc.name_len)
+            } else {
+                ""
+            }
+            groups.push(CaptureGroup {
+                index: cast(rc.index, "int32"),
+                name: g_name,
+                start: rc.start,
+                end: rc.end,
+                text: g_text,
+                matched: rc.matched != 0,
+            })
+            rewrite i = i + 1
+        }
+        return init Captures(groups)
+    }
+
+    public fun replace(text: string, rep: string) -> string {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set out_len: int64 = 0
+        set p: ptr<uint8> = yukistd_regex_replace(
+            this.handle,
+            text.as_ptr(),
+            text.len(),
+            rep.as_ptr(),
+            rep.len(),
+            ptr_of(out_len),
+        )
+        if out_len < 0 || p == null {
+            return text
+        }
+        if out_len == 0 {
+            return ""
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    public fun replace_all(text: string, rep: string) -> string {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set out_len: int64 = 0
+        set p: ptr<uint8> = yukistd_regex_replace_all(
+            this.handle,
+            text.as_ptr(),
+            text.len(),
+            rep.as_ptr(),
+            rep.len(),
+            ptr_of(out_len),
+        )
+        if out_len < 0 || p == null {
+            return text
+        }
+        if out_len == 0 {
+            return ""
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    public fun split(text: string) -> string[] {
+        if this.is_closed || this.handle == null {
+            panic(RegexError {
+                message: "regex handle is closed or invalid",
+                code: 102,
+            })
+        }
+        set count: int64 = 0
+        set p: ptr<string> = yukistd_regex_split(
+            this.handle,
+            text.as_ptr(),
+            text.len(),
+            ptr_of(count),
+        )
+        if count <= 0 || p == null {
+            set empty_p: ptr<string> = null
+            return from_raw_parts(empty_p, 0, 0)
+        }
+        set raw_parts: string[] = from_raw_parts(p, count, count)
+        set res: string[] = []
+        set i: int64 = 0
+        while i < count {
+            res.push(raw_parts[i])
+            rewrite i = i + 1
+        }
+        return res
+    }
+
+    public fun free() {
+        if !this.is_closed && this.handle != null {
+            yukistd_regex_free(this.handle)
+            rewrite this.handle = null
+            rewrite this.is_closed = true
+        }
+    }
+}
+
+public fun compile(pattern: string) -> Regex {
+    return compile_flags(pattern, 0)
+}
+
+public fun compile_flags(pattern: string, flags: int32) -> Regex {
+    return init Regex(pattern, flags)
+}
+
+public fun is_match(pattern: string, text: string) -> bool {
+    set re: Regex = compile(pattern)
+    set res: bool = re.is_match(text)
+    re.free()
+    return res
+}
+
+public fun regex_find(pattern: string, text: string) -> Match? {
+    set re: Regex = compile(pattern)
+    set res: Match? = re.find(text)
+    re.free()
+    return res
+}
+
+public fun regex_find_all(pattern: string, text: string) -> Match[] {
+    set re: Regex = compile(pattern)
+    set res: Match[] = re.find_all(text)
+    re.free()
+    return res
+}
+
+public fun regex_replace(pattern: string, text: string, rep: string) -> string {
+    set re: Regex = compile(pattern)
+    set res: string = re.replace(text, rep)
+    re.free()
+    return res
+}
+
+public fun regex_replace_all(pattern: string, text: string, rep: string) -> string {
+    set re: Regex = compile(pattern)
+    set res: string = re.replace_all(text, rep)
+    re.free()
+    return res
+}
+
+public fun regex_split(pattern: string, text: string) -> string[] {
+    set re: Regex = compile(pattern)
+    set res: string[] = re.split(text)
+    re.free()
+    return res
+}
+
+public fun escape(s: string) -> string {
+    set out_len: int64 = 0
+    set p: ptr<uint8> = yukistd_regex_escape(s.as_ptr(), s.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null {
+        return ""
+    }
+    return from_raw_parts(p, out_len)
+}

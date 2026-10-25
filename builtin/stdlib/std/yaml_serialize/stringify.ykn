@@ -1,0 +1,175 @@
+load ..strings: slice
+load ..yaml_parser: YamlValue, YAML_NULL, YAML_BOOL, YAML_NUMBER, YAML_STRING, YAML_ARRAY, YAML_OBJECT
+
+fun hex_digit(v: int64) -> string {
+    if v == 0 { return "0" }
+    if v == 1 { return "1" }
+    if v == 2 { return "2" }
+    if v == 3 { return "3" }
+    if v == 4 { return "4" }
+    if v == 5 { return "5" }
+    if v == 6 { return "6" }
+    if v == 7 { return "7" }
+    if v == 8 { return "8" }
+    if v == 9 { return "9" }
+    if v == 10 { return "a" }
+    if v == 11 { return "b" }
+    if v == 12 { return "c" }
+    if v == 13 { return "d" }
+    if v == 14 { return "e" }
+    if v == 15 { return "f" }
+    return "0"
+}
+
+fun needs_yaml_quotes(s: string) -> bool {
+    set len: int64 = s.len()
+    if len == 0 { return true }
+    if s == "true" || s == "false" || s == "null" || s == "yes" || s == "no" || s == "on" || s == "off" || s == "~" {
+        return true
+    }
+    if s[0] == 45 || s[0] == 32 || s[len - 1] == 32 || s[0] == 63 || s[0] == 58 {
+        return true
+    }
+    set i: int64 = 0
+    while i < len {
+        set b: uint8 = s[i]
+        if b == 58 || b == 35 || b == 10 || b == 13 || b == 91 || b == 93 || b == 123 || b == 125 || b == 44 || b == 34 || b == 39 || b == 92 {
+            return true
+        }
+        rewrite i = i + 1
+    }
+    return false
+}
+
+fun escape_yaml_string(s: string) -> string {
+    set res: string = "\""
+    set len: int64 = s.len()
+    set i: int64 = 0
+    set chunk_start: int64 = 0
+
+    while i < len {
+        set b: uint8 = s[i]
+        if b == 34 || b == 92 || b == 10 || b == 13 || b == 9 || b < 32 {
+            if i > chunk_start {
+                rewrite res = res + slice(s, chunk_start, i)
+            }
+            if b == 34 {
+                rewrite res = res + "\\\""
+            } elif b == 92 {
+                rewrite res = res + "\\\\"
+            } elif b == 10 {
+                rewrite res = res + "\\n"
+            } elif b == 13 {
+                rewrite res = res + "\\r"
+            } elif b == 9 {
+                rewrite res = res + "\\t"
+            } else {
+                set b_i: int64 = cast(b, "int64")
+                rewrite res = res + "\\x" + hex_digit((b_i >> 4) & 15) + hex_digit(b_i & 15)
+            }
+            rewrite chunk_start = i + 1
+        }
+        rewrite i = i + 1
+    }
+
+    if chunk_start < len {
+        rewrite res = res + slice(s, chunk_start, len)
+    }
+
+    rewrite res = res + "\""
+    return res
+}
+
+fun format_yaml_number(n: float64) -> string {
+    if n != n { return ".nan" }
+    if n > 1.0e308 { return ".inf" }
+    if n < -1.0e308 { return "-.inf" }
+    set i_val: int64 = cast(n, "int64")
+    if cast(i_val, "float64") == n {
+        return "${i_val}"
+    }
+    return "${n}"
+}
+
+public fun serialize_yaml_node(val: YamlValue, current_indent: string, step_indent: string) -> string {
+    if val.kind == YAML_NULL {
+        return "null"
+    }
+    if val.kind == YAML_BOOL {
+        if val.bool_val { return "true" }
+        return "false"
+    }
+    if val.kind == YAML_NUMBER {
+        return format_yaml_number(val.num_val)
+    }
+    if val.kind == YAML_STRING {
+        if needs_yaml_quotes(val.str_val) {
+            return escape_yaml_string(val.str_val)
+        }
+        return val.str_val
+    }
+    if val.kind == YAML_ARRAY {
+        set count: int64 = val.array_val.len()
+        if count == 0 {
+            return "[]"
+        }
+        set res: string = ""
+        set i: int64 = 0
+        while i < count {
+            set item: YamlValue = val.array_val[i]
+            if i > 0 { rewrite res = res + "\n" }
+            rewrite res = res + current_indent + "- "
+            if item.kind == YAML_OBJECT || item.kind == YAML_ARRAY {
+                if item.len() == 0 {
+                    rewrite res = res + serialize_yaml_node(item, "", step_indent)
+                } else {
+                    rewrite res = res + "\n" + serialize_yaml_node(item, current_indent + step_indent, step_indent)
+                }
+            } else {
+                rewrite res = res + serialize_yaml_node(item, current_indent + step_indent, step_indent)
+            }
+            rewrite i = i + 1
+        }
+        return res
+    }
+    if val.kind == YAML_OBJECT {
+        set count: int64 = val.obj_keys.len()
+        if count == 0 {
+            return "{}"
+        }
+        set res: string = ""
+        set i: int64 = 0
+        while i < count {
+            set k: string = val.obj_keys[i]
+            set v: YamlValue = val.obj_vals[i]
+            if i > 0 { rewrite res = res + "\n" }
+            set key_str: string = ""
+            if needs_yaml_quotes(k) {
+                rewrite key_str = escape_yaml_string(k)
+            } else {
+                rewrite key_str = k
+            }
+            rewrite res = res + current_indent + key_str + ":"
+            if v.kind == YAML_OBJECT || v.kind == YAML_ARRAY {
+                if v.len() == 0 {
+                    rewrite res = res + " " + serialize_yaml_node(v, "", step_indent)
+                } else {
+                    rewrite res = res + "\n" + serialize_yaml_node(v, current_indent + step_indent, step_indent)
+                }
+            } else {
+                rewrite res = res + " " + serialize_yaml_node(v, current_indent + step_indent, step_indent)
+            }
+            rewrite i = i + 1
+        }
+        return res
+    }
+    return "null"
+}
+
+public fun serialize_yaml(val: YamlValue) -> string {
+    return serialize_yaml_node(val, "", "  ")
+}
+
+public fun serialize_yaml_pretty(val: YamlValue, indent: string) -> string {
+    return serialize_yaml_node(val, "", indent)
+}

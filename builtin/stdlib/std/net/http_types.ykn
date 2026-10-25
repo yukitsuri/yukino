@@ -1,0 +1,228 @@
+load ..strings: to_lowercase, trim
+load ..simpleurl: QueryParam, parse_query
+load ..json: json_try_parse, json_stringify
+load ..json_parser.value: JsonValue
+
+public static METHOD_GET: string = "GET"
+public static METHOD_POST: string = "POST"
+public static METHOD_PUT: string = "PUT"
+public static METHOD_DELETE: string = "DELETE"
+public static METHOD_PATCH: string = "PATCH"
+public static METHOD_HEAD: string = "HEAD"
+public static METHOD_OPTIONS: string = "OPTIONS"
+
+public static STATUS_OK: int32 = 200
+public static STATUS_CREATED: int32 = 201
+public static STATUS_ACCEPTED: int32 = 202
+public static STATUS_NO_CONTENT: int32 = 204
+public static STATUS_MOVED_PERMANENTLY: int32 = 301
+public static STATUS_FOUND: int32 = 302
+public static STATUS_SEE_OTHER: int32 = 303
+public static STATUS_NOT_MODIFIED: int32 = 304
+public static STATUS_BAD_REQUEST: int32 = 400
+public static STATUS_UNAUTHORIZED: int32 = 401
+public static STATUS_FORBIDDEN: int32 = 403
+public static STATUS_NOT_FOUND: int32 = 404
+public static STATUS_METHOD_NOT_ALLOWED: int32 = 405
+public static STATUS_CONFLICT: int32 = 409
+public static STATUS_PAYLOAD_TOO_LARGE: int32 = 413
+public static STATUS_INTERNAL_SERVER_ERROR: int32 = 500
+public static STATUS_NOT_IMPLEMENTED: int32 = 501
+public static STATUS_BAD_GATEWAY: int32 = 502
+public static STATUS_SERVICE_UNAVAILABLE: int32 = 503
+
+public fun status_reason(code: int32) -> string {
+    if code == 200 { return "OK" }
+    if code == 201 { return "Created" }
+    if code == 202 { return "Accepted" }
+    if code == 204 { return "No Content" }
+    if code == 301 { return "Moved Permanently" }
+    if code == 302 { return "Found" }
+    if code == 303 { return "See Other" }
+    if code == 304 { return "Not Modified" }
+    if code == 400 { return "Bad Request" }
+    if code == 401 { return "Unauthorized" }
+    if code == 403 { return "Forbidden" }
+    if code == 404 { return "Not Found" }
+    if code == 405 { return "Method Not Allowed" }
+    if code == 409 { return "Conflict" }
+    if code == 413 { return "Payload Too Large" }
+    if code == 500 { return "Internal Server Error" }
+    if code == 501 { return "Not Implemented" }
+    if code == 502 { return "Bad Gateway" }
+    if code == 503 { return "Service Unavailable" }
+    return cast(code, "string")
+}
+
+public struct HeaderEntry {
+    key: string
+    value: string
+}
+
+public class HttpHeaders {
+    entries: HeaderEntry[]
+
+    fun init() {
+        rewrite this.entries = []
+    }
+
+    fun set(key: string, value: string) -> HttpHeaders {
+        set lower = to_lowercase(trim(key))
+        for i in 0..this.entries.len() {
+            if to_lowercase(this.entries[i].key) == lower {
+                rewrite this.entries[i] = HeaderEntry { key: key, value: value }
+                return this
+            }
+        }
+        this.entries.push(HeaderEntry { key: key, value: value })
+        return this
+    }
+
+    fun add(key: string, value: string) -> HttpHeaders {
+        this.entries.push(HeaderEntry { key: key, value: value })
+        return this
+    }
+
+    fun get(key: string) -> string? {
+        set lower = to_lowercase(trim(key))
+        for i in 0..this.entries.len() {
+            if to_lowercase(this.entries[i].key) == lower {
+                return this.entries[i].value
+            }
+        }
+        return null
+    }
+
+    fun has(key: string) -> bool {
+        return this.get(key) != null
+    }
+
+    fun remove(key: string) -> HttpHeaders {
+        set lower = to_lowercase(trim(key))
+        set filtered: HeaderEntry[] = []
+        for i in 0..this.entries.len() {
+            if to_lowercase(this.entries[i].key) != lower {
+                filtered.push(this.entries[i])
+            }
+        }
+        rewrite this.entries = filtered
+        return this
+    }
+
+    fun count() -> int32 {
+        return cast(this.entries.len(), "int32")
+    }
+
+    fun format() -> string {
+        set res = ""
+        for i in 0..this.entries.len() {
+            rewrite res = res + this.entries[i].key + ": " + this.entries[i].value + "\r\n"
+        }
+        return res
+    }
+}
+
+public class HttpRequest {
+    method: string
+    path: string
+    headers: HttpHeaders
+    body: string
+    query: QueryParam[]
+
+    fun init(method: string, path: string, headers: HttpHeaders, body: string = "", query: QueryParam[] = []) {
+        rewrite this.method = method
+        rewrite this.path = path
+        rewrite this.headers = headers
+        rewrite this.body = body
+        rewrite this.query = query
+    }
+
+    fun query_param(key: string) -> string? {
+        for i in 0..this.query.len() {
+            if this.query[i].key == key {
+                return this.query[i].value
+            }
+        }
+        return null
+    }
+
+    fun json() -> JsonValue? {
+        if this.body.len() == 0 { return null }
+        return json_try_parse(this.body)
+    }
+
+    fun text() -> string {
+        return this.body
+    }
+}
+
+public class HttpResponse {
+    status: int32
+    headers: HttpHeaders
+    body: string
+
+    fun init(status: int32 = 200, headers: HttpHeaders? = null, body: string = "") {
+        rewrite this.status = status
+        rewrite this.headers = headers ?? init HttpHeaders()
+        rewrite this.body = body
+    }
+
+    fun json() -> JsonValue? {
+        if this.body.len() == 0 { return null }
+        return json_try_parse(this.body)
+    }
+
+    fun text() -> string {
+        return this.body
+    }
+}
+
+public fun response_status(status: int32) -> HttpResponse {
+    set h = init HttpHeaders()
+    return init HttpResponse(status, h, "")
+}
+
+public fun request_new(method: string, path: string) -> HttpRequest {
+    set h = init HttpHeaders()
+    set empty_query: QueryParam[] = []
+    return init HttpRequest(method, path, h, "", empty_query)
+}
+
+public fun response_ok(body: string) -> HttpResponse {
+    set h = init HttpHeaders()
+    h.set("Content-Type", "text/plain; charset=utf-8")
+    return init HttpResponse(200, h, body)
+}
+
+public fun response_text(content: string, status: int32) -> HttpResponse {
+    set h = init HttpHeaders()
+    h.set("Content-Type", "text/plain; charset=utf-8")
+    return init HttpResponse(status, h, content)
+}
+
+public fun response_json_str(content: string, status: int32) -> HttpResponse {
+    set h = init HttpHeaders()
+    h.set("Content-Type", "application/json; charset=utf-8")
+    return init HttpResponse(status, h, content)
+}
+
+public fun response_html(content: string, status: int32) -> HttpResponse {
+    set h = init HttpHeaders()
+    h.set("Content-Type", "text/html; charset=utf-8")
+    return init HttpResponse(status, h, content)
+}
+
+public fun response_json(value: JsonValue, status: int32) -> HttpResponse {
+    set h = init HttpHeaders()
+    h.set("Content-Type", "application/json; charset=utf-8")
+    set body_str = json_stringify(value)
+    return init HttpResponse(status, h, body_str)
+}
+
+public fun response_not_found(message: string) -> HttpResponse {
+    return response_text(message, 404)
+}
+
+public fun response_error(message: string, status: int32) -> HttpResponse {
+    return response_text(message, status)
+}

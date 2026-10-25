@@ -1,0 +1,154 @@
+load .paths: path_join, path_parent, FsError
+
+// decl core/fs.rs start
+
+cfun yukistd_fs_dir_temp(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_home(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_config(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_data(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_data_local(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_cache(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_state(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_runtime(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_desktop(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_documents(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_downloads(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_music(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_pictures(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_videos(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_exe_path(out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+fun extract_fs_string(p: ptr<uint8>, len: int64) -> string {
+    if p == null || len <= 0 { return "" }
+    return from_raw_parts(p, len)
+}
+
+public fun temp_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_temp(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun home_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_home(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun config_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_config(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun data_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_data(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun data_local_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_data_local(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun cache_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_cache(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun state_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_state(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun runtime_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_runtime(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun desktop_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_desktop(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun documents_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_documents(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun downloads_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_downloads(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun music_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_music(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun pictures_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_pictures(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun videos_dir() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_dir_videos(ptr_of(len))
+    return extract_fs_string(p, len)
+}
+
+public fun exe_path() -> string {
+    set len: int64 = 0
+    set p = yukistd_fs_exe_path(ptr_of(len))
+    if len < 0 || p == null {
+        panic(FsError { message: "failed to retrieve current executable path", code: 6 })
+    }
+    return extract_fs_string(p, len)
+}
+
+public fun exe_dir() -> string {
+    set p = exe_path()
+    return path_parent(p)
+}
+
+public fun app_config_dir(app_name: string) -> string {
+    return path_join(config_dir(), app_name)
+}
+
+public fun app_data_dir(app_name: string) -> string {
+    return path_join(data_dir(), app_name)
+}
+
+public fun app_cache_dir(app_name: string) -> string {
+    return path_join(cache_dir(), app_name)
+}
+
+public fun dir_temp() -> string { return temp_dir() }
+public fun dir_home() -> string { return home_dir() }
+public fun dir_config() -> string { return config_dir() }
+public fun dir_data() -> string { return data_dir() }
+public fun dir_data_local() -> string { return data_local_dir() }
+public fun dir_cache() -> string { return cache_dir() }
+public fun dir_state() -> string { return state_dir() }
+public fun dir_runtime() -> string { return runtime_dir() }
+public fun dir_desktop() -> string { return desktop_dir() }
+public fun dir_documents() -> string { return documents_dir() }
+public fun dir_downloads() -> string { return downloads_dir() }
+public fun dir_music() -> string { return music_dir() }
+public fun dir_pictures() -> string { return pictures_dir() }
+public fun dir_videos() -> string { return videos_dir() }
+public fun dir_app_config(app_name: string) -> string { return app_config_dir(app_name) }
+public fun dir_app_data(app_name: string) -> string { return app_data_dir(app_name) }
+public fun dir_app_cache(app_name: string) -> string { return app_cache_dir(app_name) }

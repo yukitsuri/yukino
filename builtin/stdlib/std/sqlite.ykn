@@ -1,0 +1,43 @@
+public load .sqlite_engine: SqliteConnection, SqliteStatement, SqliteRow, SqliteValue, SqliteError, SQLITE_OK, SQLITE_ERROR, SQLITE_ROW, SQLITE_DONE, SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT, SQLITE_BLOB, SQLITE_NULL, SQLITE_OPEN_READONLY, SQLITE_OPEN_READWRITE, SQLITE_OPEN_CREATE, SQLITE_OPEN_MEMORY, sqlite_null, sqlite_int, sqlite_float, sqlite_string, sqlite_text, sqlite_blob, sqlite_bool, open_connection, try_open_connection
+load .sqlite_engine.bridge: yukistd_sqlite_version
+
+public fun open(path: string) -> SqliteConnection {
+    return open_connection(path, 0)
+}
+
+public fun try_open(path: string) -> SqliteConnection? {
+    return try_open_connection(path, 0)
+}
+
+public fun open_memory() -> SqliteConnection {
+    return open_connection(":memory:", 0)
+}
+
+public fun open_with_flags(path: string, flags: int32) -> SqliteConnection {
+    return open_connection(path, flags)
+}
+
+public fun try_open_with_flags(path: string, flags: int32) -> SqliteConnection? {
+    return try_open_connection(path, flags)
+}
+
+public fun sqlite_open(path: string) -> SqliteConnection {
+    return open(path)
+}
+
+public fun sqlite_try_open(path: string) -> SqliteConnection? {
+    return try_open(path)
+}
+
+public fun sqlite_open_memory() -> SqliteConnection {
+    return open_memory()
+}
+
+public fun sqlite_version() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_sqlite_version(ptr_of(out_len))
+    if p != null && out_len > 0 {
+        return from_raw_parts(p, out_len)
+    }
+    return ""
+}

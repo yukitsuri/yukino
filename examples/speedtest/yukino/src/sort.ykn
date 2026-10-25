@@ -1,0 +1,73 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u32, free_u32
+
+static SORT_COUNT: int64 = 3000000
+static INSERTION_CUTOFF: int64 = 16
+static SORT_STRIDE: int64 = 1009
+
+fun insertion_sort(ref ~a: uint32[], lo: int64, hi: int64) {
+    for i in (lo + 1)..(hi + 1) {
+        set v: uint32 = a[i]
+        set j: int64 = i - 1
+        while j >= lo && a[j] > v {
+            rewrite a[j + 1] = a[j]
+            rewrite j = j - 1
+        }
+        rewrite a[j + 1] = v
+    }
+}
+
+fun quick_sort(ref ~a: uint32[], lo_in: int64, hi_in: int64) {
+    set lo: int64 = lo_in
+    set hi: int64 = hi_in
+    while hi - lo >= INSERTION_CUTOFF {
+        set pivot: uint32 = a[lo + (hi - lo) / 2]
+        set i: int64 = lo
+        set j: int64 = hi
+        while i <= j {
+            while a[i] < pivot {
+                rewrite i = i + 1
+            }
+            while a[j] > pivot {
+                rewrite j = j - 1
+            }
+            if i <= j {
+                set t: uint32 = a[i]
+                rewrite a[i] = a[j]
+                rewrite a[j] = t
+                rewrite i = i + 1
+                rewrite j = j - 1
+            }
+        }
+        if j - lo < hi - i {
+            quick_sort(ref ~a, lo, j)
+            rewrite lo = i
+        } else {
+            quick_sort(ref ~a, i, hi)
+            rewrite hi = j
+        }
+    }
+    insertion_sort(ref ~a, lo, hi)
+}
+
+public fun sort_test() -> uint64 {
+    set keys = alloc_u32(SORT_COUNT)
+    set r = init Rng(RNG_SEED)
+    for i in 0..SORT_COUNT {
+        rewrite keys[i] = r.key31()
+    }
+    quick_sort(ref ~keys, 0, SORT_COUNT - 1)
+    set ordered: uint64 = 1
+    for i in 1..SORT_COUNT {
+        if keys[i - 1] > keys[i] {
+            rewrite ordered = 0
+        }
+    }
+    set h: uint64 = MIX_SEED
+    set i: int64 = 0
+    while i < SORT_COUNT {
+        rewrite h = mix(h, cast(keys[i], "uint64"))
+        rewrite i = i + SORT_STRIDE
+    }
+    free_u32(keys)
+    return mix(h, ordered)
+}

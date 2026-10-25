@@ -1,0 +1,381 @@
+// decls core/numf.rs start
+cfun yukistd_numf_to_fixed(val: float64, precision: int32, out_len: ptr<int64>) -> ptr<uint8>
+// decls end
+
+load .strings: pad_start, trim, slice, index_of
+load .math: round, is_nan, is_infinite
+
+public struct NumfError {
+    message: string
+    code: int32
+}
+
+fun digit_to_char(d: int32, uppercase: bool) -> string {
+    if d < 10 {
+        return cast(cast(48 + d, "char"), "string")
+    }
+    if uppercase {
+        return cast(cast(65 + (d - 10), "char"), "string")
+    }
+    return cast(cast(97 + (d - 10), "char"), "string")
+}
+
+fun format_base_internal(val: int64, radix: int32, uppercase: bool, prefix_str: string) -> string {
+    if radix < 2 || radix > 36 {
+        panic(NumfError {
+            message: "radix must be between 2 and 36",
+            code: 101,
+        })
+    }
+    set is_neg = val < 0
+    set uval: uint64 = 0u64
+    if is_neg {
+        if val == -9223372036854775807 - 1 {
+            rewrite uval = 0x8000000000000000u64
+        } else {
+            rewrite uval = cast(-val, "uint64")
+        }
+    } else {
+        rewrite uval = cast(val, "uint64")
+    }
+
+    if uval == 0u64 {
+        set zero_digits = "0"
+        if is_neg {
+            return "-" + prefix_str + zero_digits
+        }
+        return prefix_str + zero_digits
+    }
+
+    set uradix: uint64 = cast(radix, "uint64")
+    set digits = ""
+    while uval > 0u64 {
+        set rem: uint64 = uval % uradix
+        set d: int32 = cast(rem, "int32")
+        set ch = digit_to_char(d, uppercase)
+        rewrite digits = ch + digits
+        rewrite uval = uval / uradix
+    }
+
+    if is_neg { return "-" + prefix_str + digits }
+    return prefix_str + digits
+}
+
+public fun to_base(val: int64, radix: int32) -> string {
+    return format_base_internal(val, radix, false, "")
+}
+
+public fun to_hex(val: int64, prefix: bool = false) -> string {
+    set pfx: string = if prefix { "0x" } else { "" }
+    return format_base_internal(val, 16, false, pfx)
+}
+
+public fun to_hex_upper(val: int64, prefix: bool = false) -> string {
+    set pfx: string = if prefix { "0x" } else { "" }
+    return format_base_internal(val, 16, true, pfx)
+}
+
+public fun to_bin(val: int64, prefix: bool = false) -> string {
+    set pfx: string = if prefix { "0b" } else { "" }
+    return format_base_internal(val, 2, false, pfx)
+}
+
+public fun to_oct(val: int64, prefix: bool = false) -> string {
+    set pfx: string = if prefix { "0o" } else { "" }
+    return format_base_internal(val, 8, false, pfx)
+}
+
+public fun parse_base(s: string, radix: int32) -> int64? {
+    if radix < 2 || radix > 36 {
+        panic(NumfError {
+            message: "radix must be between 2 and 36",
+            code: 101,
+        })
+    }
+    set t = trim(s)
+    if t.len() == 0 { return null }
+
+    set is_neg = false
+    set start_idx: int64 = 0
+    if t[0] == 45u8 {
+        rewrite is_neg = true
+        rewrite start_idx = 1
+    }
+    if t[0] == 43u8 { rewrite start_idx = 1 }
+
+    if start_idx + 1 < t.len() && t[start_idx] == 48u8 {
+        set next_ch = t[start_idx + 1]
+        if radix == 16 && (next_ch == 120u8 || next_ch == 88u8) {
+            rewrite start_idx = start_idx + 2
+        }
+        if radix == 2 && (next_ch == 98u8 || next_ch == 66u8) {
+            rewrite start_idx = start_idx + 2
+        }
+        if radix == 8 && (next_ch == 111u8 || next_ch == 79u8) {
+            rewrite start_idx = start_idx + 2
+        }
+    }
+
+    if start_idx >= t.len() { return null }
+
+    set res: uint64 = 0u64
+    set uradix: uint64 = cast(radix, "uint64")
+    set has_digits = false
+    set i: int64 = start_idx
+
+    while i < t.len() {
+        set b = t[i]
+        if b == 95u8 {
+            rewrite i = i + 1
+            continue
+        }
+        set d: int32 = -1
+        if b >= 48u8 && b <= 57u8 {
+            rewrite d = cast(b - 48u8, "int32")
+        }
+        if b >= 65u8 && b <= 90u8 {
+            rewrite d = cast(b - 65u8, "int32") + 10
+        }
+        if b >= 97u8 && b <= 122u8 {
+            rewrite d = cast(b - 97u8, "int32") + 10
+        }
+
+        if d < 0 || d >= radix { return null }
+
+        rewrite has_digits = true
+        set ud: uint64 = cast(d, "uint64")
+        set limit: uint64 = 0x7fffffffffffffffu64
+        if is_neg {
+            rewrite limit = 0x8000000000000000u64
+        }
+        if res > (limit - ud) / uradix { return null }
+        rewrite res = res * uradix + ud
+        rewrite i = i + 1
+    }
+
+    if !has_digits { return null }
+
+    if is_neg {
+        if res == 0x8000000000000000u64 {
+            return -9223372036854775807 - 1
+        }
+        return -cast(res, "int64")
+    }
+    return cast(res, "int64")
+}
+
+public fun parse_hex(s: string) -> int64? {
+    return parse_base(s, 16)
+}
+
+public fun parse_bin(s: string) -> int64? {
+    return parse_base(s, 2)
+}
+
+public fun parse_oct(s: string) -> int64? {
+    return parse_base(s, 8)
+}
+
+fun format_pretty_int_str(raw: string, separator: string) -> string {
+    if raw.len() == 0 { return "" }
+    set is_neg = raw[0] == 45u8
+    set start_idx: int64 = if is_neg { 1 } else { 0 }
+    set digits_len = raw.len() - start_idx
+    if digits_len <= 3 {
+        return raw.cp()
+    }
+    set first_group = digits_len % 3
+    if first_group == 0 {
+        rewrite first_group = 3
+    }
+    set res: string = if is_neg { "-" } else { "" }
+    set i: int64 = start_idx
+    set count: int64 = 0
+    while i < raw.len() {
+        if count == first_group {
+            rewrite res = res + separator
+            rewrite count = 0
+            rewrite first_group = 3
+        }
+        rewrite res = res + cast(cast(raw[i], "char"), "string")
+        rewrite count = count + 1
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun pretty_int(val: int64, separator: string = " ") -> string {
+    set raw = cast(val, "string")
+    return format_pretty_int_str(raw, separator)
+}
+
+public fun pretty(val: int64) -> string {
+    return pretty_int(val, " ")
+}
+
+public fun to_fixed(val: float64, precision: int32) -> string {
+    if precision < 0 {
+        panic(NumfError {
+            message: "precision cannot be negative",
+            code: 102,
+        })
+    }
+    set out_len: int64 = 0
+    set p = yukistd_numf_to_fixed(val, precision, ptr_of(out_len))
+    if out_len <= 0 || p == null { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun pretty_float(val: float64, precision: int32 = 2, separator: string = " ") -> string {
+    if precision < 0 {
+        panic(NumfError {
+            message: "precision cannot be negative",
+            code: 102,
+        })
+    }
+    set s = to_fixed(val, precision)
+    set dot_idx = index_of(s, ".")
+    if dot_idx < 0 { return s }
+    set int_part = slice(s, 0, dot_idx)
+    set frac_part = slice(s, dot_idx, s.len())
+    set pretty_int_part = format_pretty_int_str(int_part, separator)
+    return pretty_int_part + frac_part
+}
+
+public fun pad_left(val: int64, width: int32, pad_char: string = "0") -> string {
+    if width < 0 {
+        panic(NumfError {
+            message: "width cannot be negative",
+            code: 102,
+        })
+    }
+    set ch: string = if pad_char.len() == 0 { "0" } else { pad_char }
+    if val < 0 && ch == "0" {
+        set s: string = if val == -9223372036854775807 - 1 {
+            "9223372036854775808"
+        } else {
+            cast(-val, "string")
+        }
+        set target_w: int64 = cast(width - 1, "int64")
+        if target_w < s.len() {
+            rewrite target_w = s.len()
+        }
+        return "-" + pad_start(s, target_w, ch)
+    }
+    set s = cast(val, "string")
+    return pad_start(s, cast(width, "int64"), ch)
+}
+
+public fun human_bytes(bytes: int64, use_si: bool = false, precision: int32 = 1) -> string {
+    if precision < 0 {
+        panic(NumfError {
+            message: "precision cannot be negative",
+            code: 102,
+        })
+    }
+    set is_neg = bytes < 0
+    set fval: float64 = if is_neg {
+        if bytes == -9223372036854775807 - 1 {
+            9223372036854775808.0
+        } else {
+            cast(-bytes, "float64")
+        }
+    } else {
+        cast(bytes, "float64")
+    }
+    set step: float64 = if use_si { 1000.0 } else { 1024.0 }
+    set prefix: string = if is_neg { "-" } else { "" }
+
+    if fval < step {
+        return prefix + cast(cast(fval, "int64"), "string") + " B"
+    }
+
+    set unit = 0
+    while fval >= step && unit < 6 {
+        rewrite fval = fval / step
+        rewrite unit = unit + 1
+    }
+
+    set unit_name = ""
+    if use_si {
+        if unit == 1 { rewrite unit_name = "KB" }
+        if unit == 2 { rewrite unit_name = "MB" }
+        if unit == 3 { rewrite unit_name = "GB" }
+        if unit == 4 { rewrite unit_name = "TB" }
+        if unit == 5 { rewrite unit_name = "PB" }
+        if unit >= 6 { rewrite unit_name = "EB" }
+    } else {
+        if unit == 1 { rewrite unit_name = "KiB" }
+        if unit == 2 { rewrite unit_name = "MiB" }
+        if unit == 3 { rewrite unit_name = "GiB" }
+        if unit == 4 { rewrite unit_name = "TiB" }
+        if unit == 5 { rewrite unit_name = "PiB" }
+        if unit >= 6 { rewrite unit_name = "EiB" }
+    }
+
+    set formatted = to_fixed(fval, precision)
+    return prefix + formatted + " " + unit_name
+}
+
+public fun human_metric(val: float64, precision: int32 = 1) -> string {
+    if precision < 0 {
+        panic(NumfError {
+            message: "precision cannot be negative",
+            code: 102,
+        })
+    }
+    if is_nan(val) { return "NaN" }
+    if is_infinite(val) {
+        if val < 0.0 { return "-Infinity" }
+        return "Infinity"
+    }
+
+    set is_neg = val < 0.0
+    set abs_val: float64 = if is_neg { -val } else { val }
+    set prefix: string = if is_neg { "-" } else { "" }
+
+    if abs_val < 1000.0 {
+        if abs_val == round(abs_val) {
+            return prefix + cast(cast(abs_val, "int64"), "string")
+        }
+        return prefix + to_fixed(abs_val, precision)
+    }
+
+    set suffix = ""
+    set scaled = abs_val
+    if abs_val >= 1000000000000.0 {
+        rewrite scaled = abs_val / 1000000000000.0
+        rewrite suffix = "T"
+    } else {
+        if abs_val >= 1000000000.0 {
+            rewrite scaled = abs_val / 1000000000.0
+            rewrite suffix = "B"
+        } else {
+            if abs_val >= 1000000.0 {
+                rewrite scaled = abs_val / 1000000.0
+                rewrite suffix = "M"
+            } else {
+                rewrite scaled = abs_val / 1000.0
+                rewrite suffix = "K"
+            }
+        }
+    }
+
+    return prefix + to_fixed(scaled, precision) + suffix
+}
+
+public fun percent(val: float64, precision: int32 = 1) -> string {
+    if precision < 0 {
+        panic(NumfError {
+            message: "precision cannot be negative",
+            code: 102,
+        })
+    }
+    if is_nan(val) { return "NaN" }
+    if is_infinite(val) {
+        if val < 0.0 { return "-Infinity" }
+        return "Infinity"
+    }
+    set p = val * 100.0
+    return to_fixed(p, precision) + "%"
+}

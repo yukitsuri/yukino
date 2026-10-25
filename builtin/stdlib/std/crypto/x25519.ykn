@@ -1,0 +1,96 @@
+load .common: CryptoError
+load .curve25519: gf_new, unpack25519, pack25519, gf_cswap, gf_add, gf_sub, gf_mul, gf_sqr, gf_inv
+
+fun init_121665() -> int64[] {
+    set k: int64[] = gf_new()
+    rewrite k[0] = 0xdb41
+    rewrite k[1] = 1
+    return k
+}
+
+public fun x25519(ref scalar: bytes, ref point: bytes) -> bytes {
+    if scalar.len() != 32 {
+        panic(CryptoError { message: "x25519 scalar must be 32 bytes", code: 41 })
+    }
+    if point.len() != 32 {
+        panic(CryptoError { message: "x25519 point must be 32 bytes", code: 42 })
+    }
+    set z: uint8[] = []
+    for i in 0..32 {
+        z.push(scalar[i])
+    }
+    rewrite z[0] = z[0] & 248u8
+    rewrite z[31] = (z[31] & 127u8) | 64u8
+
+    set x: int64[] = gf_new()
+    unpack25519(ref ~x, ref point)
+
+    set a: int64[] = gf_new()
+    set b: int64[] = gf_new()
+    set c: int64[] = gf_new()
+    set d: int64[] = gf_new()
+    set c121665: int64[] = init_121665()
+
+    for i in 0..16 {
+        rewrite b[i] = x[i]
+    }
+    rewrite a[0] = 1
+    rewrite d[0] = 1
+
+    set i: int64 = 254
+    while i >= 0 {
+        set byte_idx: int64 = i >> 3
+        set bit_idx: int64 = i & 7
+        set r: int64 = cast((z[byte_idx] >> cast(bit_idx, "uint8")) & 1u8, "int64")
+
+        gf_cswap(ref ~a, ref ~b, r)
+        gf_cswap(ref ~c, ref ~d, r)
+
+        set e: int64[] = gf_add(ref a, ref c)
+        rewrite a = gf_sub(ref a, ref c)
+        set c_next: int64[] = gf_add(ref b, ref d)
+        rewrite b = gf_sub(ref b, ref d)
+        rewrite d = gf_sqr(ref e)
+        set f: int64[] = gf_sqr(ref a)
+        rewrite a = gf_mul(ref c_next, ref a)
+        rewrite c = gf_mul(ref b, ref e)
+        rewrite e = gf_add(ref a, ref c)
+        rewrite a = gf_sub(ref a, ref c)
+        rewrite b = gf_sqr(ref a)
+        rewrite c = gf_sub(ref d, ref f)
+        rewrite a = gf_mul(ref c, ref c121665)
+        rewrite a = gf_add(ref a, ref d)
+        rewrite c = gf_mul(ref c, ref a)
+        rewrite a = gf_mul(ref d, ref f)
+        rewrite d = gf_mul(ref b, ref x)
+        rewrite b = gf_sqr(ref e)
+
+        gf_cswap(ref ~a, ref ~b, r)
+        gf_cswap(ref ~c, ref ~d, r)
+        rewrite i = i - 1
+    }
+
+    set c_inv: int64[] = gf_inv(ref c)
+    rewrite a = gf_mul(ref a, ref c_inv)
+
+    set q: uint8[] = []
+    for k in 0..32 {
+        q.push(0u8)
+    }
+    pack25519(ref ~q, ref a)
+    return from_raw_parts(q.as_ptr(), 32, 32)
+}
+
+public fun x25519_public_key(ref secret_key: bytes) -> bytes {
+    set base9: uint8[] = []
+    base9.push(9u8)
+    for i in 1..32 {
+        base9.push(0u8)
+    }
+    set p9: bytes = from_raw_parts(base9.as_ptr(), 32, 32)
+    return x25519(ref secret_key, ref p9)
+}
+
+public fun x25519_diffie_hellman(ref secret_key: bytes, ref peer_public_key: bytes) -> bytes {
+    return x25519(ref secret_key, ref peer_public_key)
+}

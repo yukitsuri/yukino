@@ -1,0 +1,71 @@
+// decls locale.rs
+
+cfun yukistd_locale_current_locale(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_locale_system_timezone(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_locale_preferred_languages(out_count: ptr<int64>) -> ptr<string>
+
+load .strings: to_lowercase, to_uppercase, slice, index_of
+
+public fun current_locale() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_locale_current_locale(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "en_US" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun current_language() -> string {
+    set loc = current_locale()
+    set sep_idx = index_of(loc, "_")
+    if sep_idx < 0 {
+        rewrite sep_idx = index_of(loc, "-")
+    }
+    if sep_idx > 0 {
+        set lang = slice(loc, 0, sep_idx)
+        return to_lowercase(lang)
+    }
+    if loc.len() > 0 { return to_lowercase(loc) }
+    return "en"
+}
+
+public fun current_country() -> string? {
+    set loc = current_locale()
+    set sep_idx = index_of(loc, "_")
+    if sep_idx < 0 {
+        rewrite sep_idx = index_of(loc, "-")
+    }
+    if sep_idx >= 0 && sep_idx + 1 < loc.len() {
+        set country_code = slice(loc, sep_idx + 1, loc.len())
+        set dot_idx = index_of(country_code, ".")
+        if dot_idx >= 0 {
+            rewrite country_code = slice(country_code, 0, dot_idx)
+        }
+        set at_idx = index_of(country_code, "@")
+        if at_idx >= 0 {
+            rewrite country_code = slice(country_code, 0, at_idx)
+        }
+        if country_code.len() > 0 {
+            return to_uppercase(country_code)
+        }
+    }
+    return null
+}
+
+public fun preferred_languages() -> string[] {
+    set out_count: int64 = 0
+    set p = yukistd_locale_preferred_languages(ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        return [current_language()]
+    }
+    set raw_arr: string[] = from_raw_parts(p, out_count, out_count)
+    set res: string[] = []
+    for i in 0..out_count { res.push(raw_arr[i].cp()) }
+    if res.len() == 0 { res.push(current_language()) }
+    return res
+}
+
+public fun system_timezone() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_locale_system_timezone(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "UTC" }
+    return from_raw_parts(p, out_len)
+}

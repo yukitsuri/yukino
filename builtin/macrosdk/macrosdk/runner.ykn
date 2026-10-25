@@ -1,0 +1,174 @@
+load std.json: json_try_parse, JsonValue
+load .tokens: TokenStream, token_stream
+load .context: MacroContext, Diagnostic
+
+cfun yukimacrosdk_read_request_json(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukimacrosdk_write_response_json(
+    success: bool,
+    output_tokens_ptr: ptr<uint8>,
+    output_tokens_len: int64,
+    tracked_files_json_ptr: ptr<uint8>,
+    tracked_files_json_len: int64,
+    diagnostics_json_ptr: ptr<uint8>,
+    diagnostics_json_len: int64,
+    error_message_ptr: ptr<uint8>,
+    error_message_len: int64
+) -> int32
+cfun yukimacrosdk_free_buffer(ptr: ptr<uint8>, len: int64)
+
+public type MacroFn = fun(MacroContext, TokenStream) -> TokenStream
+
+fun format_tracked_files_json(files: string[]) -> string {
+    set res = "["
+    set i: int64 = 0
+    while i < files.len() {
+        if i > 0 {
+            rewrite res = "${res},"
+        }
+        rewrite res = "${res}\"${files[i]}\""
+        rewrite i = i + 1
+    }
+    return "${res}]"
+}
+
+fun format_diagnostics_json(diags: Diagnostic[]) -> string {
+    set res = "["
+    set i: int64 = 0
+    while i < diags.len() {
+        if i > 0 {
+            rewrite res = "${res},"
+        }
+        set d = diags[i]
+        rewrite res = "${res}{\"severity\":\"${d.severity}\",\"message\":\"${d.message}\",\"span\":null}"
+        rewrite i = i + 1
+    }
+    return "${res}]"
+}
+
+fun contains_error_diagnostic(diags: Diagnostic[]) -> bool {
+    set i: int64 = 0
+    while i < diags.len() {
+        if diags[i].severity == "Error" {
+            return true
+        }
+        rewrite i = i + 1
+    }
+    return false
+}
+
+public class MacroRunner {
+    names: string[]
+    handlers: MacroFn[]
+
+    public fun init() {
+        rewrite this.names = []
+        rewrite this.handlers = []
+    }
+
+    public fun register(name: string, handler: MacroFn) -> MacroRunner {
+        this.names.push(name)
+        this.handlers.push(handler)
+        return this
+    }
+
+    public fun register_attribute(name: string, handler: MacroFn) -> MacroRunner {
+        return this.register(name, handler)
+    }
+
+    public fun register_mutation(name: string, handler: MacroFn) -> MacroRunner {
+        return this.register(name, handler)
+    }
+
+    fun find_handler_index(macro_name: string) -> int64 {
+        set i: int64 = 0
+        while i < this.names.len() {
+            set cur_name: string = this.names[i]
+            if cur_name == macro_name {
+                return i
+            }
+            rewrite i = i + 1
+        }
+        return -1
+    }
+
+    fun process_single_request(raw_ptr: ptr<uint8>, len: int64) -> int32 {
+        set req_json: string = string::from_raw_parts(raw_ptr, len)
+        set maybe_doc = json_try_parse(req_json)
+
+        if maybe_doc == null {
+            yukimacrosdk_free_buffer(raw_ptr, len)
+            set err = "invalid macro request json payload"
+            return yukimacrosdk_write_response_json(
+                false,
+                null, 0,
+                null, 0,
+                null, 0,
+                err.as_ptr(), err.len()
+            )
+        }
+
+        set fallback_doc = init JsonValue()
+        set doc = maybe_doc ?? fallback_doc
+        set macro_name = doc.get("macro_name").as_string().cp()
+        set input_tokens = doc.get("input_tokens").as_string().cp()
+        set working_dir = doc.get("working_dir").as_string().cp()
+        set kind_val = doc.get("kind")
+        set kind = "FunctionLike"
+        if !kind_val.is_null() {
+            rewrite kind = kind_val.as_string().cp()
+        }
+        set attr_args_val = doc.get("attr_args")
+        set attr_args = ""
+        if !attr_args_val.is_null() {
+            rewrite attr_args = attr_args_val.as_string().cp()
+        }
+        set handler_idx = this.find_handler_index(macro_name)
+
+        if handler_idx < 0 {
+            yukimacrosdk_free_buffer(raw_ptr, len)
+            set err = "macro '${macro_name}' is not registered in runner"
+            return yukimacrosdk_write_response_json(
+                false,
+                null, 0,
+                null, 0,
+                null, 0,
+                err.as_ptr(), err.len()
+            )
+        }
+
+        set ctx = init MacroContext(macro_name, working_dir, kind, attr_args)
+        set in_stream = token_stream(input_tokens)
+        set handler: MacroFn = this.handlers[handler_idx]
+        set out_stream: TokenStream = handler(ctx, in_stream)
+        set out_code = out_stream.to_string()
+
+        set tf_json = format_tracked_files_json(ctx.tracked_files)
+        set diag_json = format_diagnostics_json(ctx.diagnostics)
+        set has_error = contains_error_diagnostic(ctx.diagnostics)
+
+        yukimacrosdk_free_buffer(raw_ptr, len)
+
+        return yukimacrosdk_write_response_json(
+            !has_error,
+            out_code.as_ptr(), out_code.len(),
+            tf_json.as_ptr(), tf_json.len(),
+            diag_json.as_ptr(), diag_json.len(),
+            null, 0
+        )
+    }
+
+    public fun run() -> int32 {
+        while true {
+            set out_len: int64 = 0
+            set raw_ptr = yukimacrosdk_read_request_json(ptr_of(out_len))
+            if raw_ptr == null || out_len <= 0 {
+                break
+            }
+            set status = this.process_single_request(raw_ptr, out_len)
+            if status != 0 {
+                return status
+            }
+        }
+        return 0
+    }
+}

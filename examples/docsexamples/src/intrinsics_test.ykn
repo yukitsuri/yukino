@@ -1,0 +1,36 @@
+load std.io: print
+
+public fun test_intrinsics() {
+    // 1. typeof!
+    set num = 42
+    set num_type: string = typeof!(num)
+
+    set name = "Yukino"
+    set name_type: string = typeof!(name)
+
+    // 2. cast
+    set raw_val: int64 = 100
+    set casted_i32: int32 = cast(raw_val, "int32")
+
+    // 3. assert, assert_eq, assert_ne
+    assert(num > 0)
+    assert_eq(num, 42)
+    assert_ne(num, 0)
+
+    // 4. slice/array methods: len, cap, as_ptr, cp
+    set items = [10, 20, 30]
+    set l: int64 = items.len()
+    set c: int64 = items.cap()
+    set ptr_items = items.as_ptr()
+    set copied = items.cp()
+
+    // 5. ptr_of
+    set val = 555
+    set p_val = ptr_of(val)
+
+    // 6. args()
+    set cli_args = args()
+    set args_count: int64 = cli_args.len()
+
+    print("Intrinsics OK\n")
+}

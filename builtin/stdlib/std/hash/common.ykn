@@ -1,0 +1,138 @@
+load ..fs.files: file_size, open_read, File
+
+
+
+public struct HashError {
+    message: string
+    code: int32
+}
+
+public fun bytes_to_hex(ref data: bytes) -> string {
+    set hex_chars = "0123456789abcdef"
+    set res: string = ""
+    set len: int64 = data.len()
+    for i in 0..len {
+        set b: uint8 = data[i]
+        set hi: int64 = cast((b >> 4u8) & 15u8, "int64")
+        set lo: int64 = cast(b & 15u8, "int64")
+        rewrite res = res + hex_chars[hi..hi + 1] + hex_chars[lo..lo + 1]
+    }
+    return res
+}
+
+fun hex_char_to_nibble(b: uint8) -> int32 {
+    switch b {
+        48u8 -> { return 0 }
+        49u8 -> { return 1 }
+        50u8 -> { return 2 }
+        51u8 -> { return 3 }
+        52u8 -> { return 4 }
+        53u8 -> { return 5 }
+        54u8 -> { return 6 }
+        55u8 -> { return 7 }
+        56u8 -> { return 8 }
+        57u8 -> { return 9 }
+        97u8 -> { return 10 }
+        98u8 -> { return 11 }
+        99u8 -> { return 12 }
+        100u8 -> { return 13 }
+        101u8 -> { return 14 }
+        102u8 -> { return 15 }
+        65u8 -> { return 10 }
+        66u8 -> { return 11 }
+        67u8 -> { return 12 }
+        68u8 -> { return 13 }
+        69u8 -> { return 14 }
+        70u8 -> { return 15 }
+        else -> { return -1 }
+    }
+    return -1
+}
+
+public fun hex_to_bytes(hex: string) -> bytes {
+    set len: int64 = hex.len()
+    if len % 2 != 0 {
+        panic(HashError {
+            message: "hex string length must be even",
+            code: 101,
+        })
+    }
+    set raw: uint8[] = []
+    set i: int64 = 0
+    while i < len {
+        set b1: uint8 = hex[i]
+        set b2: uint8 = hex[i + 1]
+        set h1: int32 = hex_char_to_nibble(b1)
+        set h2: int32 = hex_char_to_nibble(b2)
+        if h1 < 0 || h2 < 0 {
+            panic(HashError {
+                message: "invalid hex character in input",
+                code: 102,
+            })
+        }
+        raw.push(cast((h1 << 4) | h2, "uint8"))
+        rewrite i = i + 2
+    }
+    set count: int64 = raw.len()
+    if count == 0 {
+        return cast("", "bytes")
+    }
+    return from_raw_parts(raw.as_ptr(), count, count)
+}
+
+public fun constant_time_eq(ref a: bytes, ref b: bytes) -> bool {
+    if a.len() != b.len() { return false }
+    set diff: uint8 = 0u8
+    set len: int64 = a.len()
+    for i in 0..len {
+        rewrite diff = diff | (a[i] ^ b[i])
+    }
+    return diff == 0u8
+}
+
+public fun constant_time_eq_str(a: string, b: string) -> bool {
+    if a.len() != b.len() { return false }
+    set diff: uint8 = 0u8
+    set len: int64 = a.len()
+    for i in 0..len {
+        rewrite diff = diff | (a[i] ^ b[i])
+    }
+    return diff == 0u8
+}
+
+public fun equal(a: string, b: string) -> bool {
+    return constant_time_eq_str(a, b)
+}
+
+public fun file_eq(path_a: string, path_b: string) -> bool {
+    set sz_a: int64 = file_size(path_a.cp())
+    set sz_b: int64 = file_size(path_b.cp())
+    if sz_a != sz_b { return false }
+    if sz_a == 0 { return true }
+    set fa: File = open_read(path_a)
+    set fb: File = open_read(path_b)
+    set buf_a: uint8[65536]
+    set buf_b: uint8[65536]
+    set rem: int64 = sz_a
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set na: int64 = fa.read(buf_a.as_ptr(), to_read)
+        set nb: int64 = fb.read(buf_b.as_ptr(), to_read)
+        if na != nb || na <= 0 {
+            fa.close()
+            fb.close()
+            return false
+        }
+        for i in 0..na {
+            if buf_a[i] != buf_b[i] {
+                fa.close()
+                fb.close()
+                return false
+            }
+        }
+        rewrite rem = rem - na
+    }
+    fa.close()
+    fb.close()
+    return true
+}

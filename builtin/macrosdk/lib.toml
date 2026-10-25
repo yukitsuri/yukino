@@ -1,0 +1,14 @@
+[lib]
+name = "macrosdk"
+version = "0.1.0"
+entry = "macrosdk/lib.ykn"
+yukino = ["0.1.0", "+"]
+output = "static"
+includes = ["stdlib"]
+
+[features]
+default = []
+
+[libs.static]
+archives = ["libyukimacrosdk_core.a"]
+system = []

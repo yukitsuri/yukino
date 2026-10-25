@@ -1,0 +1,1228 @@
+load ..fs.files: file_size, open_read, File
+load .common: HashError, bytes_to_hex
+
+fun k256(i: int64) -> uint32 {
+    switch i {
+        0 -> { return 0x428a2f98u32 }
+        1 -> { return 0x71374491u32 }
+        2 -> { return 0xb5c0fbcfu32 }
+        3 -> { return 0xe9b5dba5u32 }
+        4 -> { return 0x3956c25bu32 }
+        5 -> { return 0x59f111f1u32 }
+        6 -> { return 0x923f82a4u32 }
+        7 -> { return 0xab1c5ed5u32 }
+        8 -> { return 0xd807aa98u32 }
+        9 -> { return 0x12835b01u32 }
+        10 -> { return 0x243185beu32 }
+        11 -> { return 0x550c7dc3u32 }
+        12 -> { return 0x72be5d74u32 }
+        13 -> { return 0x80deb1feu32 }
+        14 -> { return 0x9bdc06a7u32 }
+        15 -> { return 0xc19bf174u32 }
+        16 -> { return 0xe49b69c1u32 }
+        17 -> { return 0xefbe4786u32 }
+        18 -> { return 0x0fc19dc6u32 }
+        19 -> { return 0x240ca1ccu32 }
+        20 -> { return 0x2de92c6fu32 }
+        21 -> { return 0x4a7484aau32 }
+        22 -> { return 0x5cb0a9dcu32 }
+        23 -> { return 0x76f988dau32 }
+        24 -> { return 0x983e5152u32 }
+        25 -> { return 0xa831c66du32 }
+        26 -> { return 0xb00327c8u32 }
+        27 -> { return 0xbf597fc7u32 }
+        28 -> { return 0xc6e00bf3u32 }
+        29 -> { return 0xd5a79147u32 }
+        30 -> { return 0x06ca6351u32 }
+        31 -> { return 0x14292967u32 }
+        32 -> { return 0x27b70a85u32 }
+        33 -> { return 0x2e1b2138u32 }
+        34 -> { return 0x4d2c6dfcu32 }
+        35 -> { return 0x53380d13u32 }
+        36 -> { return 0x650a7354u32 }
+        37 -> { return 0x766a0abbu32 }
+        38 -> { return 0x81c2c92eu32 }
+        39 -> { return 0x92722c85u32 }
+        40 -> { return 0xa2bfe8a1u32 }
+        41 -> { return 0xa81a664bu32 }
+        42 -> { return 0xc24b8b70u32 }
+        43 -> { return 0xc76c51a3u32 }
+        44 -> { return 0xd192e819u32 }
+        45 -> { return 0xd6990624u32 }
+        46 -> { return 0xf40e3585u32 }
+        47 -> { return 0x106aa070u32 }
+        48 -> { return 0x19a4c116u32 }
+        49 -> { return 0x1e376c08u32 }
+        50 -> { return 0x2748774cu32 }
+        51 -> { return 0x34b0bcb5u32 }
+        52 -> { return 0x391c0cb3u32 }
+        53 -> { return 0x4ed8aa4au32 }
+        54 -> { return 0x5b9cca4fu32 }
+        55 -> { return 0x682e6ff3u32 }
+        56 -> { return 0x748f82eeu32 }
+        57 -> { return 0x78a5636fu32 }
+        58 -> { return 0x84c87814u32 }
+        59 -> { return 0x8cc70208u32 }
+        60 -> { return 0x90befffau32 }
+        61 -> { return 0xa4506cebu32 }
+        62 -> { return 0xbef9a3f7u32 }
+        63 -> { return 0xc67178f2u32 }
+        else -> { return 0u32 }
+    }
+    return 0u32
+}
+
+fun rotr32(x: uint32, n: int64) -> uint32 {
+    set nu: uint32 = cast(n, "uint32")
+    set diff: uint32 = cast(32 - n, "uint32")
+    return (x >> nu) | (x << diff)
+}
+
+fun ch32(x: uint32, y: uint32, z: uint32) -> uint32 {
+    return (x & y) ^ ((~x) & z)
+}
+
+fun maj32(x: uint32, y: uint32, z: uint32) -> uint32 {
+    return (x & y) ^ (x & z) ^ (y & z)
+}
+
+fun sigma0_256(x: uint32) -> uint32 {
+    return rotr32(x, 2) ^ rotr32(x, 13) ^ rotr32(x, 22)
+}
+
+fun sigma1_256(x: uint32) -> uint32 {
+    return rotr32(x, 6) ^ rotr32(x, 11) ^ rotr32(x, 25)
+}
+
+fun gamma0_256(x: uint32) -> uint32 {
+    return rotr32(x, 7) ^ rotr32(x, 18) ^ (x >> 3u32)
+}
+
+fun gamma1_256(x: uint32) -> uint32 {
+    return rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10u32)
+}
+
+fun load32_be(ref data: bytes, offset: int64) -> uint32 {
+    return (cast(data[offset], "uint32") << 24u32) |
+           (cast(data[offset + 1], "uint32") << 16u32) |
+           (cast(data[offset + 2], "uint32") << 8u32) |
+           cast(data[offset + 3], "uint32")
+}
+
+public class Sha256 {
+    h0: uint32
+    h1: uint32
+    h2: uint32
+    h3: uint32
+    h4: uint32
+    h5: uint32
+    h6: uint32
+    h7: uint32
+    total_len: int64
+    b0: uint32
+    b1: uint32
+    b2: uint32
+    b3: uint32
+    b4: uint32
+    b5: uint32
+    b6: uint32
+    b7: uint32
+    b8: uint32
+    b9: uint32
+    b10: uint32
+    b11: uint32
+    b12: uint32
+    b13: uint32
+    b14: uint32
+    b15: uint32
+    buf_len: int32
+
+    public fun init() {
+        rewrite this.h0 = 0x6a09e667u32
+        rewrite this.h1 = 0xbb67ae85u32
+        rewrite this.h2 = 0x3c6ef372u32
+        rewrite this.h3 = 0xa54ff53au32
+        rewrite this.h4 = 0x510e527fu32
+        rewrite this.h5 = 0x9b05688cu32
+        rewrite this.h6 = 0x1f83d9abu32
+        rewrite this.h7 = 0x5be0cd19u32
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u32; rewrite this.b1 = 0u32; rewrite this.b2 = 0u32; rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32; rewrite this.b5 = 0u32; rewrite this.b6 = 0u32; rewrite this.b7 = 0u32
+        rewrite this.b8 = 0u32; rewrite this.b9 = 0u32; rewrite this.b10 = 0u32; rewrite this.b11 = 0u32
+        rewrite this.b12 = 0u32; rewrite this.b13 = 0u32; rewrite this.b14 = 0u32; rewrite this.b15 = 0u32
+        rewrite this.buf_len = 0
+    }
+
+    public fun reset() {
+        rewrite this.h0 = 0x6a09e667u32
+        rewrite this.h1 = 0xbb67ae85u32
+        rewrite this.h2 = 0x3c6ef372u32
+        rewrite this.h3 = 0xa54ff53au32
+        rewrite this.h4 = 0x510e527fu32
+        rewrite this.h5 = 0x9b05688cu32
+        rewrite this.h6 = 0x1f83d9abu32
+        rewrite this.h7 = 0x5be0cd19u32
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u32; rewrite this.b1 = 0u32; rewrite this.b2 = 0u32; rewrite this.b3 = 0u32
+        rewrite this.b4 = 0u32; rewrite this.b5 = 0u32; rewrite this.b6 = 0u32; rewrite this.b7 = 0u32
+        rewrite this.b8 = 0u32; rewrite this.b9 = 0u32; rewrite this.b10 = 0u32; rewrite this.b11 = 0u32
+        rewrite this.b12 = 0u32; rewrite this.b13 = 0u32; rewrite this.b14 = 0u32; rewrite this.b15 = 0u32
+        rewrite this.buf_len = 0
+    }
+
+    // write one byte at offset off (0..63) via masks and shifts
+    public fun set_buf_byte(off: int64, val: uint8) {
+        set v: uint32 = cast(val, "uint32")
+        if off == 0 {
+            rewrite this.b0 = (this.b0 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 1 {
+            rewrite this.b0 = (this.b0 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 2 {
+            rewrite this.b0 = (this.b0 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 3 {
+            rewrite this.b0 = (this.b0 & 0xffffff00u32) | v
+        } elif off == 4 {
+            rewrite this.b1 = (this.b1 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 5 {
+            rewrite this.b1 = (this.b1 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 6 {
+            rewrite this.b1 = (this.b1 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 7 {
+            rewrite this.b1 = (this.b1 & 0xffffff00u32) | v
+        } elif off == 8 {
+            rewrite this.b2 = (this.b2 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 9 {
+            rewrite this.b2 = (this.b2 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 10 {
+            rewrite this.b2 = (this.b2 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 11 {
+            rewrite this.b2 = (this.b2 & 0xffffff00u32) | v
+        } elif off == 12 {
+            rewrite this.b3 = (this.b3 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 13 {
+            rewrite this.b3 = (this.b3 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 14 {
+            rewrite this.b3 = (this.b3 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 15 {
+            rewrite this.b3 = (this.b3 & 0xffffff00u32) | v
+        } elif off == 16 {
+            rewrite this.b4 = (this.b4 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 17 {
+            rewrite this.b4 = (this.b4 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 18 {
+            rewrite this.b4 = (this.b4 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 19 {
+            rewrite this.b4 = (this.b4 & 0xffffff00u32) | v
+        } elif off == 20 {
+            rewrite this.b5 = (this.b5 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 21 {
+            rewrite this.b5 = (this.b5 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 22 {
+            rewrite this.b5 = (this.b5 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 23 {
+            rewrite this.b5 = (this.b5 & 0xffffff00u32) | v
+        } elif off == 24 {
+            rewrite this.b6 = (this.b6 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 25 {
+            rewrite this.b6 = (this.b6 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 26 {
+            rewrite this.b6 = (this.b6 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 27 {
+            rewrite this.b6 = (this.b6 & 0xffffff00u32) | v
+        } elif off == 28 {
+            rewrite this.b7 = (this.b7 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 29 {
+            rewrite this.b7 = (this.b7 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 30 {
+            rewrite this.b7 = (this.b7 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 31 {
+            rewrite this.b7 = (this.b7 & 0xffffff00u32) | v
+        } elif off == 32 {
+            rewrite this.b8 = (this.b8 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 33 {
+            rewrite this.b8 = (this.b8 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 34 {
+            rewrite this.b8 = (this.b8 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 35 {
+            rewrite this.b8 = (this.b8 & 0xffffff00u32) | v
+        } elif off == 36 {
+            rewrite this.b9 = (this.b9 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 37 {
+            rewrite this.b9 = (this.b9 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 38 {
+            rewrite this.b9 = (this.b9 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 39 {
+            rewrite this.b9 = (this.b9 & 0xffffff00u32) | v
+        } elif off == 40 {
+            rewrite this.b10 = (this.b10 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 41 {
+            rewrite this.b10 = (this.b10 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 42 {
+            rewrite this.b10 = (this.b10 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 43 {
+            rewrite this.b10 = (this.b10 & 0xffffff00u32) | v
+        } elif off == 44 {
+            rewrite this.b11 = (this.b11 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 45 {
+            rewrite this.b11 = (this.b11 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 46 {
+            rewrite this.b11 = (this.b11 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 47 {
+            rewrite this.b11 = (this.b11 & 0xffffff00u32) | v
+        } elif off == 48 {
+            rewrite this.b12 = (this.b12 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 49 {
+            rewrite this.b12 = (this.b12 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 50 {
+            rewrite this.b12 = (this.b12 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 51 {
+            rewrite this.b12 = (this.b12 & 0xffffff00u32) | v
+        } elif off == 52 {
+            rewrite this.b13 = (this.b13 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 53 {
+            rewrite this.b13 = (this.b13 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 54 {
+            rewrite this.b13 = (this.b13 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 55 {
+            rewrite this.b13 = (this.b13 & 0xffffff00u32) | v
+        } elif off == 56 {
+            rewrite this.b14 = (this.b14 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 57 {
+            rewrite this.b14 = (this.b14 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 58 {
+            rewrite this.b14 = (this.b14 & 0xffff00ffu32) | (v << 8u32)
+        } elif off == 59 {
+            rewrite this.b14 = (this.b14 & 0xffffff00u32) | v
+        } elif off == 60 {
+            rewrite this.b15 = (this.b15 & 0x00ffffffu32) | (v << 24u32)
+        } elif off == 61 {
+            rewrite this.b15 = (this.b15 & 0xff00ffffu32) | (v << 16u32)
+        } elif off == 62 {
+            rewrite this.b15 = (this.b15 & 0xffff00ffu32) | (v << 8u32)
+        } else {
+            rewrite this.b15 = (this.b15 & 0xffffff00u32) | v
+        }
+    }
+
+    public fun update(data: bytes) {
+        sha256_update(ref ~this, ref data)
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        sha256_update(ref ~this, ref d)
+    }
+
+    public fun finish() -> bytes {
+        return sha256_finish(ref ~this)
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = sha256_finish(ref ~this)
+        return bytes_to_hex(ref b)
+    }
+}
+
+fun sha256_load_block(ref ~st: Sha256, ref data: bytes, offset: int64) {
+    rewrite st.b0 = load32_be(ref data, offset)
+    rewrite st.b1 = load32_be(ref data, offset + 4)
+    rewrite st.b2 = load32_be(ref data, offset + 8)
+    rewrite st.b3 = load32_be(ref data, offset + 12)
+    rewrite st.b4 = load32_be(ref data, offset + 16)
+    rewrite st.b5 = load32_be(ref data, offset + 20)
+    rewrite st.b6 = load32_be(ref data, offset + 24)
+    rewrite st.b7 = load32_be(ref data, offset + 28)
+    rewrite st.b8 = load32_be(ref data, offset + 32)
+    rewrite st.b9 = load32_be(ref data, offset + 36)
+    rewrite st.b10 = load32_be(ref data, offset + 40)
+    rewrite st.b11 = load32_be(ref data, offset + 44)
+    rewrite st.b12 = load32_be(ref data, offset + 48)
+    rewrite st.b13 = load32_be(ref data, offset + 52)
+    rewrite st.b14 = load32_be(ref data, offset + 56)
+    rewrite st.b15 = load32_be(ref data, offset + 60)
+}
+
+fun sha256_process_block(ref ~st: Sha256) {
+    set w: uint32[64]
+    rewrite w[0] = st.b0
+    rewrite w[1] = st.b1
+    rewrite w[2] = st.b2
+    rewrite w[3] = st.b3
+    rewrite w[4] = st.b4
+    rewrite w[5] = st.b5
+    rewrite w[6] = st.b6
+    rewrite w[7] = st.b7
+    rewrite w[8] = st.b8
+    rewrite w[9] = st.b9
+    rewrite w[10] = st.b10
+    rewrite w[11] = st.b11
+    rewrite w[12] = st.b12
+    rewrite w[13] = st.b13
+    rewrite w[14] = st.b14
+    rewrite w[15] = st.b15
+    for i in 16..64 {
+        set s0: uint32 = gamma0_256(w[i - 15])
+        set s1: uint32 = gamma1_256(w[i - 2])
+        rewrite w[i] = w[i - 16] + s0 + w[i - 7] + s1
+    }
+
+    set a: uint32 = st.h0
+    set b: uint32 = st.h1
+    set c: uint32 = st.h2
+    set d: uint32 = st.h3
+    set e: uint32 = st.h4
+    set f: uint32 = st.h5
+    set g: uint32 = st.h6
+    set h: uint32 = st.h7
+
+    for i in 0..64 {
+        set t1: uint32 = h + sigma1_256(e) + ch32(e, f, g) + k256(i) + w[i]
+        set t2: uint32 = sigma0_256(a) + maj32(a, b, c)
+        rewrite h = g
+        rewrite g = f
+        rewrite f = e
+        rewrite e = d + t1
+        rewrite d = c
+        rewrite c = b
+        rewrite b = a
+        rewrite a = t1 + t2
+    }
+
+    rewrite st.h0 = st.h0 + a
+    rewrite st.h1 = st.h1 + b
+    rewrite st.h2 = st.h2 + c
+    rewrite st.h3 = st.h3 + d
+    rewrite st.h4 = st.h4 + e
+    rewrite st.h5 = st.h5 + f
+    rewrite st.h6 = st.h6 + g
+    rewrite st.h7 = st.h7 + h
+}
+
+public fun sha256_init() -> Sha256 {
+    return init Sha256()
+}
+
+public fun sha256_update(ref ~st: Sha256, ref data: bytes) {
+    set len: int64 = data.len()
+    rewrite st.total_len = st.total_len + len
+    set p: int64 = 0
+    set rem: int64 = len
+
+    if st.buf_len > 0 {
+        set need: int32 = 64 - st.buf_len
+        if cast(rem, "int32") < need {
+            for i in 0..rem {
+                st.set_buf_byte(cast(st.buf_len, "int64") + i, data[p + i])
+            }
+            rewrite st.buf_len = st.buf_len + cast(rem, "int32")
+            return
+        }
+        set need_64: int64 = cast(need, "int64")
+        for i in 0..need_64 {
+            st.set_buf_byte(cast(st.buf_len, "int64") + i, data[p + i])
+        }
+        sha256_process_block(ref ~st)
+        rewrite p = p + need_64
+        rewrite rem = rem - need_64
+        rewrite st.buf_len = 0
+    }
+
+    set blocks: int64 = rem / 64
+    for i in 0..blocks {
+        sha256_load_block(ref ~st, ref data, p)
+        sha256_process_block(ref ~st)
+        rewrite p = p + 64
+        rewrite rem = rem - 64
+    }
+
+    if rem > 0 {
+        for i in 0..rem {
+            st.set_buf_byte(i, data[p + i])
+        }
+        rewrite st.buf_len = cast(rem, "int32")
+    }
+}
+
+public fun sha256_finish(ref ~st: Sha256) -> bytes {
+    set bit_len: uint64 = cast(st.total_len, "uint64") * 8u64
+    st.set_buf_byte(cast(st.buf_len, "int64"), 0x80u8)
+    rewrite st.buf_len = st.buf_len + 1
+
+    if st.buf_len > 56 {
+        while st.buf_len < 64 {
+            st.set_buf_byte(cast(st.buf_len, "int64"), 0u8)
+            rewrite st.buf_len = st.buf_len + 1
+        }
+        sha256_process_block(ref ~st)
+        rewrite st.buf_len = 0
+    }
+
+    while st.buf_len < 56 {
+        st.set_buf_byte(cast(st.buf_len, "int64"), 0u8)
+        rewrite st.buf_len = st.buf_len + 1
+    }
+
+    for i in 0..8 {
+        set shift: uint64 = cast((7 - i) * 8, "uint64")
+        st.set_buf_byte(56 + i, cast((bit_len >> shift) & 255u64, "uint8"))
+    }
+
+    sha256_process_block(ref ~st)
+
+    set out: uint8[32]
+    set hs: uint32[8]
+    rewrite hs[0] = st.h0
+    rewrite hs[1] = st.h1
+    rewrite hs[2] = st.h2
+    rewrite hs[3] = st.h3
+    rewrite hs[4] = st.h4
+    rewrite hs[5] = st.h5
+    rewrite hs[6] = st.h6
+    rewrite hs[7] = st.h7
+
+    for i in 0..8 {
+        set val: uint32 = hs[i]
+        rewrite out[i * 4] = cast((val >> 24u32) & 255u32, "uint8")
+        rewrite out[i * 4 + 1] = cast((val >> 16u32) & 255u32, "uint8")
+        rewrite out[i * 4 + 2] = cast((val >> 8u32) & 255u32, "uint8")
+        rewrite out[i * 4 + 3] = cast(val & 255u32, "uint8")
+    }
+    return cast(from_raw_parts(out.as_ptr(), 32), "bytes")
+}
+
+public fun sha256(ref data: bytes) -> bytes {
+    set st: Sha256 = init Sha256()
+    set d: bytes = cast(from_raw_parts(data.as_ptr(), data.len()), "bytes")
+    st.update(d)
+    return st.finish()
+}
+
+public fun sha256_str(s: string) -> string {
+    set st: Sha256 = init Sha256()
+    st.update_str(s)
+    return st.finish_hex()
+}
+
+public fun sha256_file(path: string) -> string {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "file not found or cannot get size",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set st: Sha256 = init Sha256()
+    if sz == 0 {
+        f.close()
+        return st.finish_hex()
+    }
+    set buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(buf.as_ptr(), to_read)
+        if n <= 0 {
+            f.close()
+            panic(HashError {
+                message: "error reading file",
+                code: 104,
+            })
+        }
+        set chunk: bytes = cast(from_raw_parts(buf.as_ptr(), n), "bytes")
+        st.update(chunk)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return st.finish_hex()
+}
+
+fun k512(i: int64) -> uint64 {
+    switch i {
+        0 -> { return 0x428a2f98d728ae22u64 }
+        1 -> { return 0x7137449123ef65cdu64 }
+        2 -> { return 0xb5c0fbcfec4d3b2fu64 }
+        3 -> { return 0xe9b5dba58189dbbcu64 }
+        4 -> { return 0x3956c25bf348b538u64 }
+        5 -> { return 0x59f111f1b605d019u64 }
+        6 -> { return 0x923f82a4af194f9bu64 }
+        7 -> { return 0xab1c5ed5da6d8118u64 }
+        8 -> { return 0xd807aa98a3030242u64 }
+        9 -> { return 0x12835b0145706fbeu64 }
+        10 -> { return 0x243185be4ee4b28cu64 }
+        11 -> { return 0x550c7dc3d5ffb4e2u64 }
+        12 -> { return 0x72be5d74f27b896fu64 }
+        13 -> { return 0x80deb1fe3b1696b1u64 }
+        14 -> { return 0x9bdc06a725c71235u64 }
+        15 -> { return 0xc19bf174cf692694u64 }
+        16 -> { return 0xe49b69c19ef14ad2u64 }
+        17 -> { return 0xefbe4786384f25e3u64 }
+        18 -> { return 0x0fc19dc68b8cd5b5u64 }
+        19 -> { return 0x240ca1cc77ac9c65u64 }
+        20 -> { return 0x2de92c6f592b0275u64 }
+        21 -> { return 0x4a7484aa6ea6e483u64 }
+        22 -> { return 0x5cb0a9dcbd41fbd4u64 }
+        23 -> { return 0x76f988da831153b5u64 }
+        24 -> { return 0x983e5152ee66dfabu64 }
+        25 -> { return 0xa831c66d2db43210u64 }
+        26 -> { return 0xb00327c898fb213fu64 }
+        27 -> { return 0xbf597fc7beef0ee4u64 }
+        28 -> { return 0xc6e00bf33da88fc2u64 }
+        29 -> { return 0xd5a79147930aa725u64 }
+        30 -> { return 0x06ca6351e003826fu64 }
+        31 -> { return 0x142929670a0e6e70u64 }
+        32 -> { return 0x27b70a8546d22ffcu64 }
+        33 -> { return 0x2e1b21385c26c926u64 }
+        34 -> { return 0x4d2c6dfc5ac42aedu64 }
+        35 -> { return 0x53380d139d95b3dfu64 }
+        36 -> { return 0x650a73548baf63deu64 }
+        37 -> { return 0x766a0abb3c77b2a8u64 }
+        38 -> { return 0x81c2c92e47edaee6u64 }
+        39 -> { return 0x92722c851482353bu64 }
+        40 -> { return 0xa2bfe8a14cf10364u64 }
+        41 -> { return 0xa81a664bbc423001u64 }
+        42 -> { return 0xc24b8b70d0f89791u64 }
+        43 -> { return 0xc76c51a30654be30u64 }
+        44 -> { return 0xd192e819d6ef5218u64 }
+        45 -> { return 0xd69906245565a910u64 }
+        46 -> { return 0xf40e35855771202au64 }
+        47 -> { return 0x106aa07032bbd1b8u64 }
+        48 -> { return 0x19a4c116b8d2d0c8u64 }
+        49 -> { return 0x1e376c085141ab53u64 }
+        50 -> { return 0x2748774cdf8eeb99u64 }
+        51 -> { return 0x34b0bcb5e19b48a8u64 }
+        52 -> { return 0x391c0cb3c5c95a63u64 }
+        53 -> { return 0x4ed8aa4ae3418acbu64 }
+        54 -> { return 0x5b9cca4f7763e373u64 }
+        55 -> { return 0x682e6ff3d6b2b8a3u64 }
+        56 -> { return 0x748f82ee5defb2fcu64 }
+        57 -> { return 0x78a5636f43172f60u64 }
+        58 -> { return 0x84c87814a1f0ab72u64 }
+        59 -> { return 0x8cc702081a6439ecu64 }
+        60 -> { return 0x90befffa23631e28u64 }
+        61 -> { return 0xa4506cebde82bde9u64 }
+        62 -> { return 0xbef9a3f7b2c67915u64 }
+        63 -> { return 0xc67178f2e372532bu64 }
+        64 -> { return 0xca273eceea26619cu64 }
+        65 -> { return 0xd186b8c721c0c207u64 }
+        66 -> { return 0xeada7dd6cde0eb1eu64 }
+        67 -> { return 0xf57d4f7fee6ed178u64 }
+        68 -> { return 0x06f067aa72176fbau64 }
+        69 -> { return 0x0a637dc5a2c898a6u64 }
+        70 -> { return 0x113f9804bef90daeu64 }
+        71 -> { return 0x1b710b35131c471bu64 }
+        72 -> { return 0x28db77f523047d84u64 }
+        73 -> { return 0x32caab7b40c72493u64 }
+        74 -> { return 0x3c9ebe0a15c9bebcu64 }
+        75 -> { return 0x431d67c49c100d4cu64 }
+        76 -> { return 0x4cc5d4becb3e42b6u64 }
+        77 -> { return 0x597f299cfc657e2au64 }
+        78 -> { return 0x5fcb6fab3ad6faecu64 }
+        79 -> { return 0x6c44198c4a475817u64 }
+        else -> { return 0u64 }
+    }
+    return 0u64
+}
+
+fun rotr64(x: uint64, n: int64) -> uint64 {
+    set nu: uint64 = cast(n, "uint64")
+    set diff: uint64 = cast(64 - n, "uint64")
+    return (x >> nu) | (x << diff)
+}
+
+fun ch64(x: uint64, y: uint64, z: uint64) -> uint64 {
+    return (x & y) ^ ((~x) & z)
+}
+
+fun maj64(x: uint64, y: uint64, z: uint64) -> uint64 {
+    return (x & y) ^ (x & z) ^ (y & z)
+}
+
+fun sigma0_512(x: uint64) -> uint64 {
+    return rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39)
+}
+
+fun sigma1_512(x: uint64) -> uint64 {
+    return rotr64(x, 14) ^ rotr64(x, 18) ^ rotr64(x, 41)
+}
+
+fun gamma0_512(x: uint64) -> uint64 {
+    return rotr64(x, 1) ^ rotr64(x, 8) ^ (x >> 7u64)
+}
+
+fun gamma1_512(x: uint64) -> uint64 {
+    return rotr64(x, 19) ^ rotr64(x, 61) ^ (x >> 6u64)
+}
+
+fun load64_be(ref data: bytes, offset: int64) -> uint64 {
+    return (cast(data[offset], "uint64") << 56u64) |
+           (cast(data[offset + 1], "uint64") << 48u64) |
+           (cast(data[offset + 2], "uint64") << 40u64) |
+           (cast(data[offset + 3], "uint64") << 32u64) |
+           (cast(data[offset + 4], "uint64") << 24u64) |
+           (cast(data[offset + 5], "uint64") << 16u64) |
+           (cast(data[offset + 6], "uint64") << 8u64) |
+           cast(data[offset + 7], "uint64")
+}
+
+// flat 128-byte block buffer as 16 big-endian uint64 words
+public class Sha512 {
+    h0: uint64
+    h1: uint64
+    h2: uint64
+    h3: uint64
+    h4: uint64
+    h5: uint64
+    h6: uint64
+    h7: uint64
+    total_len: int64
+    b0: uint64
+    b1: uint64
+    b2: uint64
+    b3: uint64
+    b4: uint64
+    b5: uint64
+    b6: uint64
+    b7: uint64
+    b8: uint64
+    b9: uint64
+    b10: uint64
+    b11: uint64
+    b12: uint64
+    b13: uint64
+    b14: uint64
+    b15: uint64
+    buf_len: int32
+
+    public fun init() {
+        rewrite this.h0 = 0x6a09e667f3bcc908u64
+        rewrite this.h1 = 0xbb67ae8584caa73bu64
+        rewrite this.h2 = 0x3c6ef372fe94f82bu64
+        rewrite this.h3 = 0xa54ff53a5f1d36f1u64
+        rewrite this.h4 = 0x510e527fade682d1u64
+        rewrite this.h5 = 0x9b05688c2b3e6c1fu64
+        rewrite this.h6 = 0x1f83d9abfb41bd6bu64
+        rewrite this.h7 = 0x5be0cd19137e2179u64
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u64; rewrite this.b1 = 0u64; rewrite this.b2 = 0u64; rewrite this.b3 = 0u64
+        rewrite this.b4 = 0u64; rewrite this.b5 = 0u64; rewrite this.b6 = 0u64; rewrite this.b7 = 0u64
+        rewrite this.b8 = 0u64; rewrite this.b9 = 0u64; rewrite this.b10 = 0u64; rewrite this.b11 = 0u64
+        rewrite this.b12 = 0u64; rewrite this.b13 = 0u64; rewrite this.b14 = 0u64; rewrite this.b15 = 0u64
+        rewrite this.buf_len = 0
+    }
+
+    public fun reset() {
+        rewrite this.h0 = 0x6a09e667f3bcc908u64
+        rewrite this.h1 = 0xbb67ae8584caa73bu64
+        rewrite this.h2 = 0x3c6ef372fe94f82bu64
+        rewrite this.h3 = 0xa54ff53a5f1d36f1u64
+        rewrite this.h4 = 0x510e527fade682d1u64
+        rewrite this.h5 = 0x9b05688c2b3e6c1fu64
+        rewrite this.h6 = 0x1f83d9abfb41bd6bu64
+        rewrite this.h7 = 0x5be0cd19137e2179u64
+        rewrite this.total_len = 0
+        rewrite this.b0 = 0u64; rewrite this.b1 = 0u64; rewrite this.b2 = 0u64; rewrite this.b3 = 0u64
+        rewrite this.b4 = 0u64; rewrite this.b5 = 0u64; rewrite this.b6 = 0u64; rewrite this.b7 = 0u64
+        rewrite this.b8 = 0u64; rewrite this.b9 = 0u64; rewrite this.b10 = 0u64; rewrite this.b11 = 0u64
+        rewrite this.b12 = 0u64; rewrite this.b13 = 0u64; rewrite this.b14 = 0u64; rewrite this.b15 = 0u64
+        rewrite this.buf_len = 0
+    }
+
+    // write one byte at offset off (0..127) via masks and shifts
+    public fun set_buf_byte(off: int64, val: uint8) {
+        set v: uint64 = cast(val, "uint64")
+        if off == 0 {
+            rewrite this.b0 = (this.b0 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 1 {
+            rewrite this.b0 = (this.b0 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 2 {
+            rewrite this.b0 = (this.b0 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 3 {
+            rewrite this.b0 = (this.b0 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 4 {
+            rewrite this.b0 = (this.b0 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 5 {
+            rewrite this.b0 = (this.b0 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 6 {
+            rewrite this.b0 = (this.b0 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 7 {
+            rewrite this.b0 = (this.b0 & 0xffffffffffffff00u64) | v
+        } elif off == 8 {
+            rewrite this.b1 = (this.b1 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 9 {
+            rewrite this.b1 = (this.b1 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 10 {
+            rewrite this.b1 = (this.b1 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 11 {
+            rewrite this.b1 = (this.b1 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 12 {
+            rewrite this.b1 = (this.b1 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 13 {
+            rewrite this.b1 = (this.b1 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 14 {
+            rewrite this.b1 = (this.b1 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 15 {
+            rewrite this.b1 = (this.b1 & 0xffffffffffffff00u64) | v
+        } elif off == 16 {
+            rewrite this.b2 = (this.b2 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 17 {
+            rewrite this.b2 = (this.b2 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 18 {
+            rewrite this.b2 = (this.b2 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 19 {
+            rewrite this.b2 = (this.b2 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 20 {
+            rewrite this.b2 = (this.b2 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 21 {
+            rewrite this.b2 = (this.b2 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 22 {
+            rewrite this.b2 = (this.b2 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 23 {
+            rewrite this.b2 = (this.b2 & 0xffffffffffffff00u64) | v
+        } elif off == 24 {
+            rewrite this.b3 = (this.b3 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 25 {
+            rewrite this.b3 = (this.b3 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 26 {
+            rewrite this.b3 = (this.b3 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 27 {
+            rewrite this.b3 = (this.b3 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 28 {
+            rewrite this.b3 = (this.b3 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 29 {
+            rewrite this.b3 = (this.b3 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 30 {
+            rewrite this.b3 = (this.b3 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 31 {
+            rewrite this.b3 = (this.b3 & 0xffffffffffffff00u64) | v
+        } elif off == 32 {
+            rewrite this.b4 = (this.b4 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 33 {
+            rewrite this.b4 = (this.b4 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 34 {
+            rewrite this.b4 = (this.b4 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 35 {
+            rewrite this.b4 = (this.b4 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 36 {
+            rewrite this.b4 = (this.b4 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 37 {
+            rewrite this.b4 = (this.b4 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 38 {
+            rewrite this.b4 = (this.b4 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 39 {
+            rewrite this.b4 = (this.b4 & 0xffffffffffffff00u64) | v
+        } elif off == 40 {
+            rewrite this.b5 = (this.b5 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 41 {
+            rewrite this.b5 = (this.b5 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 42 {
+            rewrite this.b5 = (this.b5 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 43 {
+            rewrite this.b5 = (this.b5 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 44 {
+            rewrite this.b5 = (this.b5 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 45 {
+            rewrite this.b5 = (this.b5 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 46 {
+            rewrite this.b5 = (this.b5 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 47 {
+            rewrite this.b5 = (this.b5 & 0xffffffffffffff00u64) | v
+        } elif off == 48 {
+            rewrite this.b6 = (this.b6 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 49 {
+            rewrite this.b6 = (this.b6 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 50 {
+            rewrite this.b6 = (this.b6 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 51 {
+            rewrite this.b6 = (this.b6 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 52 {
+            rewrite this.b6 = (this.b6 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 53 {
+            rewrite this.b6 = (this.b6 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 54 {
+            rewrite this.b6 = (this.b6 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 55 {
+            rewrite this.b6 = (this.b6 & 0xffffffffffffff00u64) | v
+        } elif off == 56 {
+            rewrite this.b7 = (this.b7 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 57 {
+            rewrite this.b7 = (this.b7 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 58 {
+            rewrite this.b7 = (this.b7 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 59 {
+            rewrite this.b7 = (this.b7 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 60 {
+            rewrite this.b7 = (this.b7 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 61 {
+            rewrite this.b7 = (this.b7 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 62 {
+            rewrite this.b7 = (this.b7 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 63 {
+            rewrite this.b7 = (this.b7 & 0xffffffffffffff00u64) | v
+        } elif off == 64 {
+            rewrite this.b8 = (this.b8 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 65 {
+            rewrite this.b8 = (this.b8 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 66 {
+            rewrite this.b8 = (this.b8 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 67 {
+            rewrite this.b8 = (this.b8 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 68 {
+            rewrite this.b8 = (this.b8 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 69 {
+            rewrite this.b8 = (this.b8 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 70 {
+            rewrite this.b8 = (this.b8 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 71 {
+            rewrite this.b8 = (this.b8 & 0xffffffffffffff00u64) | v
+        } elif off == 72 {
+            rewrite this.b9 = (this.b9 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 73 {
+            rewrite this.b9 = (this.b9 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 74 {
+            rewrite this.b9 = (this.b9 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 75 {
+            rewrite this.b9 = (this.b9 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 76 {
+            rewrite this.b9 = (this.b9 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 77 {
+            rewrite this.b9 = (this.b9 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 78 {
+            rewrite this.b9 = (this.b9 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 79 {
+            rewrite this.b9 = (this.b9 & 0xffffffffffffff00u64) | v
+        } elif off == 80 {
+            rewrite this.b10 = (this.b10 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 81 {
+            rewrite this.b10 = (this.b10 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 82 {
+            rewrite this.b10 = (this.b10 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 83 {
+            rewrite this.b10 = (this.b10 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 84 {
+            rewrite this.b10 = (this.b10 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 85 {
+            rewrite this.b10 = (this.b10 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 86 {
+            rewrite this.b10 = (this.b10 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 87 {
+            rewrite this.b10 = (this.b10 & 0xffffffffffffff00u64) | v
+        } elif off == 88 {
+            rewrite this.b11 = (this.b11 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 89 {
+            rewrite this.b11 = (this.b11 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 90 {
+            rewrite this.b11 = (this.b11 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 91 {
+            rewrite this.b11 = (this.b11 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 92 {
+            rewrite this.b11 = (this.b11 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 93 {
+            rewrite this.b11 = (this.b11 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 94 {
+            rewrite this.b11 = (this.b11 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 95 {
+            rewrite this.b11 = (this.b11 & 0xffffffffffffff00u64) | v
+        } elif off == 96 {
+            rewrite this.b12 = (this.b12 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 97 {
+            rewrite this.b12 = (this.b12 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 98 {
+            rewrite this.b12 = (this.b12 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 99 {
+            rewrite this.b12 = (this.b12 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 100 {
+            rewrite this.b12 = (this.b12 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 101 {
+            rewrite this.b12 = (this.b12 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 102 {
+            rewrite this.b12 = (this.b12 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 103 {
+            rewrite this.b12 = (this.b12 & 0xffffffffffffff00u64) | v
+        } elif off == 104 {
+            rewrite this.b13 = (this.b13 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 105 {
+            rewrite this.b13 = (this.b13 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 106 {
+            rewrite this.b13 = (this.b13 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 107 {
+            rewrite this.b13 = (this.b13 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 108 {
+            rewrite this.b13 = (this.b13 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 109 {
+            rewrite this.b13 = (this.b13 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 110 {
+            rewrite this.b13 = (this.b13 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 111 {
+            rewrite this.b13 = (this.b13 & 0xffffffffffffff00u64) | v
+        } elif off == 112 {
+            rewrite this.b14 = (this.b14 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 113 {
+            rewrite this.b14 = (this.b14 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 114 {
+            rewrite this.b14 = (this.b14 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 115 {
+            rewrite this.b14 = (this.b14 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 116 {
+            rewrite this.b14 = (this.b14 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 117 {
+            rewrite this.b14 = (this.b14 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 118 {
+            rewrite this.b14 = (this.b14 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } elif off == 119 {
+            rewrite this.b14 = (this.b14 & 0xffffffffffffff00u64) | v
+        } elif off == 120 {
+            rewrite this.b15 = (this.b15 & 0x00ffffffffffffffu64) | (v << 56u64)
+        } elif off == 121 {
+            rewrite this.b15 = (this.b15 & 0xff00ffffffffffffu64) | (v << 48u64)
+        } elif off == 122 {
+            rewrite this.b15 = (this.b15 & 0xffff00ffffffffffu64) | (v << 40u64)
+        } elif off == 123 {
+            rewrite this.b15 = (this.b15 & 0xffffff00ffffffffu64) | (v << 32u64)
+        } elif off == 124 {
+            rewrite this.b15 = (this.b15 & 0xffffffff00ffffffu64) | (v << 24u64)
+        } elif off == 125 {
+            rewrite this.b15 = (this.b15 & 0xffffffffff00ffffu64) | (v << 16u64)
+        } elif off == 126 {
+            rewrite this.b15 = (this.b15 & 0xffffffffffff00ffu64) | (v << 8u64)
+        } else {
+            rewrite this.b15 = (this.b15 & 0xffffffffffffff00u64) | v
+        }
+    }
+
+    public fun update(data: bytes) {
+        sha512_update(ref ~this, ref data)
+    }
+
+    public fun update_str(s: string) {
+        set d: bytes = cast(s, "bytes")
+        sha512_update(ref ~this, ref d)
+    }
+
+    public fun finish() -> bytes {
+        return sha512_finish(ref ~this)
+    }
+
+    public fun finish_hex() -> string {
+        set b: bytes = sha512_finish(ref ~this)
+        return bytes_to_hex(ref b)
+    }
+}
+
+fun sha512_load_block(ref ~st: Sha512, ref data: bytes, offset: int64) {
+    rewrite st.b0 = load64_be(ref data, offset)
+    rewrite st.b1 = load64_be(ref data, offset + 8)
+    rewrite st.b2 = load64_be(ref data, offset + 16)
+    rewrite st.b3 = load64_be(ref data, offset + 24)
+    rewrite st.b4 = load64_be(ref data, offset + 32)
+    rewrite st.b5 = load64_be(ref data, offset + 40)
+    rewrite st.b6 = load64_be(ref data, offset + 48)
+    rewrite st.b7 = load64_be(ref data, offset + 56)
+    rewrite st.b8 = load64_be(ref data, offset + 64)
+    rewrite st.b9 = load64_be(ref data, offset + 72)
+    rewrite st.b10 = load64_be(ref data, offset + 80)
+    rewrite st.b11 = load64_be(ref data, offset + 88)
+    rewrite st.b12 = load64_be(ref data, offset + 96)
+    rewrite st.b13 = load64_be(ref data, offset + 104)
+    rewrite st.b14 = load64_be(ref data, offset + 112)
+    rewrite st.b15 = load64_be(ref data, offset + 120)
+}
+
+fun sha512_process_block(ref ~st: Sha512) {
+    set w: uint64[80]
+    rewrite w[0] = st.b0
+    rewrite w[1] = st.b1
+    rewrite w[2] = st.b2
+    rewrite w[3] = st.b3
+    rewrite w[4] = st.b4
+    rewrite w[5] = st.b5
+    rewrite w[6] = st.b6
+    rewrite w[7] = st.b7
+    rewrite w[8] = st.b8
+    rewrite w[9] = st.b9
+    rewrite w[10] = st.b10
+    rewrite w[11] = st.b11
+    rewrite w[12] = st.b12
+    rewrite w[13] = st.b13
+    rewrite w[14] = st.b14
+    rewrite w[15] = st.b15
+    for i in 16..80 {
+        set s0: uint64 = gamma0_512(w[i - 15])
+        set s1: uint64 = gamma1_512(w[i - 2])
+        rewrite w[i] = w[i - 16] + s0 + w[i - 7] + s1
+    }
+
+    set a: uint64 = st.h0
+    set b: uint64 = st.h1
+    set c: uint64 = st.h2
+    set d: uint64 = st.h3
+    set e: uint64 = st.h4
+    set f: uint64 = st.h5
+    set g: uint64 = st.h6
+    set h: uint64 = st.h7
+
+    for i in 0..80 {
+        set t1: uint64 = h + sigma1_512(e) + ch64(e, f, g) + k512(i) + w[i]
+        set t2: uint64 = sigma0_512(a) + maj64(a, b, c)
+        rewrite h = g
+        rewrite g = f
+        rewrite f = e
+        rewrite e = d + t1
+        rewrite d = c
+        rewrite c = b
+        rewrite b = a
+        rewrite a = t1 + t2
+    }
+
+    rewrite st.h0 = st.h0 + a
+    rewrite st.h1 = st.h1 + b
+    rewrite st.h2 = st.h2 + c
+    rewrite st.h3 = st.h3 + d
+    rewrite st.h4 = st.h4 + e
+    rewrite st.h5 = st.h5 + f
+    rewrite st.h6 = st.h6 + g
+    rewrite st.h7 = st.h7 + h
+}
+
+public fun sha512_init() -> Sha512 {
+    return init Sha512()
+}
+
+public fun sha512_update(ref ~st: Sha512, ref data: bytes) {
+    set len: int64 = data.len()
+    rewrite st.total_len = st.total_len + len
+    set p: int64 = 0
+    set rem: int64 = len
+
+    if st.buf_len > 0 {
+        set need: int32 = 128 - st.buf_len
+        if cast(rem, "int32") < need {
+            for i in 0..rem {
+                st.set_buf_byte(cast(st.buf_len, "int64") + i, data[p + i])
+            }
+            rewrite st.buf_len = st.buf_len + cast(rem, "int32")
+            return
+        }
+        set need_64: int64 = cast(need, "int64")
+        for i in 0..need_64 {
+            st.set_buf_byte(cast(st.buf_len, "int64") + i, data[p + i])
+        }
+        sha512_process_block(ref ~st)
+        rewrite p = p + need_64
+        rewrite rem = rem - need_64
+        rewrite st.buf_len = 0
+    }
+
+    set blocks: int64 = rem / 128
+    for i in 0..blocks {
+        sha512_load_block(ref ~st, ref data, p)
+        sha512_process_block(ref ~st)
+        rewrite p = p + 128
+        rewrite rem = rem - 128
+    }
+
+    if rem > 0 {
+        for i in 0..rem {
+            st.set_buf_byte(i, data[p + i])
+        }
+        rewrite st.buf_len = cast(rem, "int32")
+    }
+}
+
+public fun sha512_finish(ref ~st: Sha512) -> bytes {
+    set bit_len: uint64 = cast(st.total_len, "uint64") * 8u64
+    st.set_buf_byte(cast(st.buf_len, "int64"), 0x80u8)
+    rewrite st.buf_len = st.buf_len + 1
+
+    if st.buf_len > 112 {
+        while st.buf_len < 128 {
+            st.set_buf_byte(cast(st.buf_len, "int64"), 0u8)
+            rewrite st.buf_len = st.buf_len + 1
+        }
+        sha512_process_block(ref ~st)
+        rewrite st.buf_len = 0
+    }
+
+    while st.buf_len < 112 {
+        st.set_buf_byte(cast(st.buf_len, "int64"), 0u8)
+        rewrite st.buf_len = st.buf_len + 1
+    }
+
+    for i in 0..8 {
+        st.set_buf_byte(112 + i, 0u8)
+    }
+    for i in 0..8 {
+        set shift: uint64 = cast((7 - i) * 8, "uint64")
+        st.set_buf_byte(120 + i, cast((bit_len >> shift) & 255u64, "uint8"))
+    }
+
+    sha512_process_block(ref ~st)
+
+    set out: uint8[64]
+    set hs: uint64[8]
+    rewrite hs[0] = st.h0
+    rewrite hs[1] = st.h1
+    rewrite hs[2] = st.h2
+    rewrite hs[3] = st.h3
+    rewrite hs[4] = st.h4
+    rewrite hs[5] = st.h5
+    rewrite hs[6] = st.h6
+    rewrite hs[7] = st.h7
+
+    for i in 0..8 {
+        set val: uint64 = hs[i]
+        for j in 0..8 {
+            set shift: uint64 = cast((7 - j) * 8, "uint64")
+            rewrite out[i * 8 + j] = cast((val >> shift) & 255u64, "uint8")
+        }
+    }
+    return cast(from_raw_parts(out.as_ptr(), 64), "bytes")
+}
+
+public fun sha512(ref data: bytes) -> bytes {
+    set st: Sha512 = init Sha512()
+    set d: bytes = cast(from_raw_parts(data.as_ptr(), data.len()), "bytes")
+    st.update(d)
+    return st.finish()
+}
+
+public fun sha512_str(s: string) -> string {
+    set st: Sha512 = init Sha512()
+    st.update_str(s)
+    return st.finish_hex()
+}
+
+public fun sha512_file(path: string) -> string {
+    set sz: int64 = file_size(path.cp())
+    if sz < 0 {
+        panic(HashError {
+            message: "file not found or cannot get size",
+            code: 103,
+        })
+    }
+    set f: File = open_read(path)
+    set st: Sha512 = init Sha512()
+    if sz == 0 {
+        f.close()
+        return st.finish_hex()
+    }
+    set buf: uint8[65536]
+    set rem: int64 = sz
+    while rem > 0 {
+        set to_read: int64 = if rem > 65536 { 65536 } else { rem }
+        set n: int64 = f.read(buf.as_ptr(), to_read)
+        if n <= 0 {
+            f.close()
+            panic(HashError {
+                message: "error reading file",
+                code: 104,
+            })
+        }
+        set chunk: bytes = cast(from_raw_parts(buf.as_ptr(), n), "bytes")
+        st.update(chunk)
+        rewrite rem = rem - n
+    }
+    f.close()
+    return st.finish_hex()
+}

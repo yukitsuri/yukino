@@ -1,0 +1,92 @@
+public struct ListIndexError {
+    message: string
+    code: int32
+}
+
+public class List<T> {
+    items: int64[]
+
+    public fun init() { rewrite this.items = [] }
+    public fun push(item: int64) { this.items.push(item) }
+    public fun pop() -> int64? { return this.items.pop() }
+
+    public fun del(index: int64) {
+        if index < 0 || index >= this.items.len() {
+            panic(ListIndexError {
+                message: "list index out of bounds",
+                code: 1,
+            })
+        }
+        this.items.del(index)
+    }
+
+    public fun get(index: int64) -> int64 {
+        if index < 0 || index >= this.items.len() {
+            panic(ListIndexError {
+                message: "list index out of bounds",
+                code: 1,
+            })
+        }
+        return this.items[index]
+    }
+
+    public fun set_at(index: int64, item: int64) {
+        if index < 0 || index >= this.items.len() {
+            panic(ListIndexError {
+                message: "list index out of bounds",
+                code: 1,
+            })
+        }
+        rewrite this.items[index] = item
+    }
+
+    public fun len() -> int64 { return this.items.len() }
+    public fun is_empty() -> bool { return this.items.is_empty() }
+    public fun clear() { this.items.clear() }
+
+    public fun reserve(additional: int64) {
+        this.items.reserve(additional)
+    }
+
+    public fun contains(item: int64) -> bool {
+        set i: int64 = 0
+        while i < this.items.len() {
+            if this.items[i] == item { return true }
+            rewrite i = i + 1
+        }
+        return false
+    }
+
+    public fun index_of(item: int64) -> int64 {
+        set i: int64 = 0
+        while i < this.items.len() {
+            if this.items[i] == item { return i }
+            rewrite i = i + 1
+        }
+        return -1
+    }
+
+    public fun reverse() {
+        set i: int64 = 0
+        set j: int64 = this.items.len() - 1
+        while i < j {
+            set tmp: int64 = this.items[i]
+            rewrite this.items[i] = this.items[j]
+            rewrite this.items[j] = tmp
+            rewrite i = i + 1
+            rewrite j = j - 1
+        }
+    }
+
+    public fun fill(val: int64) {
+        set i: int64 = 0
+        while i < this.items.len() {
+            rewrite this.items[i] = val
+            rewrite i = i + 1
+        }
+    }
+
+    public fun to_array() -> int64[] {
+        return this.items.cp()
+    }
+}

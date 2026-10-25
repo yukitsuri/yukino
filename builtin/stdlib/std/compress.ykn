@@ -1,0 +1,130 @@
+cfun yukistd_compress(data_p: ptr<uint8>, data_len: int64, fmt_p: ptr<uint8>, fmt_len: int64, level: int32, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_decompress(data_p: ptr<uint8>, data_len: int64, fmt_p: ptr<uint8>, fmt_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_compress_file(src_p: ptr<uint8>, src_len: int64, dst_p: ptr<uint8>, dst_len: int64, fmt_p: ptr<uint8>, fmt_len: int64, level: int32) -> bool
+cfun yukistd_decompress_file(src_p: ptr<uint8>, src_len: int64, dst_p: ptr<uint8>, dst_len: int64, fmt_p: ptr<uint8>, fmt_len: int64) -> bool
+cfun yukistd_crc32(data_p: ptr<uint8>, data_len: int64) -> uint32
+cfun yukistd_compress_last_error_code() -> int32
+cfun yukistd_compress_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+public struct CompressError {
+    message: string
+    code: int32
+}
+
+fun panic_last_compress_error(default_msg: string, default_code: int32) {
+    set code = yukistd_compress_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_compress_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(CompressError { message: msg, code: code })
+}
+
+public fun crc32(data: bytes) -> uint32 {
+    return yukistd_crc32(data.as_ptr(), data.len())
+}
+
+public fun compress(data: bytes, format: string, level: int32 = -1) -> bytes {
+    if data.len() == 0 {
+        return cast("", "bytes")
+    }
+    set out_len: int64 = 0
+    set p = yukistd_compress(data.as_ptr(), data.len(), format.as_ptr(), format.len(), level, ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_compress_error("failed to compress data with format " + format, 103)
+    }
+    if out_len == 0 {
+        return cast("", "bytes")
+    }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun decompress(data: bytes, format: string) -> bytes {
+    if data.len() == 0 {
+        return cast("", "bytes")
+    }
+    set out_len: int64 = 0
+    set p = yukistd_decompress(data.as_ptr(), data.len(), format.as_ptr(), format.len(), ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_compress_error("failed to decompress data with format " + format, 104)
+    }
+    if out_len == 0 {
+        return cast("", "bytes")
+    }
+    return from_raw_parts(p, out_len, out_len)
+}
+
+public fun compress_file(src_path: string, dst_path: string, format: string, level: int32 = -1) -> bool {
+    set ok = yukistd_compress_file(src_path.as_ptr(), src_path.len(), dst_path.as_ptr(), dst_path.len(), format.as_ptr(), format.len(), level)
+    if !ok {
+        panic_last_compress_error("failed to compress file '" + src_path + "' to '" + dst_path + "'", 103)
+    }
+    return true
+}
+
+public fun decompress_file(src_path: string, dst_path: string, format: string) -> bool {
+    set ok = yukistd_decompress_file(src_path.as_ptr(), src_path.len(), dst_path.as_ptr(), dst_path.len(), format.as_ptr(), format.len())
+    if !ok {
+        panic_last_compress_error("failed to decompress file '" + src_path + "' to '" + dst_path + "'", 104)
+    }
+    return true
+}
+
+public fun gzip(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "gzip", level)
+}
+
+public fun gunzip(data: bytes) -> bytes {
+    return decompress(data, "gzip")
+}
+
+public fun zstd_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "zstd", level)
+}
+
+public fun zstd_decompress(data: bytes) -> bytes {
+    return decompress(data, "zstd")
+}
+
+public fun xz_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "xz", level)
+}
+
+public fun xz_decompress(data: bytes) -> bytes {
+    return decompress(data, "xz")
+}
+
+public fun deflate_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "deflate", level)
+}
+
+public fun deflate_decompress(data: bytes) -> bytes {
+    return decompress(data, "deflate")
+}
+
+public fun zlib_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "zlib", level)
+}
+
+public fun zlib_decompress(data: bytes) -> bytes {
+    return decompress(data, "zlib")
+}
+
+public fun bzip2_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "bzip2", level)
+}
+
+public fun bzip2_decompress(data: bytes) -> bytes {
+    return decompress(data, "bzip2")
+}
+
+public fun lz4_compress(data: bytes, level: int32 = -1) -> bytes {
+    return compress(data, "lz4", level)
+}
+
+public fun lz4_decompress(data: bytes) -> bytes {
+    return decompress(data, "lz4")
+}

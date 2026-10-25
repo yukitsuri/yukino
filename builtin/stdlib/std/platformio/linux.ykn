@@ -1,0 +1,55 @@
+load .unix: PipeFds
+load .unix: IoError
+
+cfun yukistd_io_linux_pipe2(read_fd: ptr<int32>, write_fd: ptr<int32>, flags: int32) -> int32
+cfun yukistd_io_linux_dup3(oldfd: int32, newfd: int32, flags: int32) -> int32
+cfun yukistd_io_linux_splice(fd_in: int32, off_in: ptr<int64>, fd_out: int32, off_out: ptr<int64>, len: int64, flags: uint32) -> int64
+cfun yukistd_io_linux_tee(fd_in: int32, fd_out: int32, len: int64, flags: uint32) -> int64
+
+public fun pipe2(flags: int32) -> PipeFds {
+    set mut_read: int32 = 0
+    set mut_write: int32 = 0
+    set res = yukistd_io_linux_pipe2(ptr_of(mut_read), ptr_of(mut_write), flags)
+    if res != 0 {
+        panic(IoError {
+            message: "linux pipe2 creation failed",
+            code: 206,
+        })
+    }
+    return PipeFds { read_fd: mut_read, write_fd: mut_write }
+}
+
+public fun dup3(oldfd: int32, newfd: int32, flags: int32) -> int32 {
+    set res = yukistd_io_linux_dup3(oldfd, newfd, flags)
+    if res < 0 {
+        panic(IoError {
+            message: "linux dup3 failed",
+            code: 207,
+        })
+    }
+    return res
+}
+
+public fun splice(fd_in: int32, fd_out: int32, len: int64, flags: uint32) -> int64 {
+    set null_in: int64 = 0
+    set null_out: int64 = 0
+    set res = yukistd_io_linux_splice(fd_in, ptr_of(null_in), fd_out, ptr_of(null_out), len, flags)
+    if res < 0 {
+        panic(IoError {
+            message: "linux splice failed",
+            code: 208,
+        })
+    }
+    return res
+}
+
+public fun tee(fd_in: int32, fd_out: int32, len: int64, flags: uint32) -> int64 {
+    set res = yukistd_io_linux_tee(fd_in, fd_out, len, flags)
+    if res < 0 {
+        panic(IoError {
+            message: "linux tee failed",
+            code: 209,
+        })
+    }
+    return res
+}

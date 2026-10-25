@@ -1,0 +1,549 @@
+load .arg: Arg
+load .matches: Matches
+load .help: render_help
+load .suggest: print_error_unexpected_arg, print_error_unknown_subcommand, print_error_missing_required, print_error_missing_value, print_error_conflict
+load ..strings: slice, index_of
+load ..io: println
+
+fun has_help_or_version(
+    ref args: string[],
+    until_idx: int64,
+    help_disabled: bool,
+    version_disabled: bool,
+    allow_short_h: bool,
+    allow_long_help: bool,
+    allow_short_v: bool,
+    allow_long_version: bool
+) -> int32 {
+    set limit: int64 = if until_idx < 0 || until_idx > args.len() { args.len() } else { until_idx }
+    for i in 0..limit {
+        set tok = args[i].cp()
+        if tok == "--" {
+            return 0
+        }
+        if !help_disabled {
+            if allow_long_help && tok == "--help" {
+                return 1
+            }
+            if allow_short_h && tok == "-h" {
+                return 1
+            }
+        }
+        if !version_disabled {
+            if allow_long_version && tok == "--version" {
+                return 2
+            }
+            if allow_short_v && tok == "-v" {
+                return 2
+            }
+        }
+    }
+    return 0
+}
+
+fun slice_args(ref arr: string[], start: int64) -> string[] {
+    set res: string[] = []
+    for i in start..arr.len() {
+        res.push(arr[i].cp())
+    }
+    return res
+}
+
+fun find_subcommand_pos(
+    ref args: string[],
+    ref sub_names: string[],
+    ref opt_longs: string[],
+    ref opt_shorts: string[]
+) -> int64 {
+    set i: int64 = 0
+    set n = args.len()
+    while i < n {
+        set tok = args[i].cp()
+        if tok == "--" {
+            return -1
+        }
+        if tok.len() > 0 && tok[0] != 45 {
+            for s in 0..sub_names.len() {
+                if sub_names[s] == tok {
+                    return i
+                }
+            }
+        } elif tok.len() > 1 && tok[0] == 45 {
+            if tok.len() > 2 && tok[1] == 45 {
+                set eq = "="
+                set eq_idx = index_of(tok, eq)
+                if eq_idx < 0 {
+                    set key = slice(tok, 2, tok.len())
+                    for o in 0..opt_longs.len() {
+                        if opt_longs[o] == key {
+                            rewrite i = i + 1
+                            break
+                        }
+                    }
+                }
+            } elif tok.len() == 2 && tok[1] != 45 {
+                set s_key = slice(tok, 1, 2)
+                for o in 0..opt_shorts.len() {
+                    if opt_shorts[o] == s_key {
+                        rewrite i = i + 1
+                        break
+                    }
+                }
+            }
+        }
+        rewrite i = i + 1
+    }
+    return -1
+}
+
+public class Line {
+    public name: string
+    public version: string
+    public about_text: string
+    public author_text: string
+    public parent_chain: string
+    public args_list: Arg[]
+    public subcommands_list: Line[]
+    public help_disabled: bool
+    public version_disabled: bool
+    public help_override: string
+    public version_override: string
+
+    public fun init(name: string, version: string) {
+        rewrite this.name = name
+        rewrite this.version = version
+        rewrite this.about_text = ""
+        rewrite this.author_text = ""
+        rewrite this.parent_chain = ""
+        rewrite this.args_list = []
+        rewrite this.subcommands_list = []
+        rewrite this.help_disabled = false
+        rewrite this.version_disabled = false
+        rewrite this.help_override = ""
+        rewrite this.version_override = ""
+    }
+
+    public fun about(text: string) -> Line {
+        rewrite this.about_text = text
+        return this
+    }
+
+    public fun author(text: string) -> Line {
+        rewrite this.author_text = text
+        return this
+    }
+
+    public fun arg(a: Arg) -> Line {
+        this.args_list.push(a)
+        return this
+    }
+
+    public fun flag(name: string, short: string, about: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.short(short).about(about).flag()
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun opt(name: string, short: string, about: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.short(short).about(about)
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun opt_default(name: string, short: string, about: string, default_val: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.short(short).about(about).default_value(default_val)
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun opt_required(name: string, short: string, about: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.short(short).about(about).required(true)
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun positional(name: string, about: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.about(about).positional(true)
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun positional_required(name: string, about: string) -> Line {
+        set a = init Arg(name)
+        set configured = a.about(about).positional(true).required(true)
+        this.args_list.push(configured)
+        return this
+    }
+
+    public fun subcommand(sub: Line) -> Line {
+        rewrite sub.parent_chain = if this.parent_chain.len() > 0 { this.parent_chain + " " + this.name } else { this.name.cp() }
+        this.subcommands_list.push(sub)
+        return this
+    }
+
+    public fun disable_help() -> Line {
+        rewrite this.help_disabled = true
+        return this
+    }
+
+    public fun disable_version() -> Line {
+        rewrite this.version_disabled = true
+        return this
+    }
+
+    public fun override_help(text: string) -> Line {
+        rewrite this.help_override = text
+        return this
+    }
+
+    public fun override_version(text: string) -> Line {
+        rewrite this.version_override = text
+        return this
+    }
+
+    public fun print_help() {
+        if this.help_override.len() > 0 {
+            println(this.help_override)
+            return
+        }
+        set sub_names: string[] = []
+        set sub_abouts: string[] = []
+        for i in 0..this.subcommands_list.len() {
+            sub_names.push(this.subcommands_list[i].name.cp())
+            sub_abouts.push(this.subcommands_list[i].about_text.cp())
+        }
+        set has_short_h = this.find_arg_index_by_short("h") >= 0
+        set has_long_help = this.find_arg_index_by_long("help") >= 0
+        set has_short_v = this.find_arg_index_by_short("v") >= 0
+        set has_long_version = this.find_arg_index_by_long("version") >= 0
+
+        set rendered = render_help(
+            this.name,
+            this.version,
+            this.about_text,
+            this.author_text,
+            this.parent_chain,
+            this.args_list,
+            sub_names,
+            sub_abouts,
+            this.help_disabled,
+            this.version_disabled,
+            !has_short_h,
+            !has_long_help,
+            !has_short_v,
+            !has_long_version
+        )
+        println(rendered)
+    }
+
+    public fun print_version() {
+        if this.version_override.len() > 0 {
+            println(this.version_override)
+            return
+        }
+        set full: string = if this.parent_chain.len() > 0 { this.parent_chain + " " + this.name } else { this.name.cp() }
+        println(full + " " + this.version)
+    }
+
+    fun find_arg_index_by_long(long_name: string) -> int64 {
+        for i in 0..this.args_list.len() {
+            if this.args_list[i].long_name == long_name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fun find_arg_index_by_short(short_name: string) -> int64 {
+        for i in 0..this.args_list.len() {
+            if this.args_list[i].short_name == short_name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fun find_subcommand_index(sub_name: string) -> int64 {
+        for i in 0..this.subcommands_list.len() {
+            if this.subcommands_list[i].name == sub_name {
+                return i
+            }
+        }
+        return -1
+    }
+
+    fun collect_candidate_flags() -> string[] {
+        set res: string[] = []
+        set has_short_h = this.find_arg_index_by_short("h") >= 0
+        set has_long_help = this.find_arg_index_by_long("help") >= 0
+        set has_short_v = this.find_arg_index_by_short("v") >= 0
+        set has_long_version = this.find_arg_index_by_long("version") >= 0
+
+        if !this.help_disabled {
+            if !has_long_help { res.push("--help") }
+            if !has_short_h { res.push("-h") }
+        }
+        if !this.version_disabled && this.version.len() > 0 {
+            if !has_long_version { res.push("--version") }
+            if !has_short_v { res.push("-v") }
+        }
+        for i in 0..this.args_list.len() {
+            if this.args_list[i].long_name.len() > 0 {
+                res.push("--" + this.args_list[i].long_name)
+            }
+            if this.args_list[i].short_name.len() > 0 {
+                res.push("-" + this.args_list[i].short_name)
+            }
+        }
+        return res
+    }
+
+    public fun parse() -> Matches {
+        set a = args()
+        return this.parse_from(a)
+    }
+
+    public fun parse_from(input_args: string[]) -> Matches {
+        set matches = init Matches()
+
+        set sub_names: string[] = []
+        for s in 0..this.subcommands_list.len() {
+            sub_names.push(this.subcommands_list[s].name.cp())
+        }
+        set opt_longs: string[] = []
+        set opt_shorts: string[] = []
+        for a in 0..this.args_list.len() {
+            if !this.args_list[a].is_flag && !this.args_list[a].is_positional {
+                if this.args_list[a].long_name.len() > 0 {
+                    opt_longs.push(this.args_list[a].long_name.cp())
+                }
+                if this.args_list[a].short_name.len() > 0 {
+                    opt_shorts.push(this.args_list[a].short_name.cp())
+                }
+            }
+        }
+
+        set sub_arg_pos: int64 = if sub_names.len() > 0 {
+            find_subcommand_pos(ref input_args, ref sub_names, ref opt_longs, ref opt_shorts)
+        } else {
+            -1
+        }
+
+        set has_short_h = this.find_arg_index_by_short("h") >= 0
+        set has_long_help = this.find_arg_index_by_long("help") >= 0
+        set has_short_v = this.find_arg_index_by_short("v") >= 0
+        set has_long_version = this.find_arg_index_by_long("version") >= 0
+        set ver_enabled = !this.version_disabled && this.version.len() > 0
+
+        // check help or version before any subcommand
+        set action = has_help_or_version(
+            ref input_args,
+            sub_arg_pos,
+            this.help_disabled,
+            !ver_enabled,
+            !has_short_h,
+            !has_long_help,
+            !has_short_v,
+            !has_long_version
+        )
+        if action == 1 {
+            this.print_help()
+            exit(0)
+        } elif action == 2 {
+            this.print_version()
+            exit(0)
+        }
+
+        set pos_idx: int64 = 0
+        set i: int64 = 0
+        set end_idx: int64 = if sub_arg_pos >= 0 { sub_arg_pos } else { input_args.len() }
+
+        while i < end_idx {
+            set tok = input_args[i].cp()
+
+            // seper --
+            if tok == "--" {
+                for t in (i + 1)..input_args.len() {
+                    matches.add_trailing(input_args[t].cp())
+                }
+                break
+            }
+
+            // long opt or flag: --opt
+            if tok.len() > 2 && tok[0] == 45 && tok[1] == 45 {
+                set eq = "="
+                set eq_idx = index_of(tok, eq)
+                set key: string = if eq_idx >= 0 { slice(tok, 2, eq_idx) } else { slice(tok, 2, tok.len()) }
+                set arg_idx = this.find_arg_index_by_long(key)
+
+                if arg_idx < 0 {
+                    set cands = this.collect_candidate_flags()
+                    print_error_unexpected_arg(tok, cands)
+                }
+
+                if this.args_list[arg_idx].is_flag {
+                    matches.add_flag(this.args_list[arg_idx].name.cp())
+                    rewrite i = i + 1
+                    continue
+                }
+
+                if eq_idx >= 0 {
+                    set val = slice(tok, eq_idx + 1, tok.len())
+                    matches.add_opt(this.args_list[arg_idx].name.cp(), val)
+                    rewrite i = i + 1
+                    continue
+                }
+
+                if i + 1 >= end_idx {
+                    print_error_missing_value(tok)
+                }
+                matches.add_opt(this.args_list[arg_idx].name.cp(), input_args[i + 1].cp())
+                rewrite i = i + 2
+                continue
+            }
+
+            // short opt or flag: -o or -abc
+            if tok.len() > 1 && tok[0] == 45 && tok[1] != 45 {
+                if tok.len() == 2 {
+                    set s = slice(tok, 1, 2)
+                    set arg_idx = this.find_arg_index_by_short(s)
+                    if arg_idx < 0 {
+                        set cands = this.collect_candidate_flags()
+                        print_error_unexpected_arg(tok, cands)
+                    }
+                    if this.args_list[arg_idx].is_flag {
+                        matches.add_flag(this.args_list[arg_idx].name.cp())
+                        rewrite i = i + 1
+                        continue
+                    }
+                    if i + 1 >= end_idx {
+                        print_error_missing_value(tok)
+                    }
+                    matches.add_opt(this.args_list[arg_idx].name.cp(), input_args[i + 1].cp())
+                    rewrite i = i + 2
+                    continue
+                }
+
+                set eq = "="
+                set eq_idx = index_of(tok, eq)
+                if eq_idx == 2 {
+                    set s = slice(tok, 1, 2)
+                    set arg_idx = this.find_arg_index_by_short(s)
+                    if arg_idx < 0 {
+                        set cands = this.collect_candidate_flags()
+                        print_error_unexpected_arg(tok, cands)
+                    }
+                    set val = slice(tok, 3, tok.len())
+                    matches.add_opt(this.args_list[arg_idx].name.cp(), val)
+                    rewrite i = i + 1
+                    continue
+                }
+
+                // connected short flags: -abc
+                set advance: int64 = 1
+                for j in 1..tok.len() {
+                    set s = slice(tok, j, j + 1)
+                    set arg_idx = this.find_arg_index_by_short(s)
+                    if arg_idx < 0 {
+                        set cands = this.collect_candidate_flags()
+                        print_error_unexpected_arg(tok, cands)
+                    }
+                    if this.args_list[arg_idx].is_flag {
+                        matches.add_flag(this.args_list[arg_idx].name.cp())
+                    } elif j == tok.len() - 1 {
+                        if i + 1 >= end_idx {
+                            print_error_missing_value(tok)
+                        }
+                        matches.add_opt(this.args_list[arg_idx].name.cp(), input_args[i + 1].cp())
+                        rewrite advance = 2
+                    } else {
+                        print_error_missing_value(tok)
+                    }
+                }
+                rewrite i = i + advance
+                continue
+            }
+
+            // positional argument
+            set matched_pos_idx: int64 = -1
+            set curr_pos: int64 = 0
+            for a_idx in 0..this.args_list.len() {
+                if this.args_list[a_idx].is_positional {
+                    if curr_pos == pos_idx {
+                        rewrite matched_pos_idx = a_idx
+                        break
+                    }
+                    rewrite curr_pos = curr_pos + 1
+                }
+            }
+
+            if matched_pos_idx >= 0 {
+                matches.add_pos(this.args_list[matched_pos_idx].name.cp(), tok.cp())
+                rewrite pos_idx = pos_idx + 1
+            } else {
+                if this.subcommands_list.len() > 0 && matches.all_pos.len() == 0 {
+                    set sub_cands: string[] = []
+                    for s in 0..this.subcommands_list.len() {
+                        sub_cands.push(this.subcommands_list[s].name.cp())
+                    }
+                    print_error_unknown_subcommand(tok, sub_cands)
+                } else {
+                    matches.add_raw_pos(tok.cp())
+                }
+            }
+            rewrite i = i + 1
+        }
+
+        if sub_arg_pos >= 0 {
+            for d in 0..this.args_list.len() {
+                if this.args_list[d].has_default && !matches.has(this.args_list[d].name.cp()) {
+                    matches.add_opt(this.args_list[d].name.cp(), this.args_list[d].default_val.cp())
+                }
+            }
+            set sub_cmd_name = input_args[sub_arg_pos].cp()
+            set sub_idx = this.find_subcommand_index(sub_cmd_name)
+            set sub_cmd: Line = this.subcommands_list[sub_idx]
+            set sub_args = slice_args(ref input_args, sub_arg_pos + 1)
+            set sub_m = sub_cmd.parse_from(sub_args)
+            rewrite matches.sub_name = sub_cmd.name.cp()
+            rewrite matches.sub_matches = sub_m
+            return matches
+        }
+
+        // validate conflicts
+        for i in 0..this.args_list.len() {
+            if matches.has(this.args_list[i].name.cp()) {
+                for c in 0..this.args_list[i].conflicts.len() {
+                    set conf_name = this.args_list[i].conflicts[c].cp()
+                    if matches.has(conf_name.cp()) {
+                        set flag_a = "--" + this.args_list[i].long_name
+                        set flag_b = "--" + conf_name
+                        print_error_conflict(flag_a, flag_b)
+                    }
+                }
+            }
+        }
+
+        // validate req args
+        for i in 0..this.args_list.len() {
+            if this.args_list[i].is_required && !matches.has(this.args_list[i].name.cp()) {
+                set req_name = this.args_list[i].name.cp()
+                print_error_missing_required(req_name)
+            }
+        }
+
+        // fill default vals
+        for i in 0..this.args_list.len() {
+            if this.args_list[i].has_default && !matches.has(this.args_list[i].name.cp()) {
+                matches.add_opt(this.args_list[i].name.cp(), this.args_list[i].default_val.cp())
+            }
+        }
+
+        return matches
+    }
+}

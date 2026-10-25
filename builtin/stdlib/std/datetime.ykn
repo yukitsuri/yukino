@@ -1,0 +1,780 @@
+// decl core/datetime.rs start
+
+cfun yukistd_datetime_now_epoch_nanos() -> int64
+cfun yukistd_datetime_local_offset_secs() -> int32
+cfun yukistd_datetime_steady_nanos() -> int64
+
+// decl end
+
+public struct DateTime {
+    year: int32
+    month: int32
+    day: int32
+    hour: int32
+    minute: int32
+    second: int32
+    millisecond: int32
+    nanosecond: int32
+    utc_offset: int32
+}
+
+public struct Duration {
+    secs: int64
+    nanos: int32
+}
+
+public struct DateTimeParseError {
+    message: string
+    code: int32
+}
+
+fun pad2(v: int32) -> string {
+    if v < 0 { rewrite v = -v }
+    if v < 10 { return "0" + cast(v, "string") }
+    return cast(v, "string")
+}
+
+fun pad3(v: int32) -> string {
+    if v < 0 { rewrite v = -v }
+    if v < 10 { return "00" + cast(v, "string") }
+    if v < 100 { return "0" + cast(v, "string") }
+    return cast(v, "string")
+}
+
+fun pad4(v: int32) -> string {
+    if v < 0 { rewrite v = -v }
+    if v < 10 { return "000" + cast(v, "string") }
+    if v < 100 { return "00" + cast(v, "string") }
+    if v < 1000 { return "0" + cast(v, "string") }
+    return cast(v, "string")
+}
+
+fun parse_int_substr(s: string, start: int64, len: int64) -> int32 {
+    set res: int32 = 0
+    set i: int64 = 0
+    while i < len {
+        set idx = start + i
+        if idx >= s.len() {
+            panic(DateTimeParseError {
+                message: "unexpected end of string while parsing integer",
+                code: 1,
+            })
+        }
+        set b = s[idx]
+        if b < 48 || b > 57 {
+            panic(DateTimeParseError {
+                message: "non-digit character in datetime string",
+                code: 2,
+            })
+        }
+        set digit: int32 = cast(b - 48, "int32")
+        rewrite res = res * 10 + digit
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun days_from_civil(y: int64, m: int64, d: int64) -> int64 {
+    if m <= 2 {
+        rewrite y = y - 1
+        rewrite m = m + 9
+    } else { rewrite m = m - 3 }
+    set era = y / 400
+    if y < 0 && (y % 400 != 0) { rewrite era = era - 1 }
+    set yoe = y - era * 400
+    set doy = (153 * m + 2) / 5 + d - 1
+    set doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+fun civil_from_days(z: int64) -> (int32, int32, int32) {
+    rewrite z = z + 719468
+    set era = z / 146097
+    if z < 0 && (z % 146097 != 0) { rewrite era = era - 1 }
+    set doe = z - era * 146097
+    set yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    set y = yoe + era * 400
+    set doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    set mp = (5 * doy + 2) / 153
+    set d = doy - (153 * mp + 2) / 5 + 1
+    set m: int64 = 0
+    if mp < 10 { rewrite m = mp + 3 } else { rewrite m = mp - 9 }
+    if m <= 2 { rewrite y = y + 1 }
+    set y_i32: int32 = cast(y, "int32")
+    set m_i32: int32 = cast(m, "int32")
+    set d_i32: int32 = cast(d, "int32")
+    return (y_i32, m_i32, d_i32)
+}
+
+public fun is_leap_year(year: int32) -> bool {
+    if year % 4 != 0 { return false }
+    if year % 100 != 0 { return true }
+    return year % 400 == 0
+}
+
+public fun days_in_month(year: int32, month: int32) -> int32 {
+    if month == 2 {
+        if is_leap_year(year) { return 29 }
+        return 28
+    }
+    if month == 4 || month == 6 || month == 9 || month == 11 {
+        return 30
+    }
+    return 31
+}
+
+public fun day_of_week(ref dt: DateTime) -> int32 {
+    set days = days_from_civil(cast(dt.year, "int64"), cast(dt.month, "int64"), cast(dt.day, "int64"))
+    set w = (days + 3) % 7
+    if w < 0 { rewrite w = w + 7 }
+    set res: int32 = cast(w + 1, "int32")
+    return res
+}
+
+public fun day_of_year(ref dt: DateTime) -> int32 {
+    set d1 = days_from_civil(cast(dt.year, "int64"), 1, 1)
+    set d2 = days_from_civil(cast(dt.year, "int64"), cast(dt.month, "int64"), cast(dt.day, "int64"))
+    set diff: int32 = cast(d2 - d1 + 1, "int32")
+    return diff
+}
+
+public fun from_unix_nanos(nanos: int64, offset: int32 = 0) -> DateTime {
+    set adjusted = nanos + cast(offset, "int64") * 1000000000
+    set total_secs = adjusted / 1000000000
+    set rem_nanos = adjusted % 1000000000
+    if rem_nanos < 0 {
+        rewrite rem_nanos = rem_nanos + 1000000000
+        rewrite total_secs = total_secs - 1
+    }
+
+    set days = total_secs / 86400
+    set sec_in_day = total_secs % 86400
+    if sec_in_day < 0 {
+        rewrite sec_in_day = sec_in_day + 86400
+        rewrite days = days - 1
+    }
+
+    set (y, m, d) = civil_from_days(days)
+    set hour: int32 = cast(sec_in_day / 3600, "int32")
+    set minute: int32 = cast((sec_in_day % 3600) / 60, "int32")
+    set second: int32 = cast(sec_in_day % 60, "int32")
+    set millisecond: int32 = cast(rem_nanos / 1000000, "int32")
+    set nanosecond: int32 = cast(rem_nanos, "int32")
+
+    return DateTime {
+        year: y,
+        month: m,
+        day: d,
+        hour: hour,
+        minute: minute,
+        second: second,
+        millisecond: millisecond,
+        nanosecond: nanosecond,
+        utc_offset: offset,
+    }
+}
+
+public fun from_unix_secs(secs: int64, offset: int32 = 0) -> DateTime {
+    return from_unix_nanos(secs * 1000000000, offset)
+}
+
+public fun from_unix_millis(ms: int64, offset: int32 = 0) -> DateTime {
+    return from_unix_nanos(ms * 1000000, offset)
+}
+
+public fun make_datetime(year: int32, month: int32, day: int32, hour: int32 = 0, minute: int32 = 0, second: int32 = 0, millisecond: int32 = 0, offset: int32 = 0) -> DateTime {
+    set nano_val: int32 = cast(cast(millisecond, "int64") * 1000000, "int32")
+    return DateTime {
+        year: year,
+        month: month,
+        day: day,
+        hour: hour,
+        minute: minute,
+        second: second,
+        millisecond: millisecond,
+        nanosecond: nano_val,
+        utc_offset: offset,
+    }
+}
+
+public fun from_date(year: int32, month: int32, day: int32) -> DateTime {
+    return make_datetime(year, month, day, 0, 0, 0, 0, 0)
+}
+
+public fun to_unix_secs(ref dt: DateTime) -> int64 {
+    set days = days_from_civil(cast(dt.year, "int64"), cast(dt.month, "int64"), cast(dt.day, "int64"))
+    set total_secs = days * 86400 + cast(dt.hour, "int64") * 3600 + cast(dt.minute, "int64") * 60 + cast(dt.second, "int64")
+    return total_secs - cast(dt.utc_offset, "int64")
+}
+
+public fun to_unix_millis(ref dt: DateTime) -> int64 {
+    return to_unix_secs(ref dt) * 1000 + cast(dt.millisecond, "int64")
+}
+
+public fun to_unix_nanos(ref dt: DateTime) -> int64 {
+    return to_unix_secs(ref dt) * 1000000000 + cast(dt.nanosecond, "int64")
+}
+
+public fun now_utc() -> DateTime {
+    set nanos = yukistd_datetime_now_epoch_nanos()
+    return from_unix_nanos(nanos, 0)
+}
+
+public fun now_local() -> DateTime {
+    set nanos = yukistd_datetime_now_epoch_nanos()
+    set offset = yukistd_datetime_local_offset_secs()
+    return from_unix_nanos(nanos, offset)
+}
+
+public fun to_utc(ref dt: DateTime) -> DateTime {
+    set nanos = to_unix_nanos(ref dt)
+    return from_unix_nanos(nanos, 0)
+}
+
+public fun to_local(ref dt: DateTime) -> DateTime {
+    set nanos = to_unix_nanos(ref dt)
+    set offset = yukistd_datetime_local_offset_secs()
+    return from_unix_nanos(nanos, offset)
+}
+
+public fun with_offset(ref dt: DateTime, offset_secs: int32) -> DateTime {
+    set nanos = to_unix_nanos(ref dt)
+    return from_unix_nanos(nanos, offset_secs)
+}
+
+public fun duration_from_secs(secs: int64) -> Duration {
+    set zero_nanos: int32 = 0
+    return Duration { secs: secs, nanos: zero_nanos }
+}
+
+public fun duration_from_millis(ms: int64) -> Duration {
+    set s = ms / 1000
+    set rem = ms % 1000
+    if rem < 0 {
+        rewrite s = s - 1
+        rewrite rem = rem + 1000
+    }
+    set ns: int32 = cast(rem * 1000000, "int32")
+    return Duration { secs: s, nanos: ns }
+}
+
+public fun duration_from_micros(us: int64) -> Duration {
+    set s = us / 1000000
+    set rem = us % 1000000
+    if rem < 0 {
+        rewrite s = s - 1
+        rewrite rem = rem + 1000000
+    }
+    set ns: int32 = cast(rem * 1000, "int32")
+    return Duration { secs: s, nanos: ns }
+}
+
+public fun duration_from_nanos(nanos: int64) -> Duration {
+    set s = nanos / 1000000000
+    set rem = nanos % 1000000000
+    if rem < 0 {
+        rewrite s = s - 1
+        rewrite rem = rem + 1000000000
+    }
+    set ns: int32 = cast(rem, "int32")
+    return Duration { secs: s, nanos: ns }
+}
+
+public fun duration_from_mins(mins: int64) -> Duration {
+    return duration_from_secs(mins * 60)
+}
+
+public fun duration_from_hours(hours: int64) -> Duration {
+    return duration_from_secs(hours * 3600)
+}
+
+public fun duration_from_days(days: int64) -> Duration {
+    return duration_from_secs(days * 86400)
+}
+
+public fun duration_to_secs(ref d: Duration) -> float64 {
+    set s: float64 = cast(d.secs, "float64")
+    set ns: float64 = cast(d.nanos, "float64")
+    return s + ns / 1000000000.0
+}
+
+public fun duration_to_millis(ref d: Duration) -> int64 {
+    return d.secs * 1000 + cast(d.nanos / 1000000, "int64")
+}
+
+public fun duration_to_micros(ref d: Duration) -> int64 {
+    return d.secs * 1000000 + cast(d.nanos / 1000, "int64")
+}
+
+public fun duration_to_nanos(ref d: Duration) -> int64 {
+    return d.secs * 1000000000 + cast(d.nanos, "int64")
+}
+
+public fun duration_to_mins(ref d: Duration) -> float64 {
+    return duration_to_secs(ref d) / 60.0
+}
+
+public fun duration_to_hours(ref d: Duration) -> float64 {
+    return duration_to_secs(ref d) / 3600.0
+}
+
+public fun duration_to_days(ref d: Duration) -> float64 {
+    return duration_to_secs(ref d) / 86400.0
+}
+
+public fun add_duration(ref dt: DateTime, ref d: Duration) -> DateTime {
+    set cur_nanos = to_unix_nanos(ref dt)
+    set add_nanos = duration_to_nanos(ref d)
+    return from_unix_nanos(cur_nanos + add_nanos, dt.utc_offset)
+}
+
+public fun sub_duration(ref dt: DateTime, ref d: Duration) -> DateTime {
+    set cur_nanos = to_unix_nanos(ref dt)
+    set sub_nanos = duration_to_nanos(ref d)
+    return from_unix_nanos(cur_nanos - sub_nanos, dt.utc_offset)
+}
+
+public fun diff(ref dt1: DateTime, ref dt2: DateTime) -> Duration {
+    set n1 = to_unix_nanos(ref dt1)
+    set n2 = to_unix_nanos(ref dt2)
+    return duration_from_nanos(n1 - n2)
+}
+
+public fun steady_nanos() -> int64 {
+    return yukistd_datetime_steady_nanos()
+}
+
+public fun steady_millis() -> int64 {
+    return yukistd_datetime_steady_nanos() / 1000000
+}
+
+public fun to_iso8601(ref dt: DateTime) -> string {
+    set date_part = pad4(dt.year) + "-" + pad2(dt.month) + "-" + pad2(dt.day)
+    set time_part = pad2(dt.hour) + ":" + pad2(dt.minute) + ":" + pad2(dt.second) + "." + pad3(dt.millisecond)
+    set tz_part = "Z"
+    if dt.utc_offset != 0 {
+        set off: int32 = dt.utc_offset
+        set sign = "+"
+        if off < 0 {
+            rewrite sign = "-"
+            rewrite off = -off
+        }
+        set off_h = off / 3600
+        set off_m = (off % 3600) / 60
+        rewrite tz_part = sign + pad2(off_h) + ":" + pad2(off_m)
+    }
+    return date_part + "T" + time_part + tz_part
+}
+
+public fun format(ref dt: DateTime, fmt: string) -> string {
+    set res = ""
+    set i: int64 = 0
+    set len = fmt.len()
+    while i < len {
+        if i + 1 < len && fmt[i] == 37 { // '%'
+            set token = fmt[i + 1]
+            if token == 89 { // 'Y'
+                rewrite res = res + pad4(dt.year)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 109 { // 'm'
+                rewrite res = res + pad2(dt.month)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 100 { // 'd'
+                rewrite res = res + pad2(dt.day)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 72 { // 'H'
+                rewrite res = res + pad2(dt.hour)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 77 { // 'M'
+                rewrite res = res + pad2(dt.minute)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 83 { // 'S'
+                rewrite res = res + pad2(dt.second)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 102 { // 'f'
+                rewrite res = res + pad3(dt.millisecond)
+                rewrite i = i + 2
+                continue
+            }
+            if token == 122 { // 'z'
+                if dt.utc_offset == 0 {
+                    rewrite res = res + "+0000"
+                } else {
+                    set off: int32 = dt.utc_offset
+                    set sign = "+"
+                    if off < 0 {
+                        rewrite sign = "-"
+                        rewrite off = -off
+                    }
+                    set off_h = off / 3600
+                    set off_m = (off % 3600) / 60
+                    rewrite res = res + sign + pad2(off_h) + pad2(off_m)
+                }
+                rewrite i = i + 2
+                continue
+            }
+        }
+        set ch: uint32 = cast(fmt[i], "uint32")
+        rewrite res = res + cast(cast(ch, "char"), "string")
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun parse_iso8601(s: string) -> DateTime {
+    if s.len() < 10 {
+        panic(DateTimeParseError {
+            message: "datetime string too short",
+            code: 1,
+        })
+    }
+    set y = parse_int_substr(s, 0, 4)
+    if s[4] != 45 { // '-'
+        panic(DateTimeParseError { message: "expected '-' separator after year", code: 2 })
+    }
+    set m = parse_int_substr(s, 5, 2)
+    if s[7] != 45 { // '-'
+        panic(DateTimeParseError { message: "expected '-' separator after month", code: 3 })
+    }
+    set d = parse_int_substr(s, 8, 2)
+
+    if s.len() == 10 {
+        return make_datetime(y, m, d, 0, 0, 0, 0, 0)
+    }
+
+    if s[10] != 84 && s[10] != 32 { // 'T' or ' '
+        panic(DateTimeParseError { message: "expected 'T' or space separator after date", code: 4 })
+    }
+    if s.len() < 19 {
+        panic(DateTimeParseError { message: "datetime string incomplete time component", code: 5 })
+    }
+
+    set hour = parse_int_substr(s, 11, 2)
+    if s[13] != 58 { // ':'
+        panic(DateTimeParseError { message: "expected ':' separator after hour", code: 6 })
+    }
+    set minute = parse_int_substr(s, 14, 2)
+    if s[16] != 58 { // ':'
+        panic(DateTimeParseError { message: "expected ':' separator after minute", code: 7 })
+    }
+    set second = parse_int_substr(s, 17, 2)
+
+    set ms: int32 = 0
+    set idx: int64 = 19
+    if idx < s.len() && s[idx] == 46 { // '.'
+        rewrite idx = idx + 1
+        set ms_start = idx
+        while idx < s.len() && s[idx] >= 48 && s[idx] <= 57 {
+            rewrite idx = idx + 1
+        }
+        set ms_len = idx - ms_start
+        if ms_len >= 3 {
+            rewrite ms = parse_int_substr(s, ms_start, 3)
+        } else {
+            if ms_len == 2 {
+                rewrite ms = parse_int_substr(s, ms_start, 2) * 10
+            } else {
+                if ms_len == 1 {
+                    rewrite ms = parse_int_substr(s, ms_start, 1) * 100
+                }
+            }
+        }
+    }
+
+    set offset: int32 = 0
+    if idx < s.len() {
+        set tz_char = s[idx]
+        if tz_char == 90 || tz_char == 122 { // 'Z' or 'z'
+            rewrite offset = 0
+        } else {
+            if tz_char == 43 || tz_char == 45 { // '+' or '-'
+                set sign: int32 = 1
+                if tz_char == 45 { rewrite sign = -1 }
+                rewrite idx = idx + 1
+                set off_h = parse_int_substr(s, idx, 2)
+                rewrite idx = idx + 2
+                if idx < s.len() && s[idx] == 58 { // ':'
+                    rewrite idx = idx + 1
+                }
+                set off_m: int32 = 0
+                if idx + 2 <= s.len() {
+                    rewrite off_m = parse_int_substr(s, idx, 2)
+                }
+                rewrite offset = sign * (off_h * 3600 + off_m * 60)
+            }
+        }
+    }
+
+    return make_datetime(y, m, d, hour, minute, second, ms, offset)
+}
+
+static MAX_U64: uint64 = 0xffffffffffffffffu64
+static MAX_MS_FOR_NANOS_U64: uint64 = 18446744073709u64
+
+fun steady_nanos_u64() -> uint64 {
+    set raw = steady_nanos()
+    if raw <= 0 { return 0u64 }
+    return cast(raw, "uint64")
+}
+
+fun ms_to_nanos_u64(ms: uint64) -> uint64 {
+    if ms > MAX_MS_FOR_NANOS_U64 { return MAX_U64 }
+    return ms * 1000000u64
+}
+
+public class Stopwatch {
+    start_ns: uint64
+    accumulated_ns: uint64
+    running: bool
+    public elapsed_ms: uint64
+    public is_active: bool
+
+    public fun init() {
+        rewrite this.start_ns = 0u64
+        rewrite this.accumulated_ns = 0u64
+        rewrite this.running = false
+        rewrite this.elapsed_ms = 0u64
+        rewrite this.is_active = false
+    }
+
+    public fun start() {
+        if !this.running {
+            rewrite this.start_ns = steady_nanos_u64()
+            rewrite this.running = true
+            rewrite this.is_active = true
+        }
+    }
+
+    public fun pause() {
+        if this.running {
+            set now = steady_nanos_u64()
+            set delta: uint64 = if now > this.start_ns { now - this.start_ns } else { 0u64 }
+            if MAX_U64 - this.accumulated_ns <= delta {
+                rewrite this.accumulated_ns = MAX_U64
+            } else {
+                rewrite this.accumulated_ns = this.accumulated_ns + delta
+            }
+            rewrite this.running = false
+            rewrite this.is_active = false
+            rewrite this.elapsed_ms = this.accumulated_ns / 1000000u64
+        }
+    }
+
+    public fun resume() {
+        if !this.running && this.accumulated_ns < MAX_U64 {
+            rewrite this.start_ns = steady_nanos_u64()
+            rewrite this.running = true
+            rewrite this.is_active = true
+        }
+    }
+
+    public fun stop() {
+        this.pause()
+    }
+
+    public fun reset() {
+        rewrite this.start_ns = 0u64
+        rewrite this.accumulated_ns = 0u64
+        rewrite this.running = false
+        rewrite this.elapsed_ms = 0u64
+        rewrite this.is_active = false
+    }
+
+    public fun restart() -> uint64 {
+        set prev = this.elapsed_millis()
+        rewrite this.accumulated_ns = 0u64
+        rewrite this.start_ns = steady_nanos_u64()
+        rewrite this.running = true
+        rewrite this.is_active = true
+        rewrite this.elapsed_ms = 0u64
+        return prev
+    }
+
+    public fun is_running() -> bool {
+        return this.running
+    }
+
+    public fun elapsed_nanos() -> uint64 {
+        if this.running {
+            set now = steady_nanos_u64()
+            set delta: uint64 = if now > this.start_ns { now - this.start_ns } else { 0u64 }
+            if MAX_U64 - this.accumulated_ns <= delta {
+                rewrite this.accumulated_ns = MAX_U64
+                rewrite this.running = false
+                rewrite this.is_active = false
+                rewrite this.elapsed_ms = MAX_U64 / 1000000u64
+                return MAX_U64
+            }
+            set total = this.accumulated_ns + delta
+            rewrite this.elapsed_ms = total / 1000000u64
+            return total
+        }
+        return this.accumulated_ns
+    }
+
+    public fun elapsed_millis() -> uint64 {
+        return this.elapsed_nanos() / 1000000u64
+    }
+
+    public fun elapsed_secs() -> float64 {
+        set ns: float64 = cast(this.elapsed_nanos(), "float64")
+        return ns / 1000000000.0
+    }
+}
+
+public fun stopwatch_start() -> Stopwatch {
+    set sw = init Stopwatch()
+    sw.start()
+    return sw
+}
+
+public class Timer {
+    target_ns: uint64
+    start_ns: uint64
+    saved_remaining_ns: uint64
+    running: bool
+    public remaining_ms: uint64
+    public is_active: bool
+
+    public fun init(duration_ms: uint64 = 0u64) {
+        set ns = ms_to_nanos_u64(duration_ms)
+        rewrite this.target_ns = ns
+        rewrite this.start_ns = 0u64
+        rewrite this.saved_remaining_ns = ns
+        rewrite this.running = false
+        rewrite this.remaining_ms = duration_ms
+        rewrite this.is_active = false
+    }
+
+    public fun start(duration_ms: uint64 = 0u64) {
+        if duration_ms > 0u64 {
+            set ns = ms_to_nanos_u64(duration_ms)
+            rewrite this.target_ns = ns
+            rewrite this.saved_remaining_ns = ns
+            rewrite this.remaining_ms = duration_ms
+        } else {
+            if this.saved_remaining_ns == 0u64 {
+                rewrite this.saved_remaining_ns = this.target_ns
+                rewrite this.remaining_ms = this.target_ns / 1000000u64
+            }
+        }
+        rewrite this.start_ns = steady_nanos_u64()
+        rewrite this.running = true
+        rewrite this.is_active = true
+    }
+
+    public fun pause() {
+        if this.running {
+            set now = steady_nanos_u64()
+            set delta: uint64 = if now > this.start_ns { now - this.start_ns } else { 0u64 }
+            if delta >= this.saved_remaining_ns {
+                rewrite this.saved_remaining_ns = 0u64
+                rewrite this.remaining_ms = 0u64
+            } else {
+                rewrite this.saved_remaining_ns = this.saved_remaining_ns - delta
+                rewrite this.remaining_ms = this.saved_remaining_ns / 1000000u64
+            }
+            rewrite this.running = false
+            rewrite this.is_active = false
+        }
+    }
+
+    public fun resume() {
+        if !this.running && this.saved_remaining_ns > 0u64 {
+            rewrite this.start_ns = steady_nanos_u64()
+            rewrite this.running = true
+            rewrite this.is_active = true
+        }
+    }
+
+    public fun stop() {
+        rewrite this.running = false
+        rewrite this.is_active = false
+        rewrite this.saved_remaining_ns = 0u64
+        rewrite this.remaining_ms = 0u64
+    }
+
+    public fun reset() {
+        rewrite this.running = false
+        rewrite this.is_active = false
+        rewrite this.start_ns = 0u64
+        rewrite this.saved_remaining_ns = this.target_ns
+        rewrite this.remaining_ms = this.target_ns / 1000000u64
+    }
+
+    public fun restart(duration_ms: uint64 = 0u64) {
+        this.reset()
+        this.start(duration_ms)
+    }
+
+    public fun is_expired() -> bool {
+        return this.remaining_nanos() == 0u64
+    }
+
+    public fun is_running() -> bool {
+        if !this.running {
+            return false
+        }
+        if this.is_expired() {
+            return false
+        }
+        return true
+    }
+
+    public fun remaining_nanos() -> uint64 {
+        if !this.running {
+            return this.saved_remaining_ns
+        }
+        set now = steady_nanos_u64()
+        set delta: uint64 = if now > this.start_ns { now - this.start_ns } else { 0u64 }
+        if delta >= this.saved_remaining_ns {
+            rewrite this.saved_remaining_ns = 0u64
+            rewrite this.remaining_ms = 0u64
+            rewrite this.running = false
+            rewrite this.is_active = false
+            return 0u64
+        }
+        set rem = this.saved_remaining_ns - delta
+        rewrite this.remaining_ms = rem / 1000000u64
+        return rem
+    }
+
+    public fun remaining_millis() -> uint64 {
+        return this.remaining_nanos() / 1000000u64
+    }
+
+    public fun elapsed_nanos() -> uint64 {
+        if this.target_ns == 0u64 {
+            return 0u64
+        }
+        set rem = this.remaining_nanos()
+        return this.target_ns - rem
+    }
+
+    public fun elapsed_millis() -> uint64 {
+        return this.elapsed_nanos() / 1000000u64
+    }
+
+    public fun tick() -> uint64 {
+        return this.remaining_millis()
+    }
+}
+
+public fun timer_start(duration_ms: uint64) -> Timer {
+    set t = init Timer(duration_ms)
+    t.start()
+    return t
+}
+

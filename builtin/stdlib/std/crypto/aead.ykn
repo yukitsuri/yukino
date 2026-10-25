@@ -1,0 +1,104 @@
+load .common: CryptoError, constant_time_eq, store64_le
+load .chacha: chacha20_block, chacha20_crypt
+load .poly1305: poly1305_mac
+
+fun append_padding(ref ~buf: uint8[], len: int64) {
+    set rem: int64 = len % 16
+    if rem != 0 {
+        set pad_count: int64 = 16 - rem
+        for i in 0..pad_count {
+            buf.push(0u8)
+        }
+    }
+}
+
+public fun chacha20_poly1305_encrypt(ref key: bytes, ref nonce: bytes, ref aad: bytes, ref plaintext: bytes) -> bytes {
+    if key.len() != 32 {
+        panic(CryptoError { message: "chacha20-poly1305 key must be 32 bytes", code: 31 })
+    }
+    if nonce.len() != 12 {
+        panic(CryptoError { message: "chacha20-poly1305 nonce must be 12 bytes", code: 32 })
+    }
+    set block0: bytes = chacha20_block(ref key, ref nonce, 0u32)
+    set poly_key: bytes = from_raw_parts(block0.as_ptr(), 32, 32)
+    set ct: bytes = chacha20_crypt(ref key, ref nonce, 1u32, ref plaintext)
+
+    set mac_buf: uint8[] = []
+    set aad_len: int64 = aad.len()
+    for i in 0..aad_len {
+        mac_buf.push(aad[i])
+    }
+    append_padding(ref ~mac_buf, aad_len)
+    set ct_len: int64 = ct.len()
+    for i in 0..ct_len {
+        mac_buf.push(ct[i])
+    }
+    append_padding(ref ~mac_buf, ct_len)
+
+    set len_buf: uint8[] = []
+    for i in 0..16 {
+        len_buf.push(0u8)
+    }
+    store64_le(ref ~len_buf, 0, cast(aad_len, "uint64"))
+    store64_le(ref ~len_buf, 8, cast(ct_len, "uint64"))
+    for i in 0..16 {
+        mac_buf.push(len_buf[i])
+    }
+
+    set mac_data: bytes = from_raw_parts(mac_buf.as_ptr(), mac_buf.len(), mac_buf.len())
+    set tag: bytes = poly1305_mac(ref poly_key, ref mac_data)
+
+    set res: uint8[] = []
+    for i in 0..ct_len {
+        res.push(ct[i])
+    }
+    for i in 0..16 {
+        res.push(tag[i])
+    }
+    return from_raw_parts(res.as_ptr(), res.len(), res.len())
+}
+
+public fun chacha20_poly1305_decrypt(ref key: bytes, ref nonce: bytes, ref aad: bytes, ref ciphertext_with_tag: bytes) -> bytes {
+    set total_len: int64 = ciphertext_with_tag.len()
+    if total_len < 16 {
+        panic(CryptoError { message: "ciphertext too short, missing poly1305 tag", code: 33 })
+    }
+    set ct_len: int64 = total_len - 16
+    set block0: bytes = chacha20_block(ref key, ref nonce, 0u32)
+    set poly_key: bytes = from_raw_parts(block0.as_ptr(), 32, 32)
+
+    set mac_buf: uint8[] = []
+    set aad_len: int64 = aad.len()
+    for i in 0..aad_len {
+        mac_buf.push(aad[i])
+    }
+    append_padding(ref ~mac_buf, aad_len)
+    for i in 0..ct_len {
+        mac_buf.push(ciphertext_with_tag[i])
+    }
+    append_padding(ref ~mac_buf, ct_len)
+
+    set len_buf: uint8[] = []
+    for i in 0..16 {
+        len_buf.push(0u8)
+    }
+    store64_le(ref ~len_buf, 0, cast(aad_len, "uint64"))
+    store64_le(ref ~len_buf, 8, cast(ct_len, "uint64"))
+    for i in 0..16 {
+        mac_buf.push(len_buf[i])
+    }
+
+    set mac_data: bytes = from_raw_parts(mac_buf.as_ptr(), mac_buf.len(), mac_buf.len())
+    set expected_tag: bytes = poly1305_mac(ref poly_key, ref mac_data)
+    set tag_buf: uint8[] = []
+    for i in 0..16 {
+        tag_buf.push(ciphertext_with_tag[ct_len + i])
+    }
+    set received_tag: bytes = from_raw_parts(tag_buf.as_ptr(), 16, 16)
+    if !constant_time_eq(ref expected_tag, ref received_tag) {
+        panic(CryptoError { message: "chacha20-poly1305 authentication failed", code: 34 })
+    }
+
+    set ct_slice: bytes = from_raw_parts(ciphertext_with_tag.as_ptr(), ct_len, ct_len)
+    return chacha20_crypt(ref key, ref nonce, 1u32, ref ct_slice)
+}

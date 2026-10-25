@@ -1,0 +1,87 @@
+load tlibmath: *
+load std.io: print, println, flush, read_line
+load std.strings: *
+
+public fun sigcalc(a: int64, op: char, b: int64) -> int64 {
+    return switch op {
+        '+' -> plus_calc(a, b),
+        '-' -> minus_calc(a, b),
+        '*' -> ml_calc(a, b),
+        '/' -> wrap_dv(a, b),
+        else -> 0
+    }
+}
+
+fun wrap_dv(a: int64, b: int64) -> int64 {
+    if b == 0 {
+        println("Wrong: division by zero")
+        return 0
+    }
+    return dv_calc(a, b)
+}
+
+public fun calc_expr(raw_input: string) {
+    set input = raw_input.trim()
+    if input.is_empty() {
+        println("Empty expression")
+        return
+    }
+
+    set op: char = ' '
+    set op_idx: int64 = -1
+
+    set p_idx = input.index_of_from("+", 1)
+    set m_idx = input.index_of_from("-", 1)
+    set mul_idx = input.index_of_from("*", 1)
+    set d_idx = input.index_of_from("/", 1)
+
+    if p_idx > 0 {
+        rewrite op = '+'
+        rewrite op_idx = p_idx
+    } elif m_idx > 0 {
+        rewrite op = '-'
+        rewrite op_idx = m_idx
+    } elif mul_idx > 0 {
+        rewrite op = '*'
+        rewrite op_idx = mul_idx
+    } elif d_idx > 0 {
+        rewrite op = '/'
+        rewrite op_idx = d_idx
+    }
+
+    if op_idx < 0 {
+        println("Error: No operator (+, -, *, /) found in expression")
+        return
+    }
+
+    set left_str = input.slice(0, op_idx).trim()
+    set right_str = input.slice(op_idx + 1, input.len()).trim()
+
+    if left_str.is_empty() || right_str.is_empty() {
+        println("Error: Missing operand")
+        return
+    }
+
+    set a = left_str.to_int64()
+    set b = right_str.to_int64()
+    set result = sigcalc(a, op, b)
+
+    println("Result: ${a} ${op} ${b} = ${result}")
+}
+
+public fun run_calc() {
+    println("\n--- Calculator ---")
+    println("Enter expression (e.g. 10 + 5) or 'q' to exit:")
+
+    set running = true
+    while running {
+        print("> ")
+        flush()
+        set line = read_line().trim()
+        if line.eq("q") || line.eq("exit") || line.eq("quit") || line.is_empty() {
+            rewrite running = false
+        } else {
+            calc_expr(line)
+        }
+    }
+}

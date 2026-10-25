@@ -1,0 +1,16 @@
+[package]
+name = "yukic-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-span = { workspace = true }
+miette = { workspace = true }
+owo-colors = { workspace = true }
+thiserror = { workspace = true }

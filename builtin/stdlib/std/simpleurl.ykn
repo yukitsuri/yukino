@@ -1,0 +1,617 @@
+load .strings: trim, to_lowercase, slice, index_of, last_index_of, starts_with
+
+// decl core/strings.rs start
+
+cfun yukistd_str_parse_i64(p: ptr<uint8>, len: int64, out_val: ptr<int64>) -> bool
+
+// decl end
+
+public struct QueryParam {
+    key: string
+    value: string
+}
+
+public struct UrlParseError {
+    message: string
+    input: string
+}
+
+fun is_unreserved(b: uint8) -> bool {
+    if b >= 48 && b <= 57 { return true } // '0'..'9'
+    if b >= 65 && b <= 90 { return true } // 'A'..'Z'
+    if b >= 97 && b <= 122 { return true } // 'a'..'z'
+    if b == 45 || b == 95 || b == 46 || b == 126 { return true } // '-', '_', '.', '~'
+    return false
+}
+
+fun hex_char(val: uint8) -> string {
+    set hexes = "0123456789ABCDEF"
+    set idx: int64 = cast(val, "int64")
+    return slice(hexes, idx, idx + 1)
+}
+
+fun hex_val(b: uint8) -> int32 {
+    if b >= 48 && b <= 57 { return cast(b - 48, "int32") }
+    if b >= 65 && b <= 70 { return cast(b - 55, "int32") }
+    if b >= 97 && b <= 102 { return cast(b - 87, "int32") }
+    return -1
+}
+
+public fun url_encode_component(text: string) -> string {
+    set res = ""
+    set n = text.len()
+    for i in 0..n {
+        set b = text[i]
+        if is_unreserved(b) {
+            rewrite res = res + slice(text, i, i + 1)
+        } else {
+            set hi = b / 16
+            set lo = b % 16
+            rewrite res = res + "%" + hex_char(hi) + hex_char(lo)
+        }
+    }
+    return res
+}
+
+public fun url_encode(text: string) -> string {
+    set res = ""
+    set n = text.len()
+    for i in 0..n {
+        set b = text[i]
+        if is_unreserved(b) || b == 47 || b == 63 || b == 38 || b == 61 || b == 58 || b == 64 || b == 35 {
+            rewrite res = res + slice(text, i, i + 1)
+        } else {
+            set hi = b / 16
+            set lo = b % 16
+            rewrite res = res + "%" + hex_char(hi) + hex_char(lo)
+        }
+    }
+    return res
+}
+
+public fun url_decode_component(encoded: string) -> string {
+    set res = ""
+    set n = encoded.len()
+    set i: int64 = 0
+    while i < n {
+        set b = encoded[i]
+        if b == 43 { // '+' in query param means space
+            rewrite res = res + " "
+            rewrite i = i + 1
+            continue
+        }
+        if b == 37 && i + 2 < n { // '%'
+            set h1 = hex_val(encoded[i + 1])
+            set h2 = hex_val(encoded[i + 2])
+            if h1 >= 0 && h2 >= 0 {
+                set byte_val: uint8 = cast(h1 * 16 + h2, "uint8")
+                set byte_arr: uint8[] = [byte_val]
+                rewrite res = res + from_raw_parts(byte_arr.as_ptr(), 1)
+                rewrite i = i + 3
+                continue
+            }
+        }
+        rewrite res = res + slice(encoded, i, i + 1)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun url_decode(encoded: string) -> string {
+    set res = ""
+    set n = encoded.len()
+    set i: int64 = 0
+    while i < n {
+        set b = encoded[i]
+        if b == 37 && i + 2 < n { // '%'
+            set h1 = hex_val(encoded[i + 1])
+            set h2 = hex_val(encoded[i + 2])
+            if h1 >= 0 && h2 >= 0 {
+                set byte_val: uint8 = cast(h1 * 16 + h2, "uint8")
+                set byte_arr: uint8[] = [byte_val]
+                rewrite res = res + from_raw_parts(byte_arr.as_ptr(), 1)
+                rewrite i = i + 3
+                continue
+            }
+        }
+        rewrite res = res + slice(encoded, i, i + 1)
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun default_port_for_scheme(scheme: string) -> int32 {
+    set s = to_lowercase(scheme)
+    if s == "http" || s == "ws" { return 80 }
+    if s == "https" || s == "wss" { return 443 }
+    if s == "ftp" { return 21 }
+    if s == "ssh" { return 22 }
+    return 0
+}
+
+fun split_path_segments(path: string) -> string[] {
+    set res: string[] = []
+    set n = path.len()
+    set i: int64 = 0
+    set start: int64 = 0
+
+    while i <= n {
+        if i == n || path[i] == 47 { // '/'
+            if i > start {
+                set seg = slice(path, start, i)
+                if seg == ".." {
+                    if res.len() > 0 { res.pop() }
+                } elif seg != "." && seg.len() > 0 { res.push(seg) }
+            }
+            rewrite start = i + 1
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+fun join_path_segments(segments: string[]) -> string {
+    set res = ""
+    for i in 0..segments.len() {
+        if i > 0 { rewrite res = res + "/" }
+        rewrite res = res + segments[i]
+    }
+    return res
+}
+
+fun clone_opt_str(val: string?) -> string? {
+    if val != null { return val?.cp() }
+    return null
+}
+
+public class Url {
+    public scheme: string
+    public username: string?
+    public password: string?
+    public host: string
+    public port: int32?
+    public path: string
+    public query_params: QueryParam[]
+    public fragment: string?
+
+    public fun init(
+        scheme: string,
+        username: string?,
+        password: string?,
+        host: string,
+        port: int32?,
+        path: string,
+        query_params: QueryParam[],
+        fragment: string?
+    ) {
+        rewrite this.scheme = scheme
+        rewrite this.username = username
+        rewrite this.password = password
+        rewrite this.host = host
+        rewrite this.port = port
+        rewrite this.path = path
+        rewrite this.query_params = query_params
+        rewrite this.fragment = fragment
+    }
+
+    public fun effective_port() -> int32 {
+        if this.port != null { return this.port ?? 0 }
+        return default_port_for_scheme(this.scheme.cp())
+    }
+
+    public fun origin() -> string {
+        set res = this.scheme.cp() + "://" + this.host.cp()
+        if this.port != null {
+            set p = this.port ?? 0
+            if p != default_port_for_scheme(this.scheme.cp()) && p > 0 {
+                rewrite res = res + ":${p}"
+            }
+        }
+        return res
+    }
+
+    public fun query() -> string? {
+        if this.query_params.len() == 0 { return null }
+        set res = ""
+        for i in 0..this.query_params.len() {
+            if i > 0 { rewrite res = res + "&" }
+            set qk = url_encode_component(this.query_params[i].key.cp())
+            set qv = url_encode_component(this.query_params[i].value.cp())
+            rewrite res = res + qk + "=" + qv
+        }
+        return res
+    }
+
+    public fun get_query_param(key: string) -> string? {
+        for i in 0..this.query_params.len() {
+            if this.query_params[i].key == key {
+                return this.query_params[i].value.cp()
+            }
+        }
+        return null
+    }
+
+    public fun get_all_query_params(key: string) -> string[] {
+        set res: string[] = []
+        for i in 0..this.query_params.len() {
+            if this.query_params[i].key == key {
+                res.push(this.query_params[i].value.cp())
+            }
+        }
+        return res
+    }
+
+    public fun set_query_param(key: string, value: string) {
+        set new_params: QueryParam[] = []
+        for i in 0..this.query_params.len() {
+            if this.query_params[i].key != key {
+                new_params.push(this.query_params[i].cp())
+            }
+        }
+        new_params.push(QueryParam { key: key, value: value })
+        rewrite this.query_params = new_params
+    }
+
+    public fun add_query_param(key: string, value: string) {
+        this.query_params.push(QueryParam { key: key, value: value })
+    }
+
+    public fun remove_query_param(key: string) {
+        set new_params: QueryParam[] = []
+        for i in 0..this.query_params.len() {
+            if this.query_params[i].key != key {
+                new_params.push(this.query_params[i].cp())
+            }
+        }
+        rewrite this.query_params = new_params
+    }
+
+    public fun clear_query() {
+        rewrite this.query_params = []
+    }
+
+    public fun filter_query(predicate: fun(string, string) -> bool) {
+        set new_params: QueryParam[] = []
+        for i in 0..this.query_params.len() {
+            if predicate(this.query_params[i].key.cp(), this.query_params[i].value.cp()) {
+                new_params.push(this.query_params[i].cp())
+            }
+        }
+        rewrite this.query_params = new_params
+    }
+
+    public fun to_string() -> string {
+        set res = this.scheme.cp() + ":"
+        if this.host.len() > 0 {
+            rewrite res = res + "//"
+            if this.username != null {
+                set u = this.username ?? ""
+                rewrite res = res + url_encode_component(u)
+                if this.password != null {
+                    set p = this.password ?? ""
+                    rewrite res = res + ":" + url_encode_component(p)
+                }
+                rewrite res = res + "@"
+            }
+            rewrite res = res + this.host.cp()
+            if this.port != null {
+                set port_num = this.port ?? 0
+                if port_num > 0 && port_num != default_port_for_scheme(this.scheme.cp()) {
+                    rewrite res = res + ":${port_num}"
+                }
+            }
+        }
+        if this.path.len() > 0 {
+            if this.host.len() > 0 && !starts_with(this.path, "/") {
+                rewrite res = res + "/" + this.path.cp()
+            } else {
+                rewrite res = res + this.path.cp()
+            }
+        } elif this.host.len() > 0 {
+            rewrite res = res + "/"
+        }
+        set q = this.query()
+        if q != null {
+            rewrite res = res + "?" + (q ?? "")
+        }
+        if this.fragment != null {
+            rewrite res = res + "#" + (this.fragment ?? "")
+        }
+        return res
+    }
+
+    public fun join(subpath: string) -> Url {
+        if starts_with(subpath, "http://") || starts_with(subpath, "https://") || starts_with(subpath, "ws://") || starts_with(subpath, "wss://") || starts_with(subpath, "ftp://") {
+            return url_parse(subpath)
+        }
+        set raw_path = ""
+        if starts_with(subpath, "/") {
+            rewrite raw_path = subpath
+        } else {
+            set base_dir = "/"
+            set last_slash = last_index_of(this.path, "/")
+            if last_slash >= 0 {
+                rewrite base_dir = slice(this.path, 0, last_slash + 1)
+            }
+            rewrite raw_path = base_dir + subpath
+        }
+
+        set segments = split_path_segments(raw_path)
+        set normalized = "/" + join_path_segments(segments)
+
+        return init Url(
+            this.scheme.cp(),
+            clone_opt_str(this.username),
+            clone_opt_str(this.password),
+            this.host.cp(),
+            this.port,
+            normalized,
+            this.query_params.cp(),
+            null
+        )
+    }
+}
+
+public class UrlBuilder {
+    _scheme: string
+    _username: string?
+    _password: string?
+    _host: string
+    _port: int32?
+    _path: string
+    _query_params: QueryParam[]
+    _fragment: string?
+
+    public fun init() {
+        rewrite this._scheme = "http"
+        rewrite this._username = null
+        rewrite this._password = null
+        rewrite this._host = ""
+        rewrite this._port = null
+        rewrite this._path = "/"
+        rewrite this._query_params = []
+        rewrite this._fragment = null
+    }
+
+    public fun scheme(s: string) -> UrlBuilder {
+        rewrite this._scheme = s
+        return this
+    }
+
+    public fun username(u: string) -> UrlBuilder {
+        rewrite this._username = u
+        return this
+    }
+
+    public fun password(p: string) -> UrlBuilder {
+        rewrite this._password = p
+        return this
+    }
+
+    public fun host(h: string) -> UrlBuilder {
+        rewrite this._host = h
+        return this
+    }
+
+    public fun port(p: int32) -> UrlBuilder {
+        rewrite this._port = p
+        return this
+    }
+
+    public fun path(p: string) -> UrlBuilder {
+        rewrite this._path = p
+        return this
+    }
+
+    public fun set_query_param(k: string, v: string) -> UrlBuilder {
+        set new_params: QueryParam[] = []
+        for i in 0..this._query_params.len() {
+            if this._query_params[i].key != k {
+                new_params.push(this._query_params[i].cp())
+            }
+        }
+        new_params.push(QueryParam { key: k, value: v })
+        rewrite this._query_params = new_params
+        return this
+    }
+
+    public fun add_query_param(k: string, v: string) -> UrlBuilder {
+        this._query_params.push(QueryParam { key: k, value: v })
+        return this
+    }
+
+    public fun remove_query_param(k: string) -> UrlBuilder {
+        set new_params: QueryParam[] = []
+        for i in 0..this._query_params.len() {
+            if this._query_params[i].key != k {
+                new_params.push(this._query_params[i].cp())
+            }
+        }
+        rewrite this._query_params = new_params
+        return this
+    }
+
+    public fun clear_query() -> UrlBuilder {
+        rewrite this._query_params = []
+        return this
+    }
+
+    public fun fragment(f: string) -> UrlBuilder {
+        rewrite this._fragment = f
+        return this
+    }
+
+    public fun build() -> Url {
+        return init Url(
+            this._scheme.cp(),
+            clone_opt_str(this._username),
+            clone_opt_str(this._password),
+            this._host.cp(),
+            this._port,
+            this._path.cp(),
+            this._query_params.cp(),
+            clone_opt_str(this._fragment)
+        )
+    }
+}
+
+public fun url_builder() -> UrlBuilder { return init UrlBuilder() }
+
+public fun parse_query(q_str: string) -> QueryParam[] {
+    set query_params: QueryParam[] = []
+    set q_len = q_str.len()
+    set start: int64 = 0
+    set idx: int64 = 0
+    while idx <= q_len {
+        if idx == q_len || q_str[idx] == 38 {
+            if idx > start {
+                set pair = slice(q_str, start, idx)
+                set eq = index_of(pair, "=")
+                if eq >= 0 {
+                    set pair_len = pair.len()
+                    set pk = url_decode_component(slice(pair, 0, eq))
+                    set pv = url_decode_component(slice(pair, eq + 1, pair_len))
+                    query_params.push(QueryParam { key: pk, value: pv })
+                } else {
+                    set pk = url_decode_component(pair)
+                    query_params.push(QueryParam { key: pk, value: "" })
+                }
+            }
+            rewrite start = idx + 1
+        }
+        rewrite idx = idx + 1
+    }
+    return query_params
+}
+
+public fun url_parse(input: string) -> Url {
+    set trimmed = trim(input)
+    if trimmed.len() == 0 {
+        panic(UrlParseError { message: "empty url string", input: input })
+    }
+
+    set colon_pos = index_of(trimmed, ":")
+    if colon_pos <= 0 {
+        panic(UrlParseError { message: "missing scheme delimiter ':'", input: input })
+    }
+
+    set scheme_str = slice(trimmed, 0, colon_pos)
+    set scheme = to_lowercase(scheme_str)
+    for i in 0..scheme.len() {
+        set b = scheme[i]
+        if i == 0 {
+            if !(b >= 97 && b <= 122) { // must start with alpha
+                panic(UrlParseError { message: "scheme must start with an ASCII letter", input: input })
+            }
+        } else {
+            if !(b >= 97 && b <= 122) && !(b >= 48 && b <= 57) && b != 43 && b != 45 && b != 46 { // a-z, 0-9, +, -, .
+                panic(UrlParseError { message: "invalid character in scheme", input: input })
+            }
+        }
+    }
+
+    set rest = slice(trimmed, colon_pos + 1, trimmed.len())
+
+    set username: string? = null
+    set password: string? = null
+    set host = ""
+    set port: int32? = null
+    set path = ""
+    set query_params: QueryParam[] = []
+    set fragment: string? = null
+
+    if starts_with(rest, "//") {
+        set rest_len = rest.len()
+        set after_slash = slice(rest, 2, rest_len)
+        set auth_end: int64 = after_slash.len()
+        for i in 0..after_slash.len() {
+            set b = after_slash[i]
+            if b == 47 || b == 63 || b == 35 { // '/', '?', '#'
+                rewrite auth_end = i
+                break
+            }
+        }
+
+        set authority = slice(after_slash, 0, auth_end)
+        set after_len = after_slash.len()
+        rewrite rest = slice(after_slash, auth_end, after_len)
+
+        // userinfo
+        set at_pos = index_of(authority, "@")
+        set host_port_part = ""
+        if at_pos >= 0 {
+            set userinfo = slice(authority, 0, at_pos)
+            set auth_len = authority.len()
+            rewrite host_port_part = slice(authority, at_pos + 1, auth_len)
+            set colon_user = index_of(userinfo, ":")
+            if colon_user >= 0 {
+                set userinfo_len = userinfo.len()
+                rewrite username = url_decode_component(slice(userinfo, 0, colon_user))
+                rewrite password = url_decode_component(slice(userinfo, colon_user + 1, userinfo_len))
+            } else { rewrite username = url_decode_component(userinfo) }
+        } else { rewrite host_port_part = authority }
+
+        // host & port
+        if starts_with(host_port_part, "[") {
+            set bracket_end = index_of(host_port_part, "]")
+            if bracket_end > 0 {
+                rewrite host = slice(host_port_part, 0, bracket_end + 1)
+                set hp_len = host_port_part.len()
+                set after_bracket = slice(host_port_part, bracket_end + 1, hp_len)
+                if starts_with(after_bracket, ":") {
+                    set ab_len = after_bracket.len()
+                    set p_str = slice(after_bracket, 1, ab_len)
+                    set parsed_port: int64 = 0
+                    if yukistd_str_parse_i64(p_str.as_ptr(), p_str.len(), ptr_of(parsed_port)) && parsed_port > 0 && parsed_port <= 65535 {
+                        rewrite port = cast(parsed_port, "int32")
+                    } else {
+                        panic(UrlParseError { message: "invalid port in URL", input: input })
+                    }
+                }
+            } else { rewrite host = host_port_part }
+        } else {
+            set colon_host = last_index_of(host_port_part, ":")
+            if colon_host >= 0 {
+                rewrite host = slice(host_port_part, 0, colon_host)
+                set hp_len = host_port_part.len()
+                set p_str = slice(host_port_part, colon_host + 1, hp_len)
+                set parsed_port: int64 = 0
+                if yukistd_str_parse_i64(p_str.as_ptr(), p_str.len(), ptr_of(parsed_port)) && parsed_port > 0 && parsed_port <= 65535 {
+                    rewrite port = cast(parsed_port, "int32")
+                } else {
+                    panic(UrlParseError { message: "invalid port in URL", input: input })
+                }
+            } else { rewrite host = host_port_part }
+        }
+    }
+
+    // fragment '#'
+    set hash_pos = index_of(rest, "#")
+    if hash_pos >= 0 {
+        set rest_len = rest.len()
+        rewrite fragment = slice(rest, hash_pos + 1, rest_len)
+        rewrite rest = slice(rest, 0, hash_pos)
+    }
+
+    // query '?'
+    set q_pos = index_of(rest, "?")
+    if q_pos >= 0 {
+        set rest_len = rest.len()
+        set q_str = slice(rest, q_pos + 1, rest_len)
+        rewrite path = slice(rest, 0, q_pos)
+        rewrite query_params = parse_query(q_str)
+    } else { rewrite path = rest }
+
+    if host.len() > 0 && path.len() == 0 { rewrite path = "/" }
+
+    return init Url(
+        scheme,
+        username,
+        password,
+        host,
+        port,
+        path,
+        query_params,
+        fragment
+    )
+}

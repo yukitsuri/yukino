@@ -1,0 +1,66 @@
+public load .json_parser.value: JsonValue, JSON_NULL, JSON_BOOL, JSON_NUMBER, JSON_STRING, JSON_ARRAY, JSON_OBJECT, json_null, json_bool, json_number, json_int, json_string, json_array, json_object
+public load .json_parser.tokens: JsonError
+load .json_parser.parser: JsonParser, json_options_strict
+load .json_serialize.stringify: serialize_compact, serialize_pretty
+
+public fun parse(text: string) -> JsonValue {
+    set parser = init JsonParser(text, json_options_strict())
+    set val = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+
+public fun try_parse(text: string) -> JsonValue? {
+    set parser = init JsonParser(text, json_options_strict())
+    set val = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+
+public fun validate(text: string) -> bool {
+    set parser = init JsonParser(text, json_options_strict())
+    set _ = parser.parse_document()
+    return !parser.has_error
+}
+
+public fun stringify(val: JsonValue) -> string {
+    return serialize_compact(val)
+}
+
+public fun pretty(val: JsonValue) -> string {
+    return serialize_pretty(val, "  ")
+}
+
+public fun pretty_indent(val: JsonValue, indent: string) -> string {
+    return serialize_pretty(val, indent)
+}
+
+public fun json_parse(text: string) -> JsonValue {
+    set parser = init JsonParser(text, json_options_strict())
+    set val = parser.parse_document()
+    if parser.has_error {
+        panic(parser.error)
+    }
+    return val
+}
+public fun json_try_parse(text: string) -> JsonValue? {
+    set parser = init JsonParser(text, json_options_strict())
+    set val = parser.parse_document()
+    if parser.has_error {
+        return null
+    }
+    return val
+}
+public fun json_validate(text: string) -> bool {
+    set parser = init JsonParser(text, json_options_strict())
+    set _ = parser.parse_document()
+    return !parser.has_error
+}
+public fun json_stringify(val: JsonValue) -> string { return serialize_compact(val) }
+public fun json_pretty(val: JsonValue) -> string { return serialize_pretty(val, "  ") }
+public fun json_pretty_indent(val: JsonValue, indent: string) -> string { return serialize_pretty(val, indent) }
+

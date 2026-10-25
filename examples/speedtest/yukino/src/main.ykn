@@ -1,0 +1,79 @@
+load std.datetime: steady_nanos
+load .common: report
+load .numeric: sieve, collatz, fib_test, queens, leibniz
+load .matrix: matmul, spectral
+load .mandel: mandel
+load .sort: sort_test
+load .hashmap: hashmap_test
+load .hash: sha256_test, crc32_test, fnv_test
+load .chacha: chacha_test
+load .bigfact: bigfact_test
+load .bf: bf_test
+load .mem: mem_seq, mem_rand, mem_tree
+load .out: out_buf, out_line
+
+fun main() {
+    set cli_args: string[] = args()
+    if cli_args.len() == 0 {
+        exit(64)
+    }
+    set name: string = cli_args[0]
+    set start: int64 = steady_nanos()
+    set sum: uint64 = 0
+    set matched: bool = true
+
+    if name == "nop" {
+        rewrite sum = 0u64
+    } elif name == "sieve" {
+        rewrite sum = sieve()
+    } elif name == "collatz" {
+        rewrite sum = collatz()
+    } elif name == "fib" {
+        rewrite sum = fib_test()
+    } elif name == "queens" {
+        rewrite sum = queens()
+    } elif name == "leibniz" {
+        rewrite sum = leibniz()
+    } elif name == "matmul" {
+        rewrite sum = matmul()
+    } elif name == "spectral" {
+        rewrite sum = spectral()
+    } elif name == "mandel" {
+        rewrite sum = mandel()
+    } elif name == "sort" {
+        rewrite sum = sort_test()
+    } elif name == "hashmap" {
+        rewrite sum = hashmap_test()
+    } elif name == "sha256" {
+        rewrite sum = sha256_test()
+    } elif name == "crc32" {
+        rewrite sum = crc32_test()
+    } elif name == "fnv" {
+        rewrite sum = fnv_test()
+    } elif name == "chacha" {
+        rewrite sum = chacha_test()
+    } elif name == "bigfact" {
+        rewrite sum = bigfact_test()
+    } elif name == "bf" {
+        rewrite sum = bf_test()
+    } elif name == "outbuf" {
+        rewrite sum = out_buf()
+    } elif name == "outline" {
+        rewrite sum = out_line()
+    } elif name == "memseq" {
+        rewrite sum = mem_seq()
+    } elif name == "memrand" {
+        rewrite sum = mem_rand()
+    } elif name == "memtree" {
+        rewrite sum = mem_tree()
+    } else {
+        rewrite matched = false
+    }
+
+    if !matched {
+        exit(65)
+    }
+
+    set elapsed: int64 = steady_nanos() - start
+    report(sum, cast(elapsed, "uint64"))
+}

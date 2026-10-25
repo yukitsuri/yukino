@@ -1,0 +1,344 @@
+load ..strings: slice
+load .tokens: *
+load .value: *
+load .scanner: YamlScanner
+
+public class YamlParser {
+    public scanner: YamlScanner
+
+    public curr_tok: int32
+    public curr_str: string
+    public curr_num: float64
+    public curr_bool: bool
+    public curr_line: int64
+    public curr_col: int64
+    public curr_offset: int64
+
+    public next_tok: int32
+    public next_str: string
+    public next_num: float64
+    public next_bool: bool
+    public next_line: int64
+    public next_col: int64
+    public next_offset: int64
+
+    public has_error: bool
+    public error: YamlError
+
+    public fun init(text: string) {
+        rewrite this.scanner = init YamlScanner(text)
+
+        rewrite this.curr_tok = YAML_TOK_EOF
+        rewrite this.curr_str = ""
+        rewrite this.curr_num = 0.0
+        rewrite this.curr_bool = false
+        rewrite this.curr_line = 1
+        rewrite this.curr_col = 1
+        rewrite this.curr_offset = 0
+
+        rewrite this.next_tok = YAML_TOK_EOF
+        rewrite this.next_str = ""
+        rewrite this.next_num = 0.0
+        rewrite this.next_bool = false
+        rewrite this.next_line = 1
+        rewrite this.next_col = 1
+        rewrite this.next_offset = 0
+
+        rewrite this.has_error = false
+        rewrite this.error = YamlError {
+            message: "",
+            line: 0,
+            column: 0,
+            offset: 0,
+        }
+
+        this.advance()
+        this.advance()
+    }
+
+    public fun record_error(msg: string) {
+        if !this.has_error {
+            rewrite this.has_error = true
+            rewrite this.error = YamlError {
+                message: msg,
+                line: this.curr_line,
+                column: this.curr_col,
+                offset: this.curr_offset,
+            }
+        }
+    }
+
+    public fun advance() {
+        rewrite this.curr_tok = this.next_tok
+        rewrite this.curr_str = this.next_str.cp()
+        rewrite this.curr_num = this.next_num
+        rewrite this.curr_bool = this.next_bool
+        rewrite this.curr_line = this.next_line
+        rewrite this.curr_col = this.next_col
+        rewrite this.curr_offset = this.next_offset
+
+        rewrite this.next_tok = this.scanner.scan()
+        rewrite this.next_str = this.scanner.curr_str.cp()
+        rewrite this.next_num = this.scanner.curr_num
+        rewrite this.next_bool = this.scanner.curr_bool
+        rewrite this.next_line = this.scanner.line
+        rewrite this.next_col = this.scanner.col
+        rewrite this.next_offset = this.scanner.pos
+
+        if this.next_tok == YAML_TOK_ERROR {
+            this.record_error(this.scanner.error_msg)
+        }
+    }
+
+    public fun skip_newlines() {
+        while this.curr_tok == YAML_TOK_NEWLINE {
+            this.advance()
+        }
+    }
+
+    fun is_key_token() -> bool {
+        return (this.curr_tok == YAML_TOK_STRING || this.curr_tok == YAML_TOK_NUMBER || this.curr_tok == YAML_TOK_BOOLEAN) && this.next_tok == YAML_TOK_COLON
+    }
+
+    public fun parse_node() -> YamlValue {
+        this.skip_newlines()
+        if this.curr_tok == YAML_TOK_EOF {
+            return yaml_null()
+        }
+
+        if this.curr_tok == YAML_TOK_DOC_START {
+            this.advance()
+            this.skip_newlines()
+        }
+
+        if this.curr_tok == YAML_TOK_INDENT {
+            this.advance()
+            set res: YamlValue = this.parse_node()
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_DEDENT {
+                this.advance()
+            }
+            return res
+        }
+
+        if this.curr_tok == YAML_TOK_DASH {
+            return this.parse_block_sequence()
+        }
+        if this.curr_tok == YAML_TOK_LBRACKET {
+            return this.parse_flow_sequence()
+        }
+        if this.curr_tok == YAML_TOK_LBRACE {
+            return this.parse_flow_mapping()
+        }
+
+        if this.is_key_token() {
+            return this.parse_block_mapping()
+        }
+
+        return this.parse_scalar()
+    }
+
+    fun parse_block_sequence() -> YamlValue {
+        set arr: YamlValue = yaml_array([])
+
+        while !this.has_error {
+            this.skip_newlines()
+            if this.curr_tok != YAML_TOK_DASH {
+                break
+            }
+            this.advance() // consume '-'
+            this.skip_newlines()
+
+            if this.curr_tok == YAML_TOK_INDENT {
+                this.advance()
+                set item: YamlValue = this.parse_node()
+                arr.push(item)
+                this.skip_newlines()
+                if this.curr_tok == YAML_TOK_DEDENT {
+                    this.advance()
+                }
+            } elif this.curr_tok == YAML_TOK_DASH {
+                arr.push(yaml_null())
+            } elif this.is_key_token() {
+                set item: YamlValue = this.parse_block_mapping()
+                arr.push(item)
+            } else {
+                set item: YamlValue = this.parse_node()
+                arr.push(item)
+            }
+
+            this.skip_newlines()
+        }
+
+        if this.curr_tok == YAML_TOK_DEDENT {
+            this.advance()
+        }
+
+        return arr
+    }
+
+    fun parse_block_mapping() -> YamlValue {
+        set obj: YamlValue = yaml_object()
+
+        while !this.has_error {
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_DEDENT || this.curr_tok == YAML_TOK_DASH || this.curr_tok == YAML_TOK_EOF {
+                break
+            }
+            if this.curr_tok == YAML_TOK_INDENT {
+                this.advance()
+                continue
+            }
+            if !this.is_key_token() {
+                break
+            }
+
+            set key: string = this.curr_str.cp()
+            this.advance() // consume key token
+
+            if this.curr_tok != YAML_TOK_COLON {
+                this.record_error("expected ':' after mapping key")
+                break
+            }
+            this.advance() // consume ':'
+
+            if this.curr_tok == YAML_TOK_NEWLINE {
+                this.advance() // consume newline
+                this.skip_newlines()
+                if this.curr_tok == YAML_TOK_INDENT {
+                    this.advance() // consume indent
+                    set val: YamlValue = this.parse_node()
+                    obj.set(key, val)
+                    this.skip_newlines()
+                    if this.curr_tok == YAML_TOK_DEDENT {
+                        this.advance()
+                    }
+                } else {
+                    obj.set(key, yaml_null())
+                }
+            } else {
+                set val: YamlValue = this.parse_node()
+                obj.set(key, val)
+            }
+
+            this.skip_newlines()
+        }
+
+        if this.curr_tok == YAML_TOK_DEDENT {
+            this.advance()
+        }
+
+        return obj
+    }
+
+    fun parse_flow_sequence() -> YamlValue {
+        this.advance() // consume '['
+        set arr: YamlValue = yaml_array([])
+
+        while this.curr_tok != YAML_TOK_RBRACKET && this.curr_tok != YAML_TOK_EOF && !this.has_error {
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_RBRACKET {
+                break
+            }
+            set item: YamlValue = this.parse_node()
+            arr.push(item)
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_COMMA {
+                this.advance()
+                this.skip_newlines()
+            } elif this.curr_tok == YAML_TOK_RBRACKET {
+                break
+            } else {
+                this.record_error("expected ',' or ']' in flow sequence")
+                break
+            }
+        }
+
+        if this.curr_tok == YAML_TOK_RBRACKET {
+            this.advance()
+        } else {
+            this.record_error("expected ']' at end of flow sequence")
+        }
+
+        return arr
+    }
+
+    fun parse_flow_mapping() -> YamlValue {
+        this.advance() // consume '{'
+        set obj: YamlValue = yaml_object()
+
+        while this.curr_tok != YAML_TOK_RBRACE && this.curr_tok != YAML_TOK_EOF && !this.has_error {
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_RBRACE {
+                break
+            }
+            set key: string = this.curr_str.cp()
+            this.advance()
+
+            if this.curr_tok != YAML_TOK_COLON {
+                this.record_error("expected ':' after key in flow mapping")
+                break
+            }
+            this.advance() // consume ':'
+            this.skip_newlines()
+            set val: YamlValue = this.parse_node()
+            obj.set(key, val)
+
+            this.skip_newlines()
+            if this.curr_tok == YAML_TOK_COMMA {
+                this.advance()
+                this.skip_newlines()
+            } elif this.curr_tok == YAML_TOK_RBRACE {
+                break
+            } else {
+                this.record_error("expected ',' or '}' in flow mapping")
+                break
+            }
+        }
+
+        if this.curr_tok == YAML_TOK_RBRACE {
+            this.advance()
+        } else {
+            this.record_error("expected '}' at end of flow mapping")
+        }
+
+        return obj
+    }
+
+    fun parse_scalar() -> YamlValue {
+        if this.curr_tok == YAML_TOK_NULL {
+            this.advance()
+            return yaml_null()
+        }
+        if this.curr_tok == YAML_TOK_BOOLEAN {
+            set b: bool = this.curr_bool
+            this.advance()
+            return yaml_bool(b)
+        }
+        if this.curr_tok == YAML_TOK_NUMBER {
+            set n: float64 = this.curr_num
+            this.advance()
+            return yaml_number(n)
+        }
+        if this.curr_tok == YAML_TOK_STRING {
+            set s: string = this.curr_str.cp()
+            this.advance()
+            return yaml_string(s)
+        }
+
+        this.advance()
+        return yaml_null()
+    }
+
+    public fun parse_document() -> YamlValue {
+        this.skip_newlines()
+        if this.curr_tok == YAML_TOK_EOF {
+            return yaml_null()
+        }
+        set doc: YamlValue = this.parse_node()
+        if this.curr_tok == YAML_TOK_DOC_END {
+            this.advance()
+        }
+        return doc
+    }
+}

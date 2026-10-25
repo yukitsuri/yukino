@@ -1,0 +1,40 @@
+load ..io: print, flush
+
+public class LiveArea {
+    public rendered_count: int32
+
+    public fun init() {
+        rewrite this.rendered_count = 0
+    }
+
+    public fun render(lines: string[]) {
+        if lines.len() == 0 { return }
+
+        if this.rendered_count > 0 {
+            print("\x1b[" + cast(this.rendered_count, "string") + "A")
+        }
+
+        for i in 0..lines.len() {
+            print("\r\x1b[2K" + lines[i] + "\n")
+        }
+
+        rewrite this.rendered_count = cast(lines.len(), "int32")
+        flush()
+    }
+
+    public fun clear() {
+        if this.rendered_count <= 0 { return }
+        print("\x1b[" + cast(this.rendered_count, "string") + "A")
+        for i in 0..this.rendered_count {
+            print("\r\x1b[2K\n")
+        }
+        print("\x1b[" + cast(this.rendered_count, "string") + "A\r")
+        flush()
+        rewrite this.rendered_count = 0
+    }
+
+    public fun finish() {
+        rewrite this.rendered_count = 0
+        flush()
+    }
+}

@@ -1,0 +1,133 @@
+// decl core/sharedc.rs start
+
+cfun yukistd_sharedc_open(path_p: ptr<uint8>, path_len: int64, flags: int32) -> ptr<void>
+cfun yukistd_sharedc_open_self(flags: int32) -> ptr<void>
+cfun yukistd_sharedc_symbol(handle: ptr<void>, name_p: ptr<uint8>, name_len: int64) -> ptr<void>
+cfun yukistd_sharedc_close(handle: ptr<void>) -> bool
+cfun yukistd_sharedc_last_error(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sharedc_filename(name_p: ptr<uint8>, name_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public static RTLD_LAZY: int32 = 1
+public static RTLD_NOW: int32 = 2
+public static RTLD_LOCAL: int32 = 4
+public static RTLD_GLOBAL: int32 = 8
+
+public struct SharedError {
+    message: string
+    code: int32
+}
+
+public fun last_error() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sharedc_last_error(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public class SharedLibrary {
+    public handle: ptr<void>
+    public path: string
+    public is_closed: bool
+
+    public fun init(handle: ptr<void>, path: string) {
+        rewrite this.handle = handle
+        rewrite this.path = path
+        rewrite this.is_closed = false
+    }
+
+    public fun symbol(name: string) -> ptr<void> {
+        if this.is_closed || this.handle == null {
+            return null
+        }
+        set sym = yukistd_sharedc_symbol(this.handle, name.as_ptr(), name.len())
+        if sym == null { return null }
+        return sym
+    }
+
+    public fun symbol_or_panic(name: string) -> ptr<void> {
+        if this.is_closed || this.handle == null {
+            panic(SharedError {
+                message: "library '" + this.path + "' is already closed",
+                code: 3,
+            })
+        }
+        set sym = yukistd_sharedc_symbol(this.handle, name.as_ptr(), name.len())
+        if sym == null {
+            set err = last_error()
+            set msg = "symbol '" + name + "' not found in '" + this.path + "'"
+            if err != null {
+                rewrite msg = msg + ": " + (err ?? "")
+            }
+            panic(SharedError {
+                message: msg,
+                code: 2,
+            })
+        }
+        return sym
+    }
+
+    public fun close() -> bool {
+        if this.is_closed || this.handle == null { return true }
+        rewrite this.is_closed = true
+        return yukistd_sharedc_close(this.handle)
+    }
+}
+
+public fun open_flags(path: string, flags: int32) -> SharedLibrary {
+    set handle = yukistd_sharedc_open(path.as_ptr(), path.len(), flags)
+    if handle == null {
+        set err = last_error()
+        set msg = "failed to open shared library '" + path + "'"
+        if err != null {
+            rewrite msg = msg + ": " + (err ?? "")
+        }
+        panic(SharedError {
+            message: msg,
+            code: 1,
+        })
+    }
+    return init SharedLibrary(handle, path)
+}
+
+public fun open(path: string) -> SharedLibrary {
+    return open_flags(path, RTLD_NOW)
+}
+
+public fun try_open_flags(path: string, flags: int32) -> SharedLibrary? {
+    set handle = yukistd_sharedc_open(path.as_ptr(), path.len(), flags)
+    if handle == null { return null }
+    return init SharedLibrary(handle, path)
+}
+
+public fun try_open(path: string) -> SharedLibrary? {
+    return try_open_flags(path, RTLD_NOW)
+}
+
+public fun open_self_flags(flags: int32) -> SharedLibrary {
+    set handle = yukistd_sharedc_open_self(flags)
+    if handle == null {
+        set err = last_error()
+        set msg = "failed to open main executable namespace"
+        if err != null {
+            rewrite msg = msg + ": " + (err ?? "")
+        }
+        panic(SharedError {
+            message: msg,
+            code: 1,
+        })
+    }
+    return init SharedLibrary(handle, "<self>")
+}
+
+public fun open_self() -> SharedLibrary {
+    return open_self_flags(RTLD_NOW)
+}
+
+public fun filename(name: string) -> string {
+    set out_len: int64 = 0
+    set p = yukistd_sharedc_filename(name.as_ptr(), name.len(), ptr_of(out_len))
+    if out_len <= 0 || p == null { return name }
+    return from_raw_parts(p, out_len)
+}

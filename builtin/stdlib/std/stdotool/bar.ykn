@@ -1,0 +1,85 @@
+public class Bar {
+    public body: string
+    public head: string
+    public trail: string
+    public left: string
+    public right: string
+
+    public fun init(body: string = "=", head: string = ">", trail: string = " ", left: string = "[", right: string = "]") {
+        rewrite this.body = body
+        rewrite this.head = head
+        rewrite this.trail = trail
+        rewrite this.left = left
+        rewrite this.right = right
+    }
+
+    public fun set_head(head: string) {
+        rewrite this.head = head
+    }
+
+    public fun set_body(body: string) {
+        rewrite this.body = body
+    }
+
+    public fun set_trail(trail: string) {
+        rewrite this.trail = trail
+    }
+
+    public fun set_brackets(left: string, right: string) {
+        rewrite this.left = left
+        rewrite this.right = right
+    }
+
+    public fun render(current: int64, total: int64, width: int32) -> string {
+        if width <= 0 {
+            return ""
+        }
+
+        // Bracket lengths (assuming standard 1-cell glyphs)
+        set border_w = cast(this.left.len() + this.right.len(), "int32")
+        set inner_w = width - border_w
+        if inner_w <= 0 {
+            return this.left + this.right
+        }
+
+        // Calculate filled cells
+        set filled: int32 = 0
+        if total > 0 {
+            if current >= total {
+                rewrite filled = inner_w
+            } elif current > 0 {
+                set scaled = (current * cast(inner_w, "int64")) / total
+                rewrite filled = cast(scaled, "int32")
+            }
+        }
+
+        set use_head = false
+        set body_cells = filled
+        if this.head.len() > 0 && filled > 0 && filled < inner_w {
+            rewrite body_cells = filled - 1
+            rewrite use_head = true
+        }
+
+        set trail_cells = inner_w - body_cells
+        if use_head {
+            rewrite trail_cells = trail_cells - 1
+        }
+        if trail_cells < 0 {
+            rewrite trail_cells = 0
+        }
+
+        set res: string = this.left
+        for i in 0..body_cells {
+            rewrite res = res + this.body
+        }
+        if use_head {
+            rewrite res = res + this.head
+        }
+        for i in 0..trail_cells {
+            rewrite res = res + this.trail
+        }
+        rewrite res = res + this.right
+
+        return res
+    }
+}

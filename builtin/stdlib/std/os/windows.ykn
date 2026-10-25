@@ -1,0 +1,33 @@
+// decl core/os/windows.rs start
+
+cfun yukistd_os_win_terminate_process(handle: int64, exit_code: uint32) -> bool
+cfun yukistd_os_win_get_current_process_id() -> uint32
+cfun yukistd_os_win_get_process_id(handle: int64) -> uint32
+cfun yukistd_os_win_close_handle(handle: int64) -> bool
+cfun yukistd_os_win_wait_for_single_object(handle: int64, timeout_ms: uint32) -> uint32
+
+// decl end
+
+public static INFINITE: uint32 = 4294967295
+public static WAIT_OBJECT_0: uint32 = 0
+public static WAIT_TIMEOUT: uint32 = 258
+
+public fun terminate_process(handle: int64, exit_code: uint32) -> bool {
+    return yukistd_os_win_terminate_process(handle, exit_code)
+}
+
+public fun get_current_process_id() -> uint32 {
+    return yukistd_os_win_get_current_process_id()
+}
+
+public fun get_process_id(handle: int64) -> uint32 {
+    return yukistd_os_win_get_process_id(handle)
+}
+
+public fun close_handle(handle: int64) -> bool {
+    return yukistd_os_win_close_handle(handle)
+}
+
+public fun wait_for_single_object(handle: int64, timeout_ms: uint32) -> uint32 {
+    return yukistd_os_win_wait_for_single_object(handle, timeout_ms)
+}

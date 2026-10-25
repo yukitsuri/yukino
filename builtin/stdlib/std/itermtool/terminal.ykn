@@ -1,0 +1,92 @@
+load ..io: print, flush, terminal_size, set_raw_mode
+
+public fun enable_raw_mode() -> bool {
+    return set_raw_mode(true)
+}
+
+public fun disable_raw_mode() -> bool {
+    return set_raw_mode(false)
+}
+
+public fun enter_alternate_screen() {
+    print("\x1b[?1049h\x1b[?7l")
+    flush()
+}
+
+public fun leave_alternate_screen() {
+    print("\x1b[?7h\x1b[?1049l")
+    flush()
+}
+
+public fun disable_line_wrap() {
+    print("\x1b[?7l")
+    flush()
+}
+
+public fun enable_line_wrap() {
+    print("\x1b[?7h")
+    flush()
+}
+
+public fun clear_all() {
+    print("\x1b[2J\x1b[H")
+    flush()
+}
+
+public fun clear_from_cursor() {
+    print("\x1b[J")
+    flush()
+}
+
+public fun clear_to_cursor() {
+    print("\x1b[1J")
+    flush()
+}
+
+public fun clear_line() {
+    print("\x1b[2K")
+    flush()
+}
+
+public fun clear_until_new_line() {
+    print("\x1b[K")
+    flush()
+}
+
+public fun size() -> (int32, int32) {
+    return terminal_size()
+}
+
+public fun cols() -> int32 {
+    set sz = terminal_size()
+    return sz.0
+}
+
+public fun rows() -> int32 {
+    set sz = terminal_size()
+    return sz.1
+}
+
+public fun has_resized(last_cols: int32, last_rows: int32) -> bool {
+    set sz = terminal_size()
+    return sz.0 != last_cols || sz.1 != last_rows
+}
+
+public fun scroll_up(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "S")
+        flush()
+    }
+}
+
+public fun scroll_down(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "T")
+        flush()
+    }
+}
+
+public fun set_title(title: string) {
+    print("\x1b]0;" + title + "\x07")
+    flush()
+}

@@ -1,0 +1,70 @@
+load std.io: print
+
+struct Profile {
+    email: string
+}
+
+struct User {
+    profile: Profile?
+}
+
+type UserId = int64
+
+public fun test_types() {
+    // 1. primitives
+    set i8: int8 = 8
+    set i16: int16 = 16
+    set i32: int32 = 32
+    set i64: int64 = 64
+    set u8: uint8 = 8
+    set u16: uint16 = 16
+    set u32: uint32 = 32
+    set u64: uint64 = 64
+    set f32: float32 = 1.0
+    set f64: float64 = 2.0
+    set b: bool = true
+    set c: char = 'A'
+
+    // 2. tuple and arrays
+    set pair: (string, int32) = ("port", 8080)
+    set p0: string = pair.0
+    set p1: int32 = pair.1
+
+    set list: int32[] = [10, 20, 30]
+    set first = list[0]
+
+    // 3. nullable, ?? and ?.
+    set name: string? = null
+    set safe_name = name ?? "default_name"
+
+    set u: User? = null
+    set email: string? = u?.profile?.email
+
+    set id: int64? = 123
+    set safe_id: int64 = id ?? 0
+    if id != null {
+        space
+    }
+
+    // 4. type alias (type UserId = int64)
+    set payload: int32 | bool = 42
+    if payload is int32 {
+        set num: int32 = payload
+    }
+
+    // 5. switch
+    set code = 200
+    switch code {
+        200 -> {
+            space
+        }
+        404 -> {
+            space
+        }
+        else -> {
+            space
+        }
+    }
+
+    print("Types OK\n")
+}

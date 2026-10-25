@@ -1,0 +1,90 @@
+public load std.io: eprint
+
+public static MIX_SEED: uint64 = 0xcbf29ce484222325u64
+public static RNG_SEED: uint64 = 0x9e3779b97f4a7c15u64
+static MIX_PRIME: uint64 = 0x100000001b3u64
+
+externc {
+    |cdecl|
+    cfun calloc(num: int64, size: int64) -> ptr<uint8>;
+    |cdecl|
+    cfun free(p: ptr<uint8>) -> void;
+}
+
+public fun alloc_u8(count: int64) -> bytes {
+    set raw: ptr<uint8> = calloc(count, 1)
+    return slice::from_raw_parts(raw, count, count)
+}
+
+public fun alloc_u32(count: int64) -> uint32[] {
+    set raw: ptr<uint8> = calloc(count, 4)
+    set p: ptr<uint32> = cast(raw, "ptr<uint32>")
+    return slice::from_raw_parts(p, count, count)
+}
+
+public fun alloc_u64(count: int64) -> uint64[] {
+    set raw: ptr<uint8> = calloc(count, 8)
+    set p: ptr<uint64> = cast(raw, "ptr<uint64>")
+    return slice::from_raw_parts(p, count, count)
+}
+
+public fun alloc_f64(count: int64) -> float64[] {
+    set raw: ptr<uint8> = calloc(count, 8)
+    set p: ptr<float64> = cast(raw, "ptr<float64>")
+    return slice::from_raw_parts(p, count, count)
+}
+
+public fun free_u8(buf: bytes) {
+    free(buf.as_ptr())
+}
+
+public fun free_u32(buf: uint32[]) {
+    free(cast(buf.as_ptr(), "ptr<uint8>"))
+}
+
+public fun free_u64(buf: uint64[]) {
+    free(cast(buf.as_ptr(), "ptr<uint8>"))
+}
+
+public fun free_f64(buf: float64[]) {
+    free(cast(buf.as_ptr(), "ptr<uint8>"))
+}
+
+public class Rng {
+    state: uint64
+
+    fun init(seed: uint64) {
+        rewrite this.state = seed
+    }
+
+    fun next() -> uint64 {
+        set x: uint64 = this.state
+        set x1: uint64 = x ^ (x >> 12)
+        set x2: uint64 = x1 ^ (x1 << 25)
+        set x3: uint64 = x2 ^ (x2 >> 27)
+        rewrite this.state = x3
+        return x3 * 0x2545f4914f6cdd1du64
+    }
+
+    fun key31() -> uint32 {
+        return cast(this.next() >> 33, "uint32")
+    }
+
+    fun below(n: uint64) -> uint64 {
+        return (this.next() >> 1) % n
+    }
+}
+
+#[stable, inline_always]
+public fun mix(h: uint64, v: uint64) -> uint64 {
+    return (h ^ v) * MIX_PRIME
+}
+
+#[stable, inline_always]
+public fun fill_byte(i: uint32) -> uint8 {
+    return cast((i * 167) + (i >> 9), "uint8")
+}
+
+public fun report(checksum: uint64, ns: uint64) {
+    eprint("R " + cast(checksum, "string") + " " + cast(ns, "string") + "\n")
+}

@@ -1,0 +1,230 @@
+// decl core/io/ starts
+
+cfun yukistd_io_write_stdout(ptr: ptr<uint8>, len: int64, flush: bool) -> int64
+cfun yukistd_io_write_stderr(ptr: ptr<uint8>, len: int64, flush: bool) -> int64
+cfun yukistd_io_flush_stdout() -> int32
+cfun yukistd_io_flush_stderr() -> int32
+cfun yukistd_io_read_stdin(buf: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_io_read_line(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_io_read_all(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_io_read_char() -> int32
+cfun yukistd_io_is_terminal(stream_id: int32) -> bool
+cfun yukistd_io_poll_stdin(timeout_ms: int64) -> bool
+cfun yukistd_io_terminal_size(out_cols: ptr<uint32>, out_rows: ptr<uint32>) -> bool
+cfun yukistd_io_set_raw_mode(enable: bool) -> bool
+cfun yukistd_io_set_mouse_mode(enable: bool) -> bool
+cfun yukistd_io_is_mouse_enabled() -> bool
+cfun yukistd_io_lock_stdout()
+cfun yukistd_io_unlock_stdout()
+cfun yukistd_io_lock_stdin()
+cfun yukistd_io_unlock_stdin()
+cfun yukistd_io_bg_enable()
+cfun yukistd_io_bg_poll(timeout_ms: int64) -> bool
+cfun yukistd_io_bg_read_byte() -> int32
+
+// decl end
+
+public struct IoError {
+    message: string
+    code: int32
+}
+
+public interface Reader<T> {
+    fun read(buf: ptr<T>, max_len: int64) -> int64
+}
+
+public interface Writer<T> {
+    fun write(data: T) -> int64
+    fun flush() -> int32
+}
+
+public interface Stream<T> {
+    fun read(buf: ptr<T>, max_len: int64) -> int64
+    fun write(data: T) -> int64
+    fun flush() -> int32
+    fun close() -> int32
+}
+
+public interface Seekable { fun seek(offset: int64, whence: int32) -> int64 }
+
+public fun print(msg: string) {
+    yukistd_io_write_stdout(msg.as_ptr(), msg.len(), false)
+}
+
+public fun println(msg: string) { print(msg); print("\n") }
+
+public fun eprint(msg: string) {
+    yukistd_io_write_stderr(msg.as_ptr(), msg.len(), false)
+}
+
+public fun eprintln(msg: string) { eprint(msg); eprint("\n") }
+
+public fun flush() -> int32 {
+    set res = yukistd_io_flush_stdout()
+    if res < 0 {
+        panic(IoError {
+            message: "failed to flush stdout",
+            code: 105,
+        })
+    }
+    return res
+}
+
+public fun eflush() -> int32 {
+    set res = yukistd_io_flush_stderr()
+    if res < 0 {
+        panic(IoError {
+            message: "failed to flush stderr",
+            code: 106,
+        })
+    }
+    return res
+}
+
+public fun write_string(msg: string) -> int64 {
+    set res = yukistd_io_write_stdout(msg.as_ptr(), msg.len(), false)
+    if res < 0 {
+        panic(IoError {
+            message: "failed to write to stdout",
+            code: 103,
+        })
+    }
+    return res
+}
+
+public fun ewrite_string(msg: string) -> int64 {
+    set res = yukistd_io_write_stderr(msg.as_ptr(), msg.len(), false)
+    if res < 0 {
+        panic(IoError {
+            message: "failed to write to stderr",
+            code: 104,
+        })
+    }
+    return res
+}
+
+public fun read_line() -> string {
+    set len: int64 = 0
+    set p = yukistd_io_read_line(ptr_of(len))
+    if len < 0 {
+        panic(IoError {
+            message: "failed to read line from stdin",
+            code: 101,
+        })
+    }
+    if len == 0 { return "" }
+    return from_raw_parts(p, len)
+}
+
+public fun read_all() -> string {
+    set len: int64 = 0
+    set p = yukistd_io_read_all(ptr_of(len))
+    if len < 0 {
+        panic(IoError {
+            message: "failed to read from stdin",
+            code: 102,
+        })
+    }
+    if len == 0 { return "" }
+    return from_raw_parts(p, len)
+}
+
+public fun discard_line() {
+    set eof = cast(-1, "int32")
+    set nl = cast(10, "int32")
+    set c: int32 = 0
+
+    while c != eof && c != nl {
+        rewrite c = yukistd_io_read_char()
+    }
+}
+
+public fun read_char(clean_buffer: bool = false) -> int32 {
+    set c = yukistd_io_read_char()
+    set eof = cast(-1, "int32")
+    set nl = cast(10, "int32")
+    if clean_buffer && c != eof && c != nl { discard_line() }
+    return c
+}
+
+public fun read_exact(buf: ptr<uint8>, n: int64) -> int64 {
+    if buf == null && n > 0 {
+        panic(IoError {
+            message: "null buffer passed to read_exact",
+            code: 107,
+        })
+    }
+    set res = yukistd_io_read_stdin(buf, n)
+    if res < 0 {
+        panic(IoError {
+            message: "failed to read exact bytes from stdin",
+            code: 108,
+        })
+    }
+    return res
+}
+
+public fun is_stdin_terminal() -> bool { return yukistd_io_is_terminal(0) }
+public fun is_stdout_terminal() -> bool { return yukistd_io_is_terminal(1) }
+public fun is_stderr_terminal() -> bool { return yukistd_io_is_terminal(2) }
+public fun is_terminal() -> bool { return is_stdout_terminal() }
+
+public fun poll_readable(timeout_ms: int64 = 0) -> bool {
+    set res = yukistd_io_poll_stdin(timeout_ms)
+    if res { return true }
+    return yukistd_io_bg_poll(0)
+}
+
+public fun enable_background_reader() { yukistd_io_bg_enable() }
+public fun read_char_async() -> int32 { return yukistd_io_bg_read_byte() }
+public fun lock_stdout() { yukistd_io_lock_stdout() }
+public fun unlock_stdout() { yukistd_io_unlock_stdout() }
+public fun lock_stdin() { yukistd_io_lock_stdin() }
+public fun unlock_stdin() { yukistd_io_unlock_stdin() }
+
+public fun terminal_size() -> (int32, int32) {
+    set cols: uint32 = 80
+    set rows: uint32 = 24
+    yukistd_io_terminal_size(ptr_of(cols), ptr_of(rows))
+    return (cast(cols, "int32"), cast(rows, "int32"))
+}
+
+public fun terminal_tuple() -> (int32, int32) {
+    return terminal_size()
+}
+
+public fun terminal_cols() -> int32 {
+    set sz = terminal_size()
+    return sz.0
+}
+
+public fun terminal_rows() -> int32 {
+    set sz = terminal_size()
+    return sz.1
+}
+
+public fun set_raw_mode(enable: bool) -> bool {
+    return yukistd_io_set_raw_mode(enable)
+}
+
+public fun set_mouse_mode(enable: bool) -> bool {
+    return yukistd_io_set_mouse_mode(enable)
+}
+
+public fun is_mouse_enabled() -> bool {
+    return yukistd_io_is_mouse_enabled()
+}
+
+public fun clear_screen() { print("\x1b[2J\x1b[H") }
+
+public fun cursor_move_to(col: int32, row: int32) {
+    print("\x1b[")
+    print(cast(row, "string"))
+    print(";")
+    print(cast(col, "string"))
+    print("H")
+}
+
+public fun hide_cursor() { print("\x1b[?25l") }
+
+public fun show_cursor() { print("\x1b[?25h") }

@@ -1,0 +1,25 @@
+load std.io: print
+
+cfun add(a: int32, b: int32) -> int32 {
+    return a + b
+}
+
+fun apply_op(f: cfun(int32, int32) -> int32, x: int32, y: int32) -> int32 {
+    return f(x, y)
+}
+
+fun greet(name: string, title: string = "Mr.") -> string {
+    return title
+}
+
+public fun test_functions() {
+    // 1. Basic call and default params
+    set t1 = greet("Alice")
+    set t2 = greet("Bob", "Dr.")
+
+    // 2. Passing function pointer as value
+    set op: cfun(int32, int32) -> int32 = add
+    set res = apply_op(op, 10, 20)
+
+    print("Functions OK\n")
+}

@@ -1,0 +1,46 @@
+load ..io: print, flush
+
+public class LiveLine {
+    public last_len: int32
+    public active: bool
+
+    public fun init(initial_text: string = "") {
+        rewrite this.last_len = 0
+        rewrite this.active = false
+        if initial_text.len() > 0 {
+            this.write(initial_text)
+        }
+    }
+
+    public fun write(text: string) {
+        print("\r\x1b[2K" + text)
+        flush()
+        rewrite this.last_len = cast(text.len(), "int32")
+        rewrite this.active = true
+    }
+
+    public fun clear() {
+        if this.active {
+            print("\r\x1b[2K")
+            flush()
+            rewrite this.last_len = 0
+            rewrite this.active = false
+        }
+    }
+
+    public fun finish() {
+        if this.active {
+            print("\n")
+            flush()
+            rewrite this.last_len = 0
+            rewrite this.active = false
+        }
+    }
+
+    public fun finish_text(final_text: string) {
+        print("\r\x1b[2K" + final_text + "\n")
+        flush()
+        rewrite this.last_len = 0
+        rewrite this.active = false
+    }
+}

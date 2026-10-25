@@ -1,0 +1,102 @@
+load std.io: print
+
+static MAX_CONNECTIONS: int32 = 1000
+static APP_PREFIX: string = "app_v1"
+
+public fun test_basics() {
+    // 1. set and rewrite
+    set count = 0
+    set ratio = 3.14
+    set active = true
+    set title = "Yukino"
+
+    set buffer_size: int64 = 4096
+    set scale: float32 = 1.5
+
+    set balance = 100
+    rewrite balance = 200
+    rewrite balance += 50
+    rewrite balance -= 10
+
+    set numbers = [1, 2, 3]
+    rewrite numbers[0] = 10
+
+    // 2. tuple destructuring
+    set coords = (10, 20)
+    set (x, y) = coords
+
+    // 3. static
+    static LOCAL_TIMEOUT: int64 = 5000
+
+    // 4. if, elif, else, ternary
+    set score = 85
+    if score >= 90 {
+        space
+    } elif score >= 75 {
+        space
+    } else {
+        space
+    }
+
+    set status = score >= 50 ? "passed" : "failed"
+
+    // 5. while, loop, for, labels
+    set i = 0
+    while i < 5 {
+        rewrite i += 1
+    }
+
+    loop {
+        break
+    }
+
+    set items = [10, 20, 30]
+    for i in 0..items.len() {
+        set val = items[i]
+        if val == 20 {
+            continue
+        }
+    }
+
+    for i in 0..5 {
+        for j in 0..5 {
+            if i + j == 6 {
+                break
+            }
+        }
+    }
+
+    // 6. Arithmetic, bitwise and compound operators
+    set sum = 10 + 20
+    set diff = 30 - 5
+    set prod = 4 * 5
+    set quot = 40 / 8
+    set rem = 17 % 5
+    set pwr = 2 ** 4
+
+    set bit_and = 12 & 5
+    set bit_or = 12 | 5
+    set bit_xor = 12 ^ 5
+    set bit_shl = 1 << 3
+    set bit_shr = 16 >> 2
+    set bit_not = ~0
+
+    set cond_and = (sum > 20) && (diff == 25)
+    set cond_or = (prod == 0) || (quot == 5)
+    set cond_not = !false
+
+    set mut_val = 10
+    rewrite mut_val += 2
+    rewrite mut_val -= 1
+    rewrite mut_val *= 3
+    rewrite mut_val /= 3
+    rewrite mut_val %= 7
+    rewrite mut_val **= 2
+    rewrite mut_val &= 15
+    rewrite mut_val |= 16
+    rewrite mut_val ^= 1
+    rewrite mut_val <<= 2
+    rewrite mut_val >>= 1
+
+    print("Basics OK\n")
+}

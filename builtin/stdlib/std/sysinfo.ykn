@@ -1,0 +1,208 @@
+// decls sysinfo.rs
+
+cfun yukistd_sysinfo_host_name(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_os_name(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_os_version(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_kernel_version(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_distribution_id(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_cpu_arch(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_uptime() -> uint64
+cfun yukistd_sysinfo_boot_time() -> uint64
+
+cfun yukistd_sysinfo_current_user_name(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_current_user_id(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_is_elevated() -> bool
+
+cfun yukistd_sysinfo_logical_core_count() -> uint32
+cfun yukistd_sysinfo_physical_core_count(out_val: ptr<uint32>) -> bool
+cfun yukistd_sysinfo_cpu_brand(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sysinfo_cpu_frequency() -> uint64
+cfun yukistd_sysinfo_load_average(out_one: ptr<float64>, out_five: ptr<float64>, out_fifteen: ptr<float64>) -> bool
+
+cfun yukistd_sysinfo_total_memory() -> uint64
+cfun yukistd_sysinfo_free_memory() -> uint64
+cfun yukistd_sysinfo_available_memory() -> uint64
+cfun yukistd_sysinfo_used_memory() -> uint64
+cfun yukistd_sysinfo_total_swap() -> uint64
+cfun yukistd_sysinfo_free_swap() -> uint64
+cfun yukistd_sysinfo_used_swap() -> uint64
+
+cfun yukistd_sysinfo_disk_space(path_p: ptr<uint8>, path_len: int64, out_total: ptr<uint64>, out_avail: ptr<uint64>) -> bool
+cfun yukistd_sysinfo_disks(out_count: ptr<int64>) -> ptr<DiskInfo>
+
+cfun yukistd_sysinfo_battery_percent(out_val: ptr<float32>) -> bool
+cfun yukistd_sysinfo_is_battery_charging(out_val: ptr<bool>) -> bool
+
+public struct LoadAverage {
+    one: float64
+    five: float64
+    fifteen: float64
+}
+
+public struct DiskSpace {
+    total_space: uint64
+    available_space: uint64
+}
+
+public struct DiskInfo {
+    name: string
+    mount_point: string
+    file_system: string
+    total_space: uint64
+    available_space: uint64
+    is_removable: bool
+    is_read_only: bool
+}
+
+// host and os
+
+public fun host_name() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_host_name(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun os_name() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_os_name(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "Unknown" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun os_version() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_os_version(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun kernel_version() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_kernel_version(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun distribution_id() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_distribution_id(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "unknown" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun cpu_arch() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_cpu_arch(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "unknown" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun uptime() -> uint64 { return yukistd_sysinfo_uptime() }
+public fun boot_time() -> uint64 { return yukistd_sysinfo_boot_time() }
+
+// users
+
+public fun current_user_name() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_current_user_name(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun current_user_id() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_current_user_id(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun is_elevated() -> bool {
+    return yukistd_sysinfo_is_elevated()
+}
+
+// cpu, cores, and load
+
+public fun logical_core_count() -> uint32 {
+    return yukistd_sysinfo_logical_core_count()
+}
+
+public fun physical_core_count() -> uint32? {
+    set val: uint32 = 0
+    set ok = yukistd_sysinfo_physical_core_count(ptr_of(val))
+    if !ok || val == 0 { return null }
+    return val
+}
+
+public fun cpu_brand() -> string? {
+    set out_len: int64 = 0
+    set p = yukistd_sysinfo_cpu_brand(ptr_of(out_len))
+    if out_len <= 0 || p == null { return null }
+    return from_raw_parts(p, out_len)
+}
+
+public fun cpu_frequency() -> uint64 {
+    return yukistd_sysinfo_cpu_frequency()
+}
+
+public fun load_average() -> LoadAverage? {
+    set one: float64 = 0.0
+    set five: float64 = 0.0
+    set fifteen: float64 = 0.0
+    set ok = yukistd_sysinfo_load_average(ptr_of(one), ptr_of(five), ptr_of(fifteen))
+    if !ok { return null }
+    return LoadAverage {
+        one: one,
+        five: five,
+        fifteen: fifteen,
+    }
+}
+
+// mem and swap
+
+public fun total_memory() -> uint64 { return yukistd_sysinfo_total_memory() }
+public fun free_memory() -> uint64 { return yukistd_sysinfo_free_memory() }
+public fun available_memory() -> uint64 { return yukistd_sysinfo_available_memory() }
+public fun used_memory() -> uint64 { return yukistd_sysinfo_used_memory() }
+public fun total_swap() -> uint64 { return yukistd_sysinfo_total_swap() }
+public fun free_swap() -> uint64 { return yukistd_sysinfo_free_swap() }
+public fun used_swap() -> uint64 { return yukistd_sysinfo_used_swap() }
+
+// storage and disks
+
+public fun disk_space(path: string) -> DiskSpace? {
+    set total: uint64 = 0
+    set avail: uint64 = 0
+    set ok = yukistd_sysinfo_disk_space(path.as_ptr(), path.len(), ptr_of(total), ptr_of(avail))
+    if !ok { return null }
+    return DiskSpace {
+        total_space: total,
+        available_space: avail,
+    }
+}
+
+public fun disks() -> DiskInfo[] {
+    set out_count: int64 = 0
+    set p = yukistd_sysinfo_disks(ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<DiskInfo> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+// battery and power
+
+public fun battery_percent() -> float32? {
+    set val: float32 = 0.0
+    set ok = yukistd_sysinfo_battery_percent(ptr_of(val))
+    if !ok { return null }
+    return val
+}
+
+public fun is_battery_charging() -> bool? {
+    set val: bool = false
+    set ok = yukistd_sysinfo_is_battery_charging(ptr_of(val))
+    if !ok { return null }
+    return val
+}

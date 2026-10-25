@@ -1,0 +1,173 @@
+load .errors: NetError, panic_last_net_error
+load .address: SocketAddr, parse_socket_addr
+
+// decl core/net/udp.rs start
+
+cfun yukistd_udp_bind(addr_p: ptr<uint8>, addr_len: int64) -> uint64
+cfun yukistd_udp_connect(socket_id: uint64, addr_p: ptr<uint8>, addr_len: int64) -> bool
+cfun yukistd_udp_send(socket_id: uint64, buf_p: ptr<uint8>, len: int64) -> int64
+cfun yukistd_udp_recv(socket_id: uint64, buf_p: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_udp_recv_text(socket_id: uint64, max_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_udp_send_to(socket_id: uint64, buf_p: ptr<uint8>, len: int64, addr_p: ptr<uint8>, addr_len: int64) -> int64
+cfun yukistd_udp_recv_from(socket_id: uint64, buf_p: ptr<uint8>, max_len: int64) -> int64
+cfun yukistd_udp_recv_from_text(socket_id: uint64, max_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_udp_last_sender(socket_id: uint64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_udp_set_broadcast(socket_id: uint64, broadcast: bool) -> bool
+cfun yukistd_udp_set_nonblocking(socket_id: uint64, nonblocking: bool) -> bool
+cfun yukistd_udp_set_timeouts(socket_id: uint64, read_ms: uint64, write_ms: uint64) -> bool
+cfun yukistd_udp_local_addr(socket_id: uint64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_udp_close(socket_id: uint64) -> bool
+
+// decl end
+
+public struct UdpPacket {
+    data: string
+    sender: SocketAddr
+}
+
+public class UdpSocket {
+    id: uint64
+
+    fun init(id: uint64) {
+        rewrite this.id = id
+    }
+
+    fun connect(addr: string) -> bool {
+        set ok = yukistd_udp_connect(this.id, addr.as_ptr(), addr.len())
+        if !ok {
+            panic_last_net_error("failed to connect udp socket to " + addr, 3)
+        }
+        return true
+    }
+
+    fun send(data: string) -> int64 {
+        set n = yukistd_udp_send(this.id, data.as_ptr(), data.len())
+        if n < 0 {
+            panic_last_net_error("failed to send on udp socket", 6)
+        }
+        return n
+    }
+
+    fun send_bytes(buf: ptr<uint8>, len: int64) -> int64 {
+        set n = yukistd_udp_send(this.id, buf, len)
+        if n < 0 {
+            panic_last_net_error("failed to send bytes on udp socket", 6)
+        }
+        return n
+    }
+
+    fun recv(max_len: int64 = 65536) -> string {
+        set out_len: int64 = 0
+        set p = yukistd_udp_recv_text(this.id, max_len, ptr_of(out_len))
+        if out_len < 0 || p == null {
+            panic_last_net_error("failed to receive on udp socket", 6)
+        }
+        if out_len == 0 { return "" }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun recv_bytes(buf: ptr<uint8>, max_len: int64) -> int64 {
+        set n = yukistd_udp_recv(this.id, buf, max_len)
+        if n < 0 {
+            panic_last_net_error("failed to receive bytes on udp socket", 6)
+        }
+        return n
+    }
+
+    fun send_to(data: string, addr: string) -> int64 {
+        set n = yukistd_udp_send_to(this.id, data.as_ptr(), data.len(), addr.as_ptr(), addr.len())
+        if n < 0 {
+            panic_last_net_error("failed to send_to on udp socket", 6)
+        }
+        return n
+    }
+
+    fun send_to_bytes(buf: ptr<uint8>, len: int64, addr: string) -> int64 {
+        set n = yukistd_udp_send_to(this.id, buf, len, addr.as_ptr(), addr.len())
+        if n < 0 {
+            panic_last_net_error("failed to send_to bytes on udp socket", 6)
+        }
+        return n
+    }
+
+    fun recv_from(max_len: int64 = 65536) -> UdpPacket {
+        set out_len: int64 = 0
+        set p = yukistd_udp_recv_from_text(this.id, max_len, ptr_of(out_len))
+        if out_len < 0 || p == null {
+            panic_last_net_error("failed to recv_from on udp socket", 6)
+        }
+        set data_str: string = if out_len == 0 { "" } else { from_raw_parts(p, out_len) }
+        set addr_len: int64 = 0
+        set addr_p = yukistd_udp_last_sender(this.id, ptr_of(addr_len))
+        set addr_str: string = if addr_len <= 0 || addr_p == null { "" } else { from_raw_parts(addr_p, addr_len) }
+        return UdpPacket {
+            data: data_str,
+            sender: parse_socket_addr(addr_str),
+        }
+    }
+
+    fun recv_from_bytes(buf: ptr<uint8>, max_len: int64) -> int64 {
+        set n = yukistd_udp_recv_from(this.id, buf, max_len)
+        if n < 0 {
+            panic_last_net_error("failed to recv_from bytes on udp socket", 6)
+        }
+        return n
+    }
+
+    fun last_sender() -> string {
+        set out_len: int64 = 0
+        set p = yukistd_udp_last_sender(this.id, ptr_of(out_len))
+        if out_len <= 0 || p == null { return "" }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun set_broadcast(broadcast: bool) -> bool {
+        set ok = yukistd_udp_set_broadcast(this.id, broadcast)
+        if !ok {
+            panic_last_net_error("failed to set broadcast on udp socket", 20)
+        }
+        return true
+    }
+
+    fun set_nonblocking(nonblocking: bool) -> bool {
+        set ok = yukistd_udp_set_nonblocking(this.id, nonblocking)
+        if !ok {
+            panic_last_net_error("failed to set nonblocking on udp socket", 20)
+        }
+        return true
+    }
+
+    fun set_timeouts(read_ms: int64, write_ms: int64) -> bool {
+        set r: uint64 = if read_ms < 0 { 0u64 } else { cast(read_ms, "uint64") }
+        set w: uint64 = if write_ms < 0 { 0u64 } else { cast(write_ms, "uint64") }
+        set ok = yukistd_udp_set_timeouts(this.id, r, w)
+        if !ok {
+            panic_last_net_error("failed to set timeouts on udp socket", 20)
+        }
+        return true
+    }
+
+    fun local_addr() -> string {
+        set out_len: int64 = 0
+        set p = yukistd_udp_local_addr(this.id, ptr_of(out_len))
+        if out_len <= 0 || p == null {
+            panic_last_net_error("failed to get udp local address", 20)
+        }
+        return from_raw_parts(p, out_len)
+    }
+
+    fun close() -> bool {
+        if this.id == 0 { return true }
+        set ok = yukistd_udp_close(this.id)
+        rewrite this.id = 0
+        return ok
+    }
+}
+
+public fun udp_bind(addr: string) -> UdpSocket {
+    set handle = yukistd_udp_bind(addr.as_ptr(), addr.len())
+    if handle == 0 {
+        panic_last_net_error("failed to bind udp socket to " + addr, 7)
+    }
+    return init UdpSocket(handle)
+}

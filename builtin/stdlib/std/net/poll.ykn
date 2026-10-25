@@ -1,0 +1,106 @@
+load .errors: NetError, panic_last_net_error
+load .tcp: TcpListener, TcpStream
+
+// decl core/net/poll.rs start
+
+cfun yukistd_poller_create() -> uint64
+cfun yukistd_poller_add_tcp_stream(poller_id: uint64, stream_id: uint64, interest: uint32, key: uint64) -> bool
+cfun yukistd_poller_add_tcp_listener(poller_id: uint64, listener_id: uint64, interest: uint32, key: uint64) -> bool
+cfun yukistd_poller_modify_tcp_stream(poller_id: uint64, stream_id: uint64, interest: uint32, key: uint64) -> bool
+cfun yukistd_poller_delete_tcp_stream(poller_id: uint64, stream_id: uint64) -> bool
+cfun yukistd_poller_delete_tcp_listener(poller_id: uint64, listener_id: uint64) -> bool
+cfun yukistd_poller_wait(poller_id: uint64, out_keys: ptr<uint64>, out_events: ptr<uint32>, max_events: int32, timeout_ms: int32) -> int32
+cfun yukistd_poller_destroy(poller_id: uint64) -> bool
+
+// decl end
+
+public static POLL_READABLE: uint32 = 1
+public static POLL_WRITABLE: uint32 = 2
+public static POLL_BOTH: uint32 = 3
+
+public struct PollEvent {
+    key: uint64
+    readable: bool
+    writable: bool
+    is_error: bool
+}
+
+public class SocketPoller {
+    id: uint64
+
+    fun init() {
+        set handle = yukistd_poller_create()
+        if handle == 0 {
+            panic_last_net_error("failed to create socket poller", 20)
+        }
+        rewrite this.id = handle
+    }
+
+    fun add_stream(ref stream: TcpStream, interest: uint32, key: uint64) -> bool {
+        set ok = yukistd_poller_add_tcp_stream(this.id, stream.id, interest, key)
+        if !ok {
+            panic_last_net_error("failed to add tcp stream to poller", 20)
+        }
+        return true
+    }
+
+    fun add_listener(ref listener: TcpListener, interest: uint32, key: uint64) -> bool {
+        set ok = yukistd_poller_add_tcp_listener(this.id, listener.id, interest, key)
+        if !ok {
+            panic_last_net_error("failed to add tcp listener to poller", 20)
+        }
+        return true
+    }
+
+    fun modify_stream(ref stream: TcpStream, interest: uint32, key: uint64) -> bool {
+        set ok = yukistd_poller_modify_tcp_stream(this.id, stream.id, interest, key)
+        if !ok {
+            panic_last_net_error("failed to modify tcp stream in poller", 20)
+        }
+        return true
+    }
+
+    fun remove_stream(ref stream: TcpStream) -> bool {
+        set ok = yukistd_poller_delete_tcp_stream(this.id, stream.id)
+        if !ok {
+            panic_last_net_error("failed to remove tcp stream from poller", 20)
+        }
+        return true
+    }
+
+    fun remove_listener(ref listener: TcpListener) -> bool {
+        set ok = yukistd_poller_delete_tcp_listener(this.id, listener.id)
+        if !ok {
+            panic_last_net_error("failed to remove tcp listener from poller", 20)
+        }
+        return true
+    }
+
+    fun wait(timeout_ms: int32 = -1) -> PollEvent[] {
+        set keys: uint64[] = [0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64]
+        set evs: uint32[] = [0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32]
+        set n = yukistd_poller_wait(this.id, keys.as_ptr(), evs.as_ptr(), 16, timeout_ms)
+        if n < 0 {
+            panic_last_net_error("poller wait failed", 20)
+        }
+        set res: PollEvent[] = []
+        set count: int64 = cast(n, "int64")
+        for i in 0..count {
+            set m = evs[i]
+            res.push(PollEvent {
+                key: keys[i],
+                readable: (m & 1u32) != 0,
+                writable: (m & 2u32) != 0,
+                is_error: false,
+            })
+        }
+        return res
+    }
+
+    fun close() -> bool {
+        if this.id == 0 { return true }
+        set ok = yukistd_poller_destroy(this.id)
+        rewrite this.id = 0
+        return ok
+    }
+}

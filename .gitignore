@@ -1,0 +1,14 @@
+**/target/**
+/build
+result
+/temp/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+.DS_Store
+**/__pycache__
+**/yuki-work/
+builtin/stdlib/target/
+target/

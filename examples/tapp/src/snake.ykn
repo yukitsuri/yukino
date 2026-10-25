@@ -1,0 +1,339 @@
+load std.io: flush
+load std.itermtool: *
+load std.datetime: steady_millis
+
+cfun snake_init(start_x: int32, start_y: int32, initial_len: int32)
+cfun snake_get_tail_x() -> int32
+cfun snake_get_tail_y() -> int32
+cfun snake_get_length() -> int32
+cfun snake_contains(x: int32, y: int32, skip_head: int32) -> int32
+cfun snake_step(new_x: int32, new_y: int32, grow: int32) -> int32
+cfun snake_rand_range(min_val: int32, max_val: int32) -> int32
+
+fun bg_board() -> string { return ansi_bg_rgb(15, 23, 42) }
+fun bg_panel() -> string { return ansi_bg_rgb(30, 41, 59) }
+fun fg_border() -> string { return ansi_fg_rgb(99, 102, 241) }
+
+fun draw_cell(gx: int32, gy: int32, text: string, fg_seq: string, bg_seq: string) {
+    set sx: int32 = 3 + gx * 2
+    set sy: int32 = 2 + gy
+    print_styled_at(sx, sy, text, fg_seq, bg_seq)
+}
+
+fun draw_empty(gx: int32, gy: int32) {
+    draw_cell(gx, gy, "  ", "", bg_board())
+}
+
+fun draw_head(gx: int32, gy: int32) {
+    draw_cell(gx, gy, "oo", ansi_fg_rgb(15, 23, 42) + style_bold(), ansi_bg_rgb(34, 197, 94))
+}
+
+fun draw_body(gx: int32, gy: int32) {
+    draw_cell(gx, gy, "  ", "", ansi_bg_rgb(22, 163, 74))
+}
+
+fun draw_apple(gx: int32, gy: int32) {
+    draw_cell(gx, gy, "  ", "", ansi_bg_rgb(239, 68, 68))
+}
+
+fun draw_frame() {
+    draw_box(2, 1, 54, 20, fg_border(), bg_board())
+    fill_rect(3, 2, 52, 18, bg_board(), " ")
+    print_styled_at(5, 1, " [ Yuki Snake ] ", ansi_fg_rgb(255, 255, 255) + style_bold(), bg_board())
+
+    draw_box(2, 21, 54, 3, fg_border(), bg_panel())
+    fill_rect(3, 22, 52, 1, bg_panel(), " ")
+    print_styled_at(4, 21, " [ Status ] ", ansi_fg_rgb(148, 163, 184), bg_panel())
+
+    print_styled_at(3, 24, "Controls: [W/A/S/D / Arrows] Move  |  [Space/P] Pause  |  [Q] Quit", ansi_fg_rgb(100, 116, 139), "")
+}
+
+fun show_game_over_dialog(score: int64, high_score: int64) -> bool {
+    fill_rect(12, 7, 34, 8, bg_panel(), " ")
+    draw_box(12, 7, 34, 8, ansi_fg_rgb(239, 68, 68), bg_panel())
+
+    fill_rect(13, 8, 32, 1, ansi_bg_rgb(220, 38, 38), " ")
+    print_styled_at(24, 8, "GAME OVER", ansi_fg_rgb(255, 255, 255) + style_bold(), ansi_bg_rgb(220, 38, 38))
+
+    print_styled_at(16, 10, "Final Score: ", ansi_fg_rgb(203, 213, 225), bg_panel())
+    print_styled_at(29, 10, cast(score, "string"), ansi_fg_rgb(250, 204, 21) + style_bold(), bg_panel())
+
+    print_styled_at(16, 11, "Best Record: ", ansi_fg_rgb(203, 213, 225), bg_panel())
+    print_styled_at(29, 11, cast(high_score, "string"), ansi_fg_rgb(192, 132, 252) + style_bold(), bg_panel())
+
+    print_styled_at(15, 13, " [R] Play Again ", ansi_fg_rgb(255, 255, 255) + style_bold(), ansi_bg_rgb(22, 163, 74))
+    print_styled_at(33, 13, " [Q] Menu ", ansi_fg_rgb(255, 255, 255) + style_bold(), ansi_bg_rgb(71, 85, 105))
+    flush()
+
+    set waiting = true
+    set ev: Event? = null
+    while waiting {
+        if !poll_event(50) {
+            continue
+        }
+        rewrite ev = try_read_event()
+        if ev == null {
+            if !poll_event(0) {
+                continue
+            }
+            return false
+        }
+        set val = ev ?? init Event(EVENT_NONE, null, null)
+        if val.is_key() {
+            set k = val.key ?? key_special(KEY_UNKNOWN)
+            if k.is_char("r") || k.is_char("R") { return true }
+            if k.is_char("q") || k.is_char("Q") || k.code == KEY_ESC { return false }
+        } elif val.is_mouse() {
+            set m = val.mouse ?? mouse_event(0, 0, 0, 0)
+            if m.is_left_click() {
+                if m.y == 14 && m.x >= 15 && m.x <= 30 { return true }
+                if m.y == 14 && m.x >= 33 && m.x <= 42 { return false }
+            }
+        }
+    }
+    return false
+}
+
+class SnakeGame {
+    public head_x: int32
+    public head_y: int32
+    public dir_x: int32
+    public dir_y: int32
+    public next_dx: int32
+    public next_dy: int32
+    public food_x: int32
+    public food_y: int32
+    public score: int64
+    public high_score: int64
+    public input_locked: bool
+    public paused: bool
+    public running: bool
+    public lost: bool
+
+    public fun init() {
+        rewrite this.head_x = 10
+        rewrite this.head_y = 8
+        rewrite this.dir_x = 1
+        rewrite this.dir_y = 0
+        rewrite this.next_dx = 1
+        rewrite this.next_dy = 0
+        rewrite this.food_x = 18
+        rewrite this.food_y = 8
+        rewrite this.score = 0
+        rewrite this.high_score = 0
+        rewrite this.input_locked = false
+        rewrite this.paused = false
+        rewrite this.running = true
+        rewrite this.lost = false
+    }
+
+    public fun reset_round() {
+        rewrite this.head_x = 10
+        rewrite this.head_y = 8
+        rewrite this.dir_x = 1
+        rewrite this.dir_y = 0
+        rewrite this.next_dx = 1
+        rewrite this.next_dy = 0
+        rewrite this.score = 0
+        rewrite this.input_locked = false
+        rewrite this.paused = false
+        rewrite this.running = true
+        rewrite this.lost = false
+
+        snake_init(10, 8, 3)
+        this.spawn_food()
+    }
+
+    public fun spawn_food() {
+        set fx: int32 = snake_rand_range(0, 25)
+        set fy: int32 = snake_rand_range(0, 17)
+        set invalid = (fx == this.head_x && fy == this.head_y) || snake_contains(fx, fy, 0) == 1
+        while invalid {
+            rewrite fx = snake_rand_range(0, 25)
+            rewrite fy = snake_rand_range(0, 17)
+            rewrite invalid = (fx == this.head_x && fy == this.head_y) || snake_contains(fx, fy, 0) == 1
+        }
+        rewrite this.food_x = fx
+        rewrite this.food_y = fy
+    }
+
+    public fun draw_status() {
+        print_styled_at(4, 22, "Score: ", ansi_fg_rgb(148, 163, 184), bg_panel())
+        print_styled_at(11, 22, cast(this.score, "string") + "    ", ansi_fg_rgb(250, 204, 21) + style_bold(), bg_panel())
+
+        print_styled_at(18, 22, "|  Best: ", ansi_fg_rgb(148, 163, 184), bg_panel())
+        print_styled_at(27, 22, cast(this.high_score, "string") + "    ", ansi_fg_rgb(192, 132, 252) + style_bold(), bg_panel())
+
+        print_styled_at(35, 22, "|  Len: ", ansi_fg_rgb(148, 163, 184), bg_panel())
+        print_styled_at(43, 22, cast(snake_get_length(), "string") + "    ", ansi_fg_rgb(74, 222, 128) + style_bold(), bg_panel())
+    }
+
+    public fun draw_pause() {
+        if this.paused {
+            print_styled_at(5, 1, " [ PAUSED - Press Space/P ] ", ansi_fg_rgb(255, 255, 255) + style_bold(), ansi_bg_rgb(217, 119, 6))
+        } else {
+            print_styled_at(5, 1, " [ Yuki Snake ]             ", ansi_fg_rgb(255, 255, 255) + style_bold(), bg_board())
+        }
+        flush()
+    }
+
+    public fun handle_key(k: KeyEvent) {
+        if k.code == KEY_ESC || k.is_char("q") || k.is_char("Q") {
+            rewrite this.running = false
+            return
+        }
+        if k.code == KEY_SPACE || k.is_char("p") || k.is_char("P") {
+            rewrite this.paused = !this.paused
+            this.draw_pause()
+            return
+        }
+        if this.paused || this.input_locked {
+            return
+        }
+
+        set neg1: int32 = -1
+        set is_up = k.code == KEY_UP || k.is_char("w") || k.is_char("W")
+        set is_down = k.code == KEY_DOWN || k.is_char("s") || k.is_char("S")
+        set is_left = k.code == KEY_LEFT || k.is_char("a") || k.is_char("A")
+        set is_right = k.code == KEY_RIGHT || k.is_char("d") || k.is_char("D")
+
+        if is_up && this.dir_y != 1 {
+            rewrite this.next_dx = 0
+            rewrite this.next_dy = -1
+            rewrite this.input_locked = true
+        } elif is_down && this.dir_y != neg1 {
+            rewrite this.next_dx = 0
+            rewrite this.next_dy = 1
+            rewrite this.input_locked = true
+        } elif is_left && this.dir_x != 1 {
+            rewrite this.next_dx = -1
+            rewrite this.next_dy = 0
+            rewrite this.input_locked = true
+        } elif is_right && this.dir_x != neg1 {
+            rewrite this.next_dx = 1
+            rewrite this.next_dy = 0
+            rewrite this.input_locked = true
+        }
+    }
+
+    public fun poll_inputs(wait_ms: int64) {
+        if poll_event(wait_ms) {
+            set ev = try_read_key()
+            if ev != null {
+                this.handle_key(ev ?? key_special(KEY_UNKNOWN))
+            }
+        }
+        set count = 0
+        set extra: KeyEvent? = null
+        while count < 8 && poll_event(0) {
+            rewrite extra = try_read_key()
+            if extra == null {
+                break
+            }
+            this.handle_key(extra ?? key_special(KEY_UNKNOWN))
+            rewrite count = count + 1
+        }
+    }
+
+    public fun step() {
+        rewrite this.dir_x = this.next_dx
+        rewrite this.dir_y = this.next_dy
+        rewrite this.input_locked = false
+
+        set nx: int32 = this.head_x + this.dir_x
+        set ny: int32 = this.head_y + this.dir_y
+
+        if nx < 0 || nx >= 26 || ny < 0 || ny >= 18 {
+            rewrite this.lost = true
+            rewrite this.running = false
+            return
+        }
+
+        set grow: int32 = 0
+        if nx == this.food_x && ny == this.food_y {
+            rewrite this.score = this.score + 10
+            if this.score > this.high_score {
+                rewrite this.high_score = this.score
+            }
+            rewrite grow = 1
+            this.spawn_food()
+            draw_apple(this.food_x, this.food_y)
+        }
+
+        set hit = snake_step(nx, ny, grow)
+        if hit == 1 {
+            rewrite this.lost = true
+            rewrite this.running = false
+            return
+        }
+
+        if grow == 0 {
+            draw_empty(snake_get_tail_x(), snake_get_tail_y())
+        }
+        draw_body(this.head_x, this.head_y)
+
+        rewrite this.head_x = nx
+        rewrite this.head_y = ny
+        draw_head(this.head_x, this.head_y)
+
+        this.draw_status()
+        flush()
+    }
+
+    public fun play_round() -> bool {
+        clear_all()
+        draw_frame()
+        this.reset_round()
+
+        draw_body(8, 8)
+        draw_body(9, 8)
+        draw_head(10, 8)
+        draw_apple(this.food_x, this.food_y)
+        this.draw_status()
+        flush()
+
+        set tick_ms: int64 = 110
+        set last_tick = steady_millis()
+        set now: int64 = 0
+        set elapsed: int64 = 0
+        set rem: int64 = 0
+        set cur_time: int64 = 0
+
+        while this.running {
+            rewrite now = steady_millis()
+            rewrite elapsed = now - last_tick
+            rewrite rem = if elapsed < tick_ms { tick_ms - elapsed } else { 0 }
+
+            this.poll_inputs(rem)
+
+            rewrite cur_time = steady_millis()
+            if this.running && !this.paused && cur_time - last_tick >= tick_ms {
+                rewrite last_tick = cur_time
+                this.step()
+            }
+        }
+
+        if this.lost {
+            return show_game_over_dialog(this.score, this.high_score)
+        }
+        return false
+    }
+}
+
+public fun run_snake_game() {
+    enter_alternate_screen()
+    enable_raw_mode()
+    enable_mouse_capture()
+    hide_cursor()
+
+    set game = init SnakeGame()
+    set keep_playing = true
+    while keep_playing {
+        rewrite keep_playing = game.play_round()
+    }
+
+    show_cursor()
+    disable_mouse_capture()
+    disable_raw_mode()
+    leave_alternate_screen()
+}

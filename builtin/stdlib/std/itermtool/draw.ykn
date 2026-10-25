@@ -1,0 +1,127 @@
+load ..io: print, flush
+load .color: reset_color
+
+public fun move_to(x: int32, y: int32) {
+    set col = x + 1
+    set row = y + 1
+    print("\x1b[" + cast(row, "string") + ";" + cast(col, "string") + "H")
+}
+
+public fun move_up(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "A")
+    }
+}
+
+public fun move_down(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "B")
+    }
+}
+
+public fun move_right(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "C")
+    }
+}
+
+public fun move_left(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "D")
+    }
+}
+
+public fun move_to_column(x: int32) {
+    set col = x + 1
+    print("\x1b[" + cast(col, "string") + "G")
+}
+
+public fun hide_cursor() {
+    print("\x1b[?25l")
+}
+
+public fun show_cursor() {
+    print("\x1b[?25h")
+}
+
+public fun save_cursor() {
+    print("\x1b7")
+}
+
+public fun restore_cursor() {
+    print("\x1b8")
+}
+
+public fun print_at(x: int32, y: int32, text: string) {
+    move_to(x, y)
+    print(text)
+}
+
+public fun print_styled_at(x: int32, y: int32, text: string, fg_seq: string, bg_seq: string) {
+    move_to(x, y)
+    print(fg_seq + bg_seq + text + reset_color())
+}
+
+public fun draw_hline(x: int32, y: int32, length: int32, ch: string = "─") {
+    if length <= 0 { return }
+    move_to(x, y)
+    set line = ""
+    for i in 0..length {
+        rewrite line = line + ch.cp()
+    }
+    print(line)
+}
+
+public fun draw_vline(x: int32, y: int32, length: int32, ch: string = "│") {
+    if length <= 0 { return }
+    for i in 0..length {
+        move_to(x, y + i)
+        print(ch.cp())
+    }
+}
+
+public fun fill_rect(x: int32, y: int32, width: int32, height: int32, bg_seq: string, ch: string = " ") {
+    if width <= 0 || height <= 0 { return }
+    set row_str = ""
+    for i in 0..width {
+        rewrite row_str = row_str + ch.cp()
+    }
+    set styled_row = bg_seq + row_str + reset_color()
+    for row in 0..height {
+        move_to(x, y + row)
+        print(styled_row.cp())
+    }
+}
+
+public fun draw_box(x: int32, y: int32, width: int32, height: int32, fg_seq: string = "", bg_seq: string = "") {
+    if width < 2 || height < 2 { return }
+    set prefix = fg_seq + bg_seq
+    set reset_seq = reset_color()
+
+    // top border
+    move_to(x, y)
+    set top = prefix.cp() + "┌"
+    for i in 0..(width - 2) {
+        rewrite top = top + "─"
+    }
+    rewrite top = top + "┐" + reset_seq.cp()
+    print(top)
+
+    // side borders
+    set side = prefix.cp() + "│" + reset_seq.cp()
+    for row in 1..(height - 1) {
+        move_to(x, y + row)
+        print(side.cp())
+        move_to(x + width - 1, y + row)
+        print(side.cp())
+    }
+
+    // bottom border
+    move_to(x, y + height - 1)
+    set bottom = prefix + "└"
+    for i in 0..(width - 2) {
+        rewrite bottom = bottom + "─"
+    }
+    rewrite bottom = bottom + "┘" + reset_seq
+    print(bottom)
+}

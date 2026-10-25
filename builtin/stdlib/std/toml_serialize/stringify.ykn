@@ -1,0 +1,218 @@
+load ..strings: slice
+load ..toml_parser: TomlValue, TOML_NULL, TOML_BOOL, TOML_INT, TOML_FLOAT, TOML_STRING, TOML_DATETIME, TOML_ARRAY, TOML_TABLE
+
+fun hex_digit(v: int64) -> string {
+    if v == 0 { return "0" }
+    if v == 1 { return "1" }
+    if v == 2 { return "2" }
+    if v == 3 { return "3" }
+    if v == 4 { return "4" }
+    if v == 5 { return "5" }
+    if v == 6 { return "6" }
+    if v == 7 { return "7" }
+    if v == 8 { return "8" }
+    if v == 9 { return "9" }
+    if v == 10 { return "a" }
+    if v == 11 { return "b" }
+    if v == 12 { return "c" }
+    if v == 13 { return "d" }
+    if v == 14 { return "e" }
+    if v == 15 { return "f" }
+    return "0"
+}
+
+public fun escape_toml_string(s: string) -> string {
+    set res: string = "\""
+    set len: int64 = s.len()
+    set i: int64 = 0
+    set chunk_start: int64 = 0
+
+    while i < len {
+        set b: uint8 = s[i]
+        if b == 34 || b == 92 || b == 8 || b == 12 || b == 10 || b == 13 || b == 9 || b < 32 {
+            if i > chunk_start {
+                rewrite res = res + slice(s, chunk_start, i)
+            }
+            if b == 34 {
+                rewrite res = res + "\\\""
+            } elif b == 92 {
+                rewrite res = res + "\\\\"
+            } elif b == 8 {
+                rewrite res = res + "\\b"
+            } elif b == 12 {
+                rewrite res = res + "\\f"
+            } elif b == 10 {
+                rewrite res = res + "\\n"
+            } elif b == 13 {
+                rewrite res = res + "\\r"
+            } elif b == 9 {
+                rewrite res = res + "\\t"
+            } else {
+                set b_i: int64 = cast(b, "int64")
+                set hi: int64 = (b_i >> 4) & 15
+                set lo: int64 = b_i & 15
+                rewrite res = res + "\\u00" + hex_digit(hi) + hex_digit(lo)
+            }
+            rewrite chunk_start = i + 1
+        }
+        rewrite i = i + 1
+    }
+
+    if chunk_start < len {
+        rewrite res = res + slice(s, chunk_start, len)
+    }
+
+    rewrite res = res + "\""
+    return res
+}
+
+fun is_valid_bare_key(s: string) -> bool {
+    if s.len() == 0 { return false }
+    set i: int64 = 0
+    set len: int64 = s.len()
+    while i < len {
+        set b: uint8 = s[i]
+        set is_ok: bool = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95 || b == 45
+        if !is_ok { return false }
+        rewrite i = i + 1
+    }
+    return true
+}
+
+fun format_toml_key(k: string) -> string {
+    if is_valid_bare_key(k) { return k }
+    return escape_toml_string(k)
+}
+
+fun serialize_inline_val(val: TomlValue) -> string {
+    if val.kind == TOML_NULL { return "\"\"" }
+    if val.kind == TOML_BOOL {
+        if val.bool_val { return "true" }
+        return "false"
+    }
+    if val.kind == TOML_INT {
+        return "${val.int_val}"
+    }
+    if val.kind == TOML_FLOAT {
+        set f: float64 = val.float_val
+        if f != f { return "nan" }
+        if f > 1.0e308 { return "inf" }
+        if f < -1.0e308 { return "-inf" }
+        set i_val: int64 = cast(f, "int64")
+        if cast(i_val, "float64") == f {
+            return "${i_val}.0"
+        }
+        return "${f}"
+    }
+    if val.kind == TOML_STRING {
+        return escape_toml_string(val.str_val)
+    }
+    if val.kind == TOML_DATETIME {
+        return val.str_val
+    }
+    if val.kind == TOML_ARRAY {
+        set res: string = "["
+        set i: int64 = 0
+        set count: int64 = val.array_val.len()
+        while i < count {
+            if i > 0 {
+                rewrite res = res + ", "
+            }
+            rewrite res = res + serialize_inline_val(val.array_val[i])
+            rewrite i = i + 1
+        }
+        rewrite res = res + "]"
+        return res
+    }
+    if val.kind == TOML_TABLE {
+        set res: string = "{"
+        set i: int64 = 0
+        set count: int64 = val.obj_keys.len()
+        while i < count {
+            if i > 0 {
+                rewrite res = res + ", "
+            }
+            rewrite res = res + format_toml_key(val.obj_keys[i]) + " = " + serialize_inline_val(val.obj_vals[i])
+            rewrite i = i + 1
+        }
+        rewrite res = res + "}"
+        return res
+    }
+    return "\"\""
+}
+
+fun serialize_table_body(val: TomlValue, prefix: string) -> string {
+    set res: string = ""
+    set count: int64 = val.obj_keys.len()
+
+    // 1. First emit simple key-value pairs
+    set i: int64 = 0
+    while i < count {
+        set k: string = val.obj_keys[i]
+        set v: TomlValue = val.obj_vals[i]
+        if v.kind != TOML_TABLE && !v.is_table_array() {
+            rewrite res = res + format_toml_key(k) + " = " + serialize_inline_val(v) + "\n"
+        }
+        rewrite i = i + 1
+    }
+
+    // 2. Next emit sub-tables
+    rewrite i = 0
+    while i < count {
+        set k: string = val.obj_keys[i]
+        set v: TomlValue = val.obj_vals[i]
+        if v.kind == TOML_TABLE {
+            set sub_prefix: string = ""
+            if prefix.len() > 0 {
+                rewrite sub_prefix = prefix + "." + format_toml_key(k)
+            } else {
+                rewrite sub_prefix = format_toml_key(k)
+            }
+            if res.len() > 0 {
+                rewrite res = res + "\n"
+            }
+            rewrite res = res + "[" + sub_prefix + "]\n"
+            rewrite res = res + serialize_table_body(v, sub_prefix)
+        }
+        rewrite i = i + 1
+    }
+
+    // 3. Next emit arrays of tables
+    rewrite i = 0
+    while i < count {
+        set k: string = val.obj_keys[i]
+        set v: TomlValue = val.obj_vals[i]
+        if v.is_table_array() {
+            set sub_prefix: string = ""
+            if prefix.len() > 0 {
+                rewrite sub_prefix = prefix + "." + format_toml_key(k)
+            } else {
+                rewrite sub_prefix = format_toml_key(k)
+            }
+            set j: int64 = 0
+            set arr_len: int64 = v.array_val.len()
+            while j < arr_len {
+                if res.len() > 0 {
+                    rewrite res = res + "\n"
+                }
+                rewrite res = res + "[[" + sub_prefix + "]]\n"
+                rewrite res = res + serialize_table_body(v.array_val[j], sub_prefix)
+                rewrite j = j + 1
+            }
+        }
+        rewrite i = i + 1
+    }
+
+    return res
+}
+
+public fun serialize_toml(val: TomlValue) -> string {
+    if val.kind == TOML_TABLE {
+        return serialize_table_body(val, "")
+    }
+    return serialize_inline_val(val)
+}
+
+public fun serialize_toml_pretty(val: TomlValue, indent: string) -> string {
+    return serialize_toml(val)
+}

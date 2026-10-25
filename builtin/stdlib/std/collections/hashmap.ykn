@@ -1,0 +1,70 @@
+cfun yukistd_map_new() -> ptr<uint8>
+cfun yukistd_map_free(m: ptr<uint8>)
+cfun yukistd_map_set(m: ptr<uint8>, k_ptr: ptr<uint8>, k_len: int64, v_ptr: ptr<uint8>, v_len: int64)
+cfun yukistd_map_get(m: ptr<uint8>, k_ptr: ptr<uint8>, k_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_map_has(m: ptr<uint8>, k_ptr: ptr<uint8>, k_len: int64) -> bool
+cfun yukistd_map_del(m: ptr<uint8>, k_ptr: ptr<uint8>, k_len: int64) -> bool
+cfun yukistd_map_len(m: ptr<uint8>) -> int64
+cfun yukistd_map_clear(m: ptr<uint8>)
+cfun yukistd_map_set_i64(m: ptr<uint8>, k: int64, v: int64)
+cfun yukistd_map_get_i64(m: ptr<uint8>, k: int64, out_found: ptr<bool>) -> int64
+cfun yukistd_map_has_i64(m: ptr<uint8>, k: int64) -> bool
+cfun yukistd_map_del_i64(m: ptr<uint8>, k: int64) -> bool
+
+public class HashMap<K, V> {
+    handle: ptr<uint8>
+
+    public fun init() {
+        rewrite this.handle = yukistd_map_new()
+    }
+
+    public fun set(key: string, val: string) {
+        yukistd_map_set(this.handle, key.as_ptr(), key.len(), val.as_ptr(), val.len())
+    }
+
+    public fun get(key: string) -> string? {
+        set out_len: int64 = 0
+        set p = yukistd_map_get(this.handle, key.as_ptr(), key.len(), ptr_of(out_len))
+        if p == null { return null }
+        return from_raw_parts(p, out_len)
+    }
+
+    public fun contains_key(key: string) -> bool {
+        return yukistd_map_has(this.handle, key.as_ptr(), key.len())
+    }
+
+    public fun remove(key: string) -> bool {
+        return yukistd_map_del(this.handle, key.as_ptr(), key.len())
+    }
+
+    public fun len() -> int64 {
+        return yukistd_map_len(this.handle)
+    }
+
+    public fun is_empty() -> bool {
+        return this.len() == 0
+    }
+
+    public fun clear() {
+        yukistd_map_clear(this.handle)
+    }
+
+    public fun set_i64(key: int64, val: int64) {
+        yukistd_map_set_i64(this.handle, key, val)
+    }
+
+    public fun get_i64(key: int64) -> int64? {
+        set found: bool = false
+        set val = yukistd_map_get_i64(this.handle, key, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    public fun contains_key_i64(key: int64) -> bool {
+        return yukistd_map_has_i64(this.handle, key)
+    }
+
+    public fun remove_i64(key: int64) -> bool {
+        return yukistd_map_del_i64(this.handle, key)
+    }
+}

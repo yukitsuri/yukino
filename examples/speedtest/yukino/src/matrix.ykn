@@ -1,0 +1,102 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u32, free_u32, alloc_f64, free_f64
+
+static MAT_N: int64 = 900
+static MAT_CELLS: int64 = 810000
+static SPECTRAL_N: int64 = 1500
+static SPECTRAL_ITERS: int32 = 10
+static SPECTRAL_SCALE: float64 = 1000000.0
+
+fun multiply(ref a: uint32[], ref b: uint32[], ref ~c: uint32[]) {
+    for i in 0..MAT_N {
+        set i_offset: int64 = i * MAT_N
+        for k in 0..MAT_N {
+            set aik: uint32 = a[i_offset + k]
+            set k_offset: int64 = k * MAT_N
+            for j in 0..MAT_N {
+                set c_idx: int64 = i_offset + j
+                rewrite c[c_idx] = c[c_idx] + aik * b[k_offset + j]
+            }
+        }
+    }
+}
+
+public fun matmul() -> uint64 {
+    set a = alloc_u32(MAT_CELLS)
+    set b = alloc_u32(MAT_CELLS)
+    set c = alloc_u32(MAT_CELLS)
+    set r = init Rng(RNG_SEED)
+    for i in 0..MAT_CELLS {
+        rewrite a[i] = r.key31()
+    }
+    for i in 0..MAT_CELLS {
+        rewrite b[i] = r.key31()
+    }
+    multiply(ref a, ref b, ref ~c)
+    set h: uint64 = MIX_SEED
+    for i in 0..MAT_CELLS {
+        rewrite h = mix(h, cast(c[i], "uint64"))
+    }
+    free_u32(a)
+    free_u32(b)
+    free_u32(c)
+    return h
+}
+
+#[stable, inline_always]
+fun coef(i: int64, j: int64) -> float64 {
+    return 1.0 / cast((i + j) * (i + j + 1) / 2 + i + 1, "float64")
+}
+
+#[inline_always]
+fun mul_av(ref v: float64[], ref ~out: float64[]) {
+    for i in 0..SPECTRAL_N {
+        set s: float64 = 0.0
+        for j in 0..SPECTRAL_N {
+            rewrite s = s + coef(i, j) * v[j]
+        }
+        rewrite out[i] = s
+    }
+}
+
+#[inline_always]
+fun mul_atv(ref v: float64[], ref ~out: float64[]) {
+    for i in 0..SPECTRAL_N {
+        set s: float64 = 0.0
+        for j in 0..SPECTRAL_N {
+            rewrite s = s + coef(j, i) * v[j]
+        }
+        rewrite out[i] = s
+    }
+}
+
+#[inline_always]
+fun mul_atav(ref v: float64[], ref ~out: float64[], ref ~tmp: float64[]) {
+    mul_av(ref v, ref ~tmp)
+    mul_atv(ref tmp, ref ~out)
+}
+
+public fun spectral() -> uint64 {
+    set u = alloc_f64(SPECTRAL_N)
+    set v = alloc_f64(SPECTRAL_N)
+    set t = alloc_f64(SPECTRAL_N)
+    for i in 0..SPECTRAL_N {
+        rewrite u[i] = 1.0
+        rewrite v[i] = 0.0
+        rewrite t[i] = 0.0
+    }
+    for iter in 0..SPECTRAL_ITERS {
+        mul_atav(ref u, ref ~v, ref ~t)
+        mul_atav(ref v, ref ~u, ref ~t)
+    }
+    set vbv: float64 = 0.0
+    set vv: float64 = 0.0
+    for i in 0..SPECTRAL_N {
+        rewrite vbv = vbv + u[i] * v[i]
+        rewrite vv = vv + v[i] * v[i]
+    }
+    set res: uint64 = mix(mix(MIX_SEED, cast(vbv * SPECTRAL_SCALE, "uint64")), cast(vv * SPECTRAL_SCALE, "uint64"))
+    free_f64(u)
+    free_f64(v)
+    free_f64(t)
+    return res
+}

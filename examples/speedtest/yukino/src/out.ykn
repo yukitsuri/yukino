@@ -1,0 +1,74 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u8, free_u8
+
+static OUT_BUF_SIZE: int64 = 65536
+static OUT_LINES: int64 = 3000000
+static OUT_SINGLE_LINES: int64 = 300000
+static MAX_LINE_BYTES: int64 = 64
+
+externc {
+    |cdecl|
+    cfun write(fd: int32, buf: ptr<uint8>, count: int64) -> int64;
+}
+
+fun fmt_u64(val_in: uint64, ref ~dst: bytes, offset: int64, ref ~tmp: bytes) -> int64 {
+    set v: uint64 = val_in
+    set n: int64 = 0
+    while true {
+        rewrite tmp[n] = 48u8 + cast(v % 10u64, "uint8")
+        rewrite n = n + 1
+        rewrite v = v / 10u64
+        if v == 0u64 {
+            break
+        }
+    }
+    for i in 0..n {
+        rewrite dst[offset + i] = tmp[n - 1 - i]
+    }
+    return n
+}
+
+fun fmt_line(ref ~dst: bytes, offset: int64, index: uint64, value: uint64, ref ~tmp: bytes) -> int64 {
+    set n: int64 = fmt_u64(index, ref ~dst, offset, ref ~tmp)
+    rewrite dst[offset + n] = 32u8
+    rewrite n = n + 1
+    rewrite n = n + fmt_u64(value, ref ~dst, offset + n, ref ~tmp)
+    rewrite dst[offset + n] = 10u8
+    return n + 1
+}
+
+public fun out_buf() -> uint64 {
+    set r = init Rng(RNG_SEED)
+    set buf = alloc_u8(OUT_BUF_SIZE)
+    set tmp = alloc_u8(32)
+    set used: int64 = 0
+    set total: uint64 = 0
+    for i in 0..OUT_LINES {
+        if used + MAX_LINE_BYTES > OUT_BUF_SIZE {
+            write(1, buf.as_ptr(), used)
+            rewrite total = total + cast(used, "uint64")
+            rewrite used = 0
+        }
+        rewrite used = used + fmt_line(ref ~buf, used, cast(i, "uint64"), r.next(), ref ~tmp)
+    }
+    write(1, buf.as_ptr(), used)
+    set res: uint64 = mix(MIX_SEED, total + cast(used, "uint64"))
+    free_u8(buf)
+    free_u8(tmp)
+    return res
+}
+
+public fun out_line() -> uint64 {
+    set r = init Rng(RNG_SEED)
+    set line = alloc_u8(MAX_LINE_BYTES)
+    set tmp = alloc_u8(32)
+    set total: uint64 = 0
+    for i in 0..OUT_SINGLE_LINES {
+        set n: int64 = fmt_line(ref ~line, 0, cast(i, "uint64"), r.next(), ref ~tmp)
+        write(1, line.as_ptr(), n)
+        rewrite total = total + cast(n, "uint64")
+    }
+    set res: uint64 = mix(MIX_SEED, total)
+    free_u8(line)
+    free_u8(tmp)
+    return res
+}

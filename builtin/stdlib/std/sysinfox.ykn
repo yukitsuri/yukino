@@ -1,0 +1,14 @@
+// TODO: std.sysinfox - extended system monitoring (networks, thermal sensors, process table)
+// Planned for future sysinfo expansion.
+
+// 1. Networks and traffic metrics:
+//    - network_interfaces() -> map<string, NetworkInterfaceInfo>
+//    - rx_bytes, tx_bytes, packet counters, errors
+
+// 2. Hardware sensors and components:
+//    - thermal_sensors() -> ComponentInfo[]
+//    - temperature_celsius, critical_limits, fan_speeds
+
+// 3. System process table inspection:
+//    - process_list() -> ProcessInfo[]
+//    - cpu_usage, memory_rss, virtual_memory, open_descriptors

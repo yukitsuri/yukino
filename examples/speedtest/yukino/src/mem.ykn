@@ -1,0 +1,86 @@
+load .common: MIX_SEED, RNG_SEED, Rng, mix, alloc_u32, free_u32, alloc_u64, free_u64
+
+static MEM_SEQ_COUNT: int64 = 12000000
+static MEM_RAND_COUNT: int64 = 8000000
+static MEM_RAND_STEPS: int64 = 3000000
+static MEM_TREE_NODES: int64 = 4194303
+static NO_CHILD: uint32 = 0xffffffffu32
+static TREE_VAL_MUL: uint32 = 2654435761u32
+static MEM_SEQ_MUL: uint64 = 0x9e3779b97f4a7c15u64
+
+public fun mem_seq() -> uint64 {
+    set buf = alloc_u64(MEM_SEQ_COUNT)
+    for i in 0..MEM_SEQ_COUNT {
+        rewrite buf[i] = cast(i, "uint64") * MEM_SEQ_MUL
+    }
+    set sum: uint64 = 0
+    for i in 0..MEM_SEQ_COUNT {
+        rewrite sum = sum + (buf[i] ^ cast(i, "uint64"))
+    }
+    free_u64(buf)
+    return mix(MIX_SEED, sum)
+}
+
+public fun mem_rand() -> uint64 {
+    set perm = alloc_u32(MEM_RAND_COUNT)
+    for i in 0..MEM_RAND_COUNT {
+        rewrite perm[i] = cast(i, "uint32")
+    }
+    set r = init Rng(RNG_SEED)
+    set i: int64 = MEM_RAND_COUNT - 1
+    while i >= 1 {
+        set j: int64 = cast(r.below(cast(i, "uint64")), "int64")
+        set t: uint32 = perm[i]
+        rewrite perm[i] = perm[j]
+        rewrite perm[j] = t
+        rewrite i = i - 1
+    }
+    set p: int64 = 0
+    set sum: uint64 = 0
+    for step in 0..MEM_RAND_STEPS {
+        rewrite p = cast(perm[p], "int64")
+        rewrite sum = sum + cast(p, "uint64")
+    }
+    free_u32(perm)
+    return mix(MIX_SEED, sum)
+}
+
+class Tree {
+    left: uint32[]
+    right: uint32[]
+    val: uint32[]
+
+    fun init() {
+        rewrite this.left = alloc_u32(MEM_TREE_NODES)
+        rewrite this.right = alloc_u32(MEM_TREE_NODES)
+        rewrite this.val = alloc_u32(MEM_TREE_NODES)
+    }
+
+    fun sum(node: uint32) -> uint64 {
+        if node == NO_CHILD {
+            return 0u64
+        }
+        set n: int64 = cast(node, "int64")
+        return cast(this.val[n], "uint64") + this.sum(this.left[n]) + this.sum(this.right[n])
+    }
+
+    fun destroy() {
+        free_u32(this.left)
+        free_u32(this.right)
+        free_u32(this.val)
+    }
+}
+
+public fun mem_tree() -> uint64 {
+    set tree = init Tree()
+    for i in 0..MEM_TREE_NODES {
+        set l: int64 = 2 * i + 1
+        set r: int64 = 2 * i + 2
+        rewrite tree.left[i] = l < MEM_TREE_NODES ? cast(l, "uint32") : NO_CHILD
+        rewrite tree.right[i] = r < MEM_TREE_NODES ? cast(r, "uint32") : NO_CHILD
+        rewrite tree.val[i] = cast(i, "uint32") * TREE_VAL_MUL
+    }
+    set res: uint64 = mix(MIX_SEED, tree.sum(0u32))
+    tree.destroy()
+    return res
+}

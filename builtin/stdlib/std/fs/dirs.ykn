@@ -1,0 +1,144 @@
+load .paths: FsError, path_join
+load .files: file_metadata, FileMetadata
+
+// decl core/fs.rs start
+
+cfun yukistd_fs_is_dir(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_create(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_create_all(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_remove(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_remove_all(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_current(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_fs_dir_set_current(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_is_empty(path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_fs_dir_list(path_p: ptr<uint8>, path_len: int64, out_count: ptr<int64>) -> ptr<string>
+cfun yukistd_fs_dir_walk(path_p: ptr<uint8>, path_len: int64, out_count: ptr<int64>) -> ptr<string>
+cfun yukistd_fs_dir_copy_all(from_p: ptr<uint8>, from_len: int64, to_p: ptr<uint8>, to_len: int64) -> bool
+cfun yukistd_fs_last_error_code() -> int32
+cfun yukistd_fs_last_error_message(out_len: ptr<int64>) -> ptr<uint8>
+
+// decl end
+
+public struct DirEntry {
+    path: string
+    file_name: string
+    is_file: bool
+    is_dir: bool
+    is_symlink: bool
+    size: int64
+}
+
+fun panic_last_dir_error(default_msg: string, default_code: int32) {
+    set code = yukistd_fs_last_error_code()
+    set out_len: int64 = 0
+    set p = yukistd_fs_last_error_message(ptr_of(out_len))
+    set msg = default_msg
+    if out_len > 0 && p != null {
+        rewrite msg = msg + ": " + from_raw_parts(p, out_len)
+    }
+    if code <= 0 { rewrite code = default_code }
+    panic(FsError { message: msg, code: code })
+}
+
+public fun create_dir(path: string) -> bool {
+    set ok = yukistd_fs_dir_create(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_dir_error("failed to create directory '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun create_dir_all(path: string) -> bool {
+    set ok = yukistd_fs_dir_create_all(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_dir_error("failed to create directories for '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun remove_dir(path: string) -> bool {
+    set ok = yukistd_fs_dir_remove(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_dir_error("failed to remove directory '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun remove_dir_all(path: string) -> bool {
+    set ok = yukistd_fs_dir_remove_all(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_dir_error("failed to recursively remove directory '" + path + "'", 6)
+    }
+    return true
+}
+
+public fun current_dir() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_fs_dir_current(ptr_of(out_len))
+    if out_len < 0 || p == null {
+        panic_last_dir_error("failed to get current working directory", 6)
+    }
+    if out_len == 0 { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun set_current_dir(path: string) -> bool {
+    set ok = yukistd_fs_dir_set_current(path.as_ptr(), path.len())
+    if !ok {
+        panic_last_dir_error("failed to change working directory to '" + path + "'", 1)
+    }
+    return true
+}
+
+public fun dir_exists(path: string) -> bool {
+    return yukistd_fs_is_dir(path.as_ptr(), path.len())
+}
+
+public fun is_dir_empty(path: string) -> bool {
+    return yukistd_fs_dir_is_empty(path.as_ptr(), path.len())
+}
+
+public fun copy_dir_all(from_path: string, to_path: string) -> bool {
+    set ok = yukistd_fs_dir_copy_all(from_path.as_ptr(), from_path.len(), to_path.as_ptr(), to_path.len())
+    if !ok {
+        panic_last_dir_error("failed to copy directory '" + from_path + "' to '" + to_path + "'", 6)
+    }
+    return true
+}
+
+public fun list_dir(path: string) -> string[] {
+    set out_count: int64 = 0
+    set p = yukistd_fs_dir_list(path.as_ptr(), path.len(), ptr_of(out_count))
+    if out_count < 0 || p == null {
+        panic_last_dir_error("failed to list directory '" + path + "'", 1)
+    }
+    if out_count == 0 {
+        set empty_p: ptr<string> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun walk_dir(path: string) -> string[] {
+    set out_count: int64 = 0
+    set p = yukistd_fs_dir_walk(path.as_ptr(), path.len(), ptr_of(out_count))
+    if out_count < 0 || p == null {
+        panic_last_dir_error("failed to walk directory '" + path + "'", 1)
+    }
+    if out_count == 0 {
+        set empty_p: ptr<string> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun dir_create(path: string) -> bool { return create_dir(path) }
+public fun dir_create_all(path: string) -> bool { return create_dir_all(path) }
+public fun dir_remove(path: string) -> bool { return remove_dir(path) }
+public fun dir_remove_all(path: string) -> bool { return remove_dir_all(path) }
+public fun dir_current() -> string { return current_dir() }
+public fun dir_set_current(path: string) -> bool { return set_current_dir(path) }
+public fun dir_is_empty(path: string) -> bool { return is_dir_empty(path) }
+public fun dir_copy_all(from_path: string, to_path: string) -> bool { return copy_dir_all(from_path, to_path) }
+public fun dir_list(path: string) -> string[] { return list_dir(path) }
+public fun dir_walk(path: string) -> string[] { return walk_dir(path) }

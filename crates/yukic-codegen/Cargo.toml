@@ -1,0 +1,20 @@
+[package]
+name = "yukic-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-ast = { workspace = true }
+yukic-types = { workspace = true }
+yukic-target = { workspace = true }
+yukic-span = { workspace = true }
+inkwell = { workspace = true }
+indexmap = { workspace = true }
+yukic-borrow = { workspace = true }
+

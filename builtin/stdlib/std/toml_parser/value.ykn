@@ -1,0 +1,388 @@
+public static TOML_NULL: int32 = 0
+public static TOML_BOOL: int32 = 1
+public static TOML_INT: int32 = 2
+public static TOML_FLOAT: int32 = 3
+public static TOML_STRING: int32 = 4
+public static TOML_DATETIME: int32 = 5
+public static TOML_ARRAY: int32 = 6
+public static TOML_TABLE: int32 = 7
+
+public class TomlValue {
+    public kind: int32
+    public bool_val: bool
+    public int_val: int64
+    public float_val: float64
+    public str_val: string
+    public array_val: TomlValue[]
+    public obj_keys: string[]
+    public obj_vals: TomlValue[]
+
+    public fun init() {
+        rewrite this.kind = TOML_NULL
+        rewrite this.bool_val = false
+        rewrite this.int_val = 0
+        rewrite this.float_val = 0.0
+        rewrite this.str_val = ""
+        rewrite this.array_val = []
+        rewrite this.obj_keys = []
+        rewrite this.obj_vals = []
+    }
+
+    public fun is_null() -> bool { return this.kind == TOML_NULL }
+    public fun is_bool() -> bool { return this.kind == TOML_BOOL }
+    public fun is_number() -> bool { return this.kind == TOML_INT || this.kind == TOML_FLOAT }
+    public fun is_int() -> bool { return this.kind == TOML_INT }
+    public fun is_float() -> bool { return this.kind == TOML_FLOAT }
+    public fun is_string() -> bool { return this.kind == TOML_STRING }
+    public fun is_datetime() -> bool { return this.kind == TOML_DATETIME }
+    public fun is_array() -> bool { return this.kind == TOML_ARRAY }
+    public fun is_table() -> bool { return this.kind == TOML_TABLE }
+    public fun is_object() -> bool { return this.kind == TOML_TABLE }
+
+    public fun as_bool() -> bool { return this.as_bool_or(false) }
+
+    public fun as_bool_or(fallback: bool) -> bool {
+        if this.kind == TOML_BOOL { return this.bool_val }
+        return fallback
+    }
+
+    public fun as_int() -> int64 { return this.as_int_or(0) }
+
+    public fun as_int_or(fallback: int64) -> int64 {
+        if this.kind == TOML_INT { return this.int_val }
+        if this.kind == TOML_FLOAT { return cast(this.float_val, "int64") }
+        return fallback
+    }
+
+    public fun as_float() -> float64 {
+        return this.as_float_or(0.0)
+    }
+
+    public fun as_float_or(fallback: float64) -> float64 {
+        if this.kind == TOML_FLOAT { return this.float_val }
+        if this.kind == TOML_INT { return cast(this.int_val, "float64") }
+        return fallback
+    }
+
+    public fun as_string() -> string {
+        return this.as_string_or("")
+    }
+
+    public fun as_string_or(fallback: string) -> string {
+        if this.kind == TOML_STRING || this.kind == TOML_DATETIME {
+            return this.str_val
+        }
+        return fallback
+    }
+
+    public fun as_array() -> TomlValue[] {
+        if this.kind == TOML_ARRAY {
+            return this.array_val
+        }
+        set empty: TomlValue[] = []
+        return empty
+    }
+
+    public fun len() -> int64 {
+        if this.kind == TOML_ARRAY {
+            return this.array_val.len()
+        }
+        if this.kind == TOML_TABLE {
+            return this.obj_keys.len()
+        }
+        if this.kind == TOML_STRING || this.kind == TOML_DATETIME {
+            return this.str_val.len()
+        }
+        return 0
+    }
+
+    public fun keys() -> string[] {
+        if this.kind == TOML_TABLE {
+            return this.obj_keys
+        }
+        set empty: string[] = []
+        return empty
+    }
+
+    public fun has(key: string) -> bool {
+        if this.kind != TOML_TABLE {
+            return false
+        }
+        set i: int64 = 0
+        while i < this.obj_keys.len() {
+            if this.obj_keys[i] == key {
+                return true
+            }
+            rewrite i = i + 1
+        }
+        return false
+    }
+
+    public fun get(key: string) -> TomlValue {
+        if this.kind == TOML_TABLE {
+            set i: int64 = 0
+            while i < this.obj_keys.len() {
+                if this.obj_keys[i] == key {
+                    return this.obj_vals[i]
+                }
+                rewrite i = i + 1
+            }
+        }
+        return toml_null()
+    }
+
+    public fun get_opt(key: string) -> TomlValue? {
+        if this.kind == TOML_TABLE {
+            set i: int64 = 0
+            while i < this.obj_keys.len() {
+                if this.obj_keys[i] == key {
+                    return this.obj_vals[i]
+                }
+                rewrite i = i + 1
+            }
+        }
+        return null
+    }
+
+    public fun at(index: int64) -> TomlValue {
+        if this.kind == TOML_ARRAY && index >= 0 && index < this.array_val.len() {
+            return this.array_val[index]
+        }
+        return toml_null()
+    }
+
+    public fun at_opt(index: int64) -> TomlValue? {
+        if this.kind == TOML_ARRAY && index >= 0 && index < this.array_val.len() {
+            return this.array_val[index]
+        }
+        return null
+    }
+
+    public fun set(key: string, val: TomlValue) -> TomlValue {
+        if this.kind != TOML_TABLE {
+            rewrite this.kind = TOML_TABLE
+        }
+        set i: int64 = 0
+        while i < this.obj_keys.len() {
+            if this.obj_keys[i] == key {
+                rewrite this.obj_vals[i] = val
+                return this
+            }
+            rewrite i = i + 1
+        }
+        this.obj_keys.push(key)
+        this.obj_vals.push(val)
+        return this
+    }
+
+    public fun push(item: TomlValue) -> TomlValue {
+        if this.kind != TOML_ARRAY {
+            rewrite this.kind = TOML_ARRAY
+        }
+        this.array_val.push(item)
+        return this
+    }
+
+    public fun is_table_array() -> bool {
+        if this.kind != TOML_ARRAY || this.array_val.len() == 0 {
+            return false
+        }
+        set i: int64 = 0
+        set count: int64 = this.array_val.len()
+        while i < count {
+            if this.array_val[i].kind != TOML_TABLE {
+                return false
+            }
+            rewrite i = i + 1
+        }
+        return true
+    }
+
+    public fun set_path(path: string[], val: TomlValue) -> TomlValue {
+        if path.len() == 0 { return this }
+        set last_idx: int64 = path.len() - 1
+        if last_idx == 0 {
+            this.set(path[0], val)
+            return this
+        }
+        set first_key: string = path[0]
+        if !this.has(first_key) {
+            this.set(first_key, toml_table())
+        }
+        set remaining: string[] = []
+        set i: int64 = 1
+        while i < path.len() {
+            remaining.push(path[i])
+            rewrite i = i + 1
+        }
+        set node: TomlValue = this.get(first_key)
+        if node.kind == TOML_ARRAY && node.len() > 0 {
+            node.at(node.len() - 1).set_path(remaining, val)
+        } else {
+            node.set_path(remaining, val)
+        }
+        return this
+    }
+
+    public fun ensure_table_path(path: string[]) -> TomlValue {
+        if path.len() == 0 { return this }
+        set first_key: string = path[0]
+        if !this.has(first_key) {
+            this.set(first_key, toml_table())
+        }
+        if path.len() == 1 { return this }
+        set remaining: string[] = []
+        set i: int64 = 1
+        while i < path.len() {
+            remaining.push(path[i])
+            rewrite i = i + 1
+        }
+        set node: TomlValue = this.get(first_key)
+        if node.kind == TOML_ARRAY && node.len() > 0 {
+            node.at(node.len() - 1).ensure_table_path(remaining)
+        } else {
+            node.ensure_table_path(remaining)
+        }
+        return this
+    }
+
+    public fun add_table_to_array(path: string[]) -> TomlValue {
+        if path.len() == 0 { return this }
+        set last_idx: int64 = path.len() - 1
+        if last_idx == 0 {
+            set key: string = path[0]
+            if !this.has(key) {
+                this.set(key, toml_array([]))
+            }
+            this.get(key).push(toml_table())
+            return this
+        }
+        set first_key: string = path[0]
+        if !this.has(first_key) {
+            this.set(first_key, toml_table())
+        }
+        set remaining: string[] = []
+        set i: int64 = 1
+        while i < path.len() {
+            remaining.push(path[i])
+            rewrite i = i + 1
+        }
+        set node: TomlValue = this.get(first_key)
+        if node.kind == TOML_ARRAY && node.len() > 0 {
+            node.at(node.len() - 1).add_table_to_array(remaining)
+        } else {
+            node.add_table_to_array(remaining)
+        }
+        return this
+    }
+
+    public fun get_last_in_array(path: string[]) -> TomlValue {
+        if path.len() == 0 { return this }
+        set first_key: string = path[0]
+        if path.len() == 1 {
+            set arr: TomlValue = this.get(first_key)
+            if arr.kind == TOML_ARRAY && arr.len() > 0 {
+                return arr.at(arr.len() - 1)
+            }
+            return this
+        }
+        set remaining: string[] = []
+        set i: int64 = 1
+        while i < path.len() {
+            remaining.push(path[i])
+            rewrite i = i + 1
+        }
+        set node: TomlValue = this.get(first_key)
+        if node.kind == TOML_ARRAY && node.len() > 0 {
+            return node.at(node.len() - 1).get_last_in_array(remaining)
+        }
+        return node.get_last_in_array(remaining)
+    }
+
+    public fun cp(this) -> TomlValue {
+        set res: TomlValue = init TomlValue()
+        rewrite res.kind = this.kind
+        rewrite res.bool_val = this.bool_val
+        rewrite res.int_val = this.int_val
+        rewrite res.float_val = this.float_val
+        rewrite res.str_val = this.str_val.cp()
+        set i: int64 = 0
+        set arr_len: int64 = this.array_val.len()
+        while i < arr_len {
+            res.array_val.push(this.array_val[i].cp())
+            rewrite i = i + 1
+        }
+        rewrite i = 0
+        set obj_len: int64 = this.obj_keys.len()
+        while i < obj_len {
+            res.obj_keys.push(this.obj_keys[i].cp())
+            res.obj_vals.push(this.obj_vals[i].cp())
+            rewrite i = i + 1
+        }
+        return res
+    }
+}
+
+public fun toml_null() -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_NULL
+    return v
+}
+
+public fun toml_bool(b: bool) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_BOOL
+    rewrite v.bool_val = b
+    return v
+}
+
+public fun toml_int(n: int64) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_INT
+    rewrite v.int_val = n
+    rewrite v.float_val = cast(n, "float64")
+    return v
+}
+
+public fun toml_float(n: float64) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_FLOAT
+    rewrite v.float_val = n
+    rewrite v.int_val = cast(n, "int64")
+    return v
+}
+
+public fun toml_number(n: float64) -> TomlValue {
+    return toml_float(n)
+}
+
+public fun toml_string(s: string) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_STRING
+    rewrite v.str_val = s
+    return v
+}
+
+public fun toml_datetime(s: string) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_DATETIME
+    rewrite v.str_val = s
+    return v
+}
+
+public fun toml_array(items: TomlValue[]) -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_ARRAY
+    rewrite v.array_val = items
+    return v
+}
+
+public fun toml_table() -> TomlValue {
+    set v: TomlValue = init TomlValue()
+    rewrite v.kind = TOML_TABLE
+    return v
+}
+
+public fun toml_object() -> TomlValue {
+    return toml_table()
+}

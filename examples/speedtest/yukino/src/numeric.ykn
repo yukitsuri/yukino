@@ -1,0 +1,96 @@
+load .common: MIX_SEED, mix, alloc_u8, free_u8
+
+static SIEVE_LIMIT: int64 = 40000000
+static COLLATZ_LIMIT: uint64 = 1500000u64
+static FIB_N: uint64 = 42u64
+static QUEENS_N: uint32 = 14u32
+static LEIBNIZ_TERMS: int64 = 150000000
+static LEIBNIZ_SCALE: float64 = 4000000000.0
+
+public fun sieve() -> uint64 {
+    set composite = alloc_u8(SIEVE_LIMIT + 1)
+    set i: int64 = 2
+    while i * i <= SIEVE_LIMIT {
+        if composite[i] == 0u8 {
+            set j: int64 = i * i
+            while j <= SIEVE_LIMIT {
+                rewrite composite[j] = 1u8
+                rewrite j = j + i
+            }
+        }
+        rewrite i = i + 1
+    }
+    set count: uint64 = 0
+    for idx in 2..(SIEVE_LIMIT + 1) {
+        if composite[idx] == 0u8 {
+            rewrite count = count + 1
+        }
+    }
+    free_u8(composite)
+    return mix(MIX_SEED, count)
+}
+
+public fun collatz() -> uint64 {
+    set best_start: uint64 = 0
+    set best_steps: uint64 = 0
+    for start in 1..(COLLATZ_LIMIT + 1) {
+        set n: uint64 = start
+        set steps: uint64 = 0
+        while n != 1u64 {
+            if n & 1u64 == 1u64 {
+                rewrite n = 3u64 * n + 1u64
+            } else {
+                rewrite n = n >> 1
+            }
+            rewrite steps = steps + 1
+        }
+        if steps > best_steps {
+            rewrite best_steps = steps
+            rewrite best_start = start
+        }
+    }
+    return mix(mix(MIX_SEED, best_start), best_steps)
+}
+
+#[stable]
+fun fib(n: uint64) -> uint64 {
+    if n < 2u64 {
+        return n
+    }
+    return fib(n - 1u64) + fib(n - 2u64)
+}
+
+public fun fib_test() -> uint64 {
+    return mix(MIX_SEED, fib(FIB_N))
+}
+
+fun solve_queens(cols: uint32, diag_l: uint32, diag_r: uint32, full: uint32) -> uint64 {
+    if cols == full {
+        return 1u64
+    }
+    set count: uint64 = 0
+    set avail: uint32 = full & (~(cols | diag_l | diag_r))
+    while avail != 0u32 {
+        set bit: uint32 = avail & ((~avail) + 1u32)
+        rewrite avail = avail ^ bit
+        set next_diag_l: uint32 = ((diag_l | bit) << 1) & full
+        set next_diag_r: uint32 = (diag_r | bit) >> 1
+        rewrite count = count + solve_queens(cols | bit, next_diag_l, next_diag_r, full)
+    }
+    return count
+}
+
+public fun queens() -> uint64 {
+    set full: uint32 = (1u32 << QUEENS_N) - 1u32
+    return mix(MIX_SEED, solve_queens(0u32, 0u32, 0u32, full))
+}
+
+public fun leibniz() -> uint64 {
+    set sum: float64 = 0.0
+    set sign: float64 = 1.0
+    for k in 0..LEIBNIZ_TERMS {
+        rewrite sum = sum + sign / cast(2 * k + 1, "float64")
+        rewrite sign = -sign
+    }
+    return mix(MIX_SEED, cast(sum * LEIBNIZ_SCALE, "uint64"))
+}

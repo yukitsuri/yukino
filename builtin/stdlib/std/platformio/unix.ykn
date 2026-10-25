@@ -1,0 +1,81 @@
+cfun yukistd_io_posix_isatty(fd: int32) -> bool
+cfun yukistd_io_posix_pipe(read_fd: ptr<int32>, write_fd: ptr<int32>) -> int32
+cfun yukistd_io_posix_dup(oldfd: int32) -> int32
+cfun yukistd_io_posix_dup2(oldfd: int32, newfd: int32) -> int32
+cfun yukistd_io_posix_fsync(fd: int32) -> int32
+cfun yukistd_io_posix_fdatasync(fd: int32) -> int32
+
+public static STDIN_FILENO: int32 = 0
+public static STDOUT_FILENO: int32 = 1
+public static STDERR_FILENO: int32 = 2
+
+public struct PipeFds {
+    read_fd: int32
+    write_fd: int32
+}
+
+public struct IoError {
+    message: string
+    code: int32
+}
+
+public fun isatty(fd: int32) -> bool {
+    return yukistd_io_posix_isatty(fd)
+}
+
+public fun pipe() -> PipeFds {
+    set mut_read: int32 = 0
+    set mut_write: int32 = 0
+    set res = yukistd_io_posix_pipe(ptr_of(mut_read), ptr_of(mut_write))
+    if res != 0 {
+        panic(IoError {
+            message: "posix pipe creation failed",
+            code: 201,
+        })
+    }
+    return PipeFds { read_fd: mut_read, write_fd: mut_write }
+}
+
+public fun dup(oldfd: int32) -> int32 {
+    set res = yukistd_io_posix_dup(oldfd)
+    if res < 0 {
+        panic(IoError {
+            message: "posix dup failed",
+            code: 202,
+        })
+    }
+    return res
+}
+
+public fun dup2(oldfd: int32, newfd: int32) -> int32 {
+    set res = yukistd_io_posix_dup2(oldfd, newfd)
+    if res < 0 {
+        panic(IoError {
+            message: "posix dup2 failed",
+            code: 203,
+        })
+    }
+    return res
+}
+
+public fun fsync(fd: int32) -> int32 {
+    set res = yukistd_io_posix_fsync(fd)
+    if res != 0 {
+        panic(IoError {
+            message: "posix fsync failed",
+            code: 204,
+        })
+    }
+    return res
+}
+
+public fun fdatasync(fd: int32) -> int32 {
+    set res = yukistd_io_posix_fdatasync(fd)
+    if res != 0 {
+        panic(IoError {
+            message: "posix fdatasync failed",
+            code: 205,
+        })
+    }
+    return res
+}

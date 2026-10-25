@@ -1,0 +1,290 @@
+load ...compress: decompress, compress_file
+load ..files: file_read_text, file_write_text, file_exists, file_size, file_open_write, file_remove, File
+load ..dirs: dir_create_all, dir_walk, dir_exists
+load ..paths: path_join, path_parent
+load .pass: aes_cbc_encrypt, aes_cbc_decrypt
+
+public struct TarEntry {
+    path: string
+    size: int64
+    mode: uint32
+    mtime: int64
+    type_flag: uint8
+    link_target: string
+    is_file: bool
+    is_dir: bool
+}
+
+public struct TarError {
+    message: string
+    code: int32
+}
+
+fun panic_tar_error(msg: string, code: int32) {
+    panic(TarError { message: msg, code: code })
+}
+
+fun parse_octal(ref data: bytes, start: int64, len: int64) -> int64 {
+    set res: int64 = 0
+    set end = start + len
+    for i in start..end {
+        set b = data[i]
+        if b >= 48u8 && b <= 55u8 {
+            rewrite res = (res * 8) + cast(b - 48u8, "int64")
+        }
+    }
+    return res
+}
+
+fun format_octal(val: int64, width: int64) -> string {
+    set res = ""
+    set v = val
+    for i in 0..(width - 1) {
+        set rem = v % 8
+        rewrite res = "${rem}" + res
+        rewrite v = v / 8
+    }
+    return res + "\0"
+}
+
+fun extract_cstr(ref data: bytes, start: int64, max_len: int64) -> string {
+    set len: int64 = 0
+    for i in 0..max_len {
+        if start + i >= data.len() { break }
+        set b = data[start + i]
+        if b == 0u8 { break }
+        rewrite len = len + 1
+    }
+    if len == 0 { return "" }
+    return cast(data[start..(start + len)], "string")
+}
+
+fun detect_tar_compression(path: string) -> string {
+    set p = path
+    if p.len() >= 7 && p[(p.len() - 7)..] == ".tar.gz" { return "gz" }
+    if p.len() >= 4 && p[(p.len() - 4)..] == ".tgz" { return "gz" }
+    if p.len() >= 7 && p[(p.len() - 7)..] == ".tar.xz" { return "xz" }
+    if p.len() >= 4 && p[(p.len() - 4)..] == ".txz" { return "xz" }
+    if p.len() >= 8 && p[(p.len() - 8)..] == ".tar.zst" { return "zstd" }
+    if p.len() >= 5 && p[(p.len() - 5)..] == ".tzst" { return "zstd" }
+    if p.len() >= 8 && p[(p.len() - 8)..] == ".tar.bz2" { return "bz2" }
+    if p.len() >= 5 && p[(p.len() - 5)..] == ".tbz2" { return "bz2" }
+    return "none"
+}
+
+fun write_tar_header(ref file: File, name: string, size: int64, is_dir: bool) {
+    set header: uint8[512]
+    set name_bytes = cast(name, "bytes")
+    set nlen: int64 = if name_bytes.len() > 100 { 100 } else { name_bytes.len() }
+    for i in 0..nlen {
+        rewrite header[i] = name_bytes[i]
+    }
+    set mode_str: string = if is_dir { "0000755\0" } else { "0000644\0" }
+    for i in 0..mode_str.len() {
+        rewrite header[100 + i] = mode_str[i]
+    }
+    set uid_str = "0000000\0"
+    for i in 0..uid_str.len() {
+        rewrite header[108 + i] = uid_str[i]
+        rewrite header[116 + i] = uid_str[i]
+    }
+    set size_str = format_octal(size, 12)
+    for i in 0..size_str.len() {
+        rewrite header[124 + i] = size_str[i]
+    }
+    set mtime_str = "00000000000\0"
+    for i in 0..mtime_str.len() {
+        rewrite header[136 + i] = mtime_str[i]
+    }
+    for i in 0..8 {
+        rewrite header[148 + i] = 32u8
+    }
+    rewrite header[156] = if is_dir { 53u8 } else { 48u8 }
+    set magic = "ustar\000"
+    for i in 0..magic.len() {
+        rewrite header[257 + i] = magic[i]
+    }
+    set sum: int64 = 0
+    for i in 0..512 {
+        rewrite sum = sum + cast(header[i], "int64")
+    }
+    set chk_str = format_octal(sum, 7) + " "
+    for i in 0..chk_str.len() {
+        rewrite header[148 + i] = chk_str[i]
+    }
+    file.write(header.as_ptr(), 512)
+}
+
+public fun tar_pack(archive_path: string, paths: string[], compression: string = "auto") -> bool {
+    set comp: string = if compression == "auto" { detect_tar_compression(archive_path.cp()) } else { compression }
+    set raw_archive: string = if comp != "none" { archive_path.cp() + ".tmp.tar" } else { archive_path.cp() }
+    set file = file_open_write(raw_archive.cp())
+    for i in 0..paths.len() {
+        set p = paths[i].cp()
+        if !file_exists(p.cp()) && !dir_exists(p.cp()) {
+            file.close()
+            panic_tar_error("path does not exist: " + p.cp(), 404)
+        }
+        if dir_exists(p.cp()) {
+            write_tar_header(ref file, p.cp() + "/", 0, true)
+            set files = dir_walk(p.cp())
+            for i in 0..files.len() {
+                set rel: string = files[i].cp()
+                set sz = file_size(rel.cp())
+                write_tar_header(ref file, rel.cp(), sz, false)
+                set content = file_read_text(rel.cp())
+                file.write_text(content)
+                set pad = (512 - (sz % 512)) % 512
+                if pad > 0 {
+                    set pad_zeroes: uint8[512]
+                    file.write(pad_zeroes.as_ptr(), pad)
+                }
+            }
+        } else {
+            set sz = file_size(p.cp())
+            write_tar_header(ref file, p.cp(), sz, false)
+            set content = file_read_text(p.cp())
+            file.write_text(content)
+            set pad = (512 - (sz % 512)) % 512
+            if pad > 0 {
+                set pad_zeroes: uint8[512]
+                file.write(pad_zeroes.as_ptr(), pad)
+            }
+        }
+    }
+    set end_zeroes: uint8[1024]
+    file.write(end_zeroes.as_ptr(), 1024)
+    file.close()
+    if comp != "none" {
+        compress_file(raw_archive.cp(), archive_path, comp)
+        file_remove(raw_archive)
+    }
+    return true
+}
+
+public fun tar_pack_dir(archive_path: string, dir_path: string, compression: string = "auto") -> bool {
+    return tar_pack(archive_path, [dir_path], compression)
+}
+
+public fun tar_unpack(archive_path: string, dest_dir: string) -> bool {
+    if !file_exists(archive_path.cp()) {
+        panic_tar_error("archive does not exist: " + archive_path.cp(), 404)
+    }
+    set comp = detect_tar_compression(archive_path.cp())
+    set raw_bytes: bytes = cast(file_read_text(archive_path), "bytes")
+    set tar_data: bytes = if comp != "none" { decompress(raw_bytes, comp) } else { raw_bytes }
+    set offset: int64 = 0
+    dir_create_all(dest_dir.cp())
+    while offset + 512 <= tar_data.len() {
+        set is_zero = true
+        for i in 0..512 {
+            if tar_data[offset + i] != 0u8 {
+                rewrite is_zero = false
+                break
+            }
+        }
+        if is_zero { break }
+        set name = extract_cstr(ref tar_data, offset, 100)
+        set size = parse_octal(ref tar_data, offset + 124, 12)
+        set typeflag = tar_data[offset + 156]
+        set is_dir = typeflag == 53u8 || (name.len() > 0 && name[name.len() - 1] == 47u8)
+        set full_path = path_join(dest_dir.cp(), name)
+        if is_dir {
+            dir_create_all(full_path)
+        } else {
+            set parent = path_parent(full_path.cp())
+            if parent.len() > 0 && !dir_exists(parent.cp()) {
+                dir_create_all(parent)
+            }
+            set content = tar_data[(offset + 512)..(offset + 512 + size)]
+            file_write_text(full_path, cast(content, "string"))
+        }
+        set pad = (512 - (size % 512)) % 512
+        rewrite offset = offset + 512 + size + pad
+    }
+    return true
+}
+
+public fun tar_list(archive_path: string) -> TarEntry[] {
+    if !file_exists(archive_path.cp()) {
+        panic_tar_error("archive does not exist: " + archive_path.cp(), 404)
+    }
+    set comp = detect_tar_compression(archive_path.cp())
+    set raw_bytes: bytes = cast(file_read_text(archive_path), "bytes")
+    set tar_data: bytes = if comp != "none" { decompress(raw_bytes, comp) } else { raw_bytes }
+    set list: TarEntry[] = []
+    set offset: int64 = 0
+    while offset + 512 <= tar_data.len() {
+        set is_zero = true
+        for i in 0..512 {
+            if tar_data[offset + i] != 0u8 {
+                rewrite is_zero = false
+                break
+            }
+        }
+        if is_zero { break }
+        set name = extract_cstr(ref tar_data, offset, 100)
+        set mode = cast(parse_octal(ref tar_data, offset + 100, 8), "uint32")
+        set size = parse_octal(ref tar_data, offset + 124, 12)
+        set mtime = parse_octal(ref tar_data, offset + 136, 12)
+        set typeflag = tar_data[offset + 156]
+        set link = extract_cstr(ref tar_data, offset + 157, 100)
+        set is_dir = typeflag == 53u8 || (name.len() > 0 && name[name.len() - 1] == 47u8)
+        list.push(TarEntry {
+            path: name,
+            size: size,
+            mode: mode,
+            mtime: mtime,
+            type_flag: typeflag,
+            link_target: link,
+            is_file: !is_dir,
+            is_dir: is_dir,
+        })
+        set pad = (512 - (size % 512)) % 512
+        rewrite offset = offset + 512 + size + pad
+    }
+    return list
+}
+
+public fun tar_pack_encrypted(archive_path: string, paths: string[], password: string) -> bool {
+    set tmp_tar = archive_path.cp() + ".tmp.plain"
+    tar_pack(tmp_tar.cp(), paths, "none")
+    set plain_bytes: bytes = cast(file_read_text(tmp_tar.cp()), "bytes")
+    file_remove(tmp_tar)
+    set key_buf: uint8[32]
+    set pbytes = cast(password, "bytes")
+    for i in 0..pbytes.len() {
+        if i >= 32 { break }
+        rewrite key_buf[i] = pbytes[i]
+    }
+    set iv_buf: uint8[16]
+    for i in 0..16 { rewrite iv_buf[i] = 42u8 }
+    set key_bytes: bytes = from_raw_parts(key_buf.as_ptr(), 32, 32)
+    set iv_bytes: bytes = from_raw_parts(iv_buf.as_ptr(), 16, 16)
+    set enc_bytes = aes_cbc_encrypt(key_bytes, iv_bytes, plain_bytes)
+    file_write_text(archive_path, cast(enc_bytes, "string"))
+    return true
+}
+
+public fun tar_unpack_encrypted(archive_path: string, dest_dir: string, password: string) -> bool {
+    if !file_exists(archive_path.cp()) {
+        panic_tar_error("archive does not exist: " + archive_path.cp(), 404)
+    }
+    set enc_bytes: bytes = cast(file_read_text(archive_path.cp()), "bytes")
+    set key_buf: uint8[32]
+    set pbytes = cast(password, "bytes")
+    for i in 0..pbytes.len() {
+        if i >= 32 { break }
+        rewrite key_buf[i] = pbytes[i]
+    }
+    set iv_buf: uint8[16]
+    for i in 0..16 { rewrite iv_buf[i] = 42u8 }
+    set key_bytes: bytes = from_raw_parts(key_buf.as_ptr(), 32, 32)
+    set iv_bytes: bytes = from_raw_parts(iv_buf.as_ptr(), 16, 16)
+    set plain_bytes = aes_cbc_decrypt(key_bytes, iv_bytes, enc_bytes)
+    set tmp_tar = archive_path.cp() + ".tmp.dec"
+    file_write_text(tmp_tar.cp(), cast(plain_bytes, "string"))
+    tar_unpack(tmp_tar.cp(), dest_dir)
+    file_remove(tmp_tar)
+    return true
+}

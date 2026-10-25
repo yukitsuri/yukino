@@ -1,0 +1,42 @@
+// decl core/os/linux.rs start
+
+cfun yukistd_os_linux_epoll_create1(flags: int32) -> int32
+cfun yukistd_os_linux_eventfd(initval: uint32, flags: int32) -> int32
+cfun yukistd_os_linux_timerfd_create(clockid: int32, flags: int32) -> int32
+cfun yukistd_os_linux_memfd_create(name_p: ptr<uint8>, name_len: int64, flags: uint32) -> int32
+cfun yukistd_os_linux_prctl_set_name(name_p: ptr<uint8>, name_len: int64) -> int32
+cfun yukistd_os_linux_prctl_get_name(out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_os_linux_gettid() -> int32
+
+// decl end
+
+public fun epoll_create1(flags: int32) -> int32 {
+    return yukistd_os_linux_epoll_create1(flags)
+}
+
+public fun eventfd(initval: uint32, flags: int32) -> int32 {
+    return yukistd_os_linux_eventfd(initval, flags)
+}
+
+public fun timerfd_create(clockid: int32, flags: int32) -> int32 {
+    return yukistd_os_linux_timerfd_create(clockid, flags)
+}
+
+public fun memfd_create(name: string, flags: uint32) -> int32 {
+    return yukistd_os_linux_memfd_create(name.as_ptr(), name.len(), flags)
+}
+
+public fun prctl_set_name(name: string) -> int32 {
+    return yukistd_os_linux_prctl_set_name(name.as_ptr(), name.len())
+}
+
+public fun prctl_get_name() -> string {
+    set out_len: int64 = 0
+    set p = yukistd_os_linux_prctl_get_name(ptr_of(out_len))
+    if out_len <= 0 || p == null { return "" }
+    return from_raw_parts(p, out_len)
+}
+
+public fun gettid() -> int32 {
+    return yukistd_os_linux_gettid()
+}

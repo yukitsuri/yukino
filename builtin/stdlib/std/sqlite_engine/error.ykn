@@ -1,0 +1,4 @@
+public struct SqliteError {
+    message: string
+    code: int32
+}

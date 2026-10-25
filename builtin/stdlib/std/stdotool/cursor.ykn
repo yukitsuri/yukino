@@ -1,0 +1,80 @@
+load ..io: print, flush
+
+public fun up(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "A")
+        flush()
+    }
+}
+
+public fun down(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "B")
+        flush()
+    }
+}
+
+public fun forward(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "C")
+        flush()
+    }
+}
+
+public fun back(n: int32 = 1) {
+    if n > 0 {
+        print("\x1b[" + cast(n, "string") + "D")
+        flush()
+    }
+}
+
+public fun to_col(col: int32) {
+    if col >= 0 {
+        set c = col + 1
+        print("\x1b[" + cast(c, "string") + "G")
+        flush()
+    }
+}
+
+public fun carriage_return() {
+    print("\r")
+    flush()
+}
+
+public fun clear_line() {
+    print("\r\x1b[2K")
+    flush()
+}
+
+public fun clear_to_end() {
+    print("\x1b[K")
+    flush()
+}
+
+public fun clear_from_start() {
+    print("\x1b[1K")
+    flush()
+}
+
+public fun clear_lines_up(n: int32) {
+    if n <= 0 { return }
+    for i in 0..n {
+        print("\x1b[A\r\x1b[2K")
+    }
+    flush()
+}
+
+public fun hide_cursor() {
+    print("\x1b[?25l")
+    flush()
+}
+
+public fun show_cursor() {
+    print("\x1b[?25h")
+    flush()
+}
+
+public fun rewrite_line(text: string) {
+    print("\r\x1b[2K" + text)
+    flush()
+}

@@ -1,0 +1,36 @@
+public static SQLITE_OK: int32 = 0
+public static SQLITE_ERROR: int32 = 1
+public static SQLITE_INTERNAL: int32 = 2
+public static SQLITE_PERM: int32 = 3
+public static SQLITE_ABORT: int32 = 4
+public static SQLITE_BUSY: int32 = 5
+public static SQLITE_LOCKED: int32 = 6
+public static SQLITE_NOMEM: int32 = 7
+public static SQLITE_READONLY: int32 = 8
+public static SQLITE_INTERRUPT: int32 = 9
+public static SQLITE_IOERR: int32 = 10
+public static SQLITE_CORRUPT: int32 = 11
+public static SQLITE_NOTFOUND: int32 = 12
+public static SQLITE_FULL: int32 = 13
+public static SQLITE_CANTOPEN: int32 = 14
+public static SQLITE_PROTOCOL: int32 = 15
+public static SQLITE_EMPTY: int32 = 16
+public static SQLITE_SCHEMA: int32 = 17
+public static SQLITE_TOOBIG: int32 = 18
+public static SQLITE_CONSTRAINT: int32 = 19
+public static SQLITE_MISMATCH: int32 = 20
+public static SQLITE_MISUSE: int32 = 21
+
+public static SQLITE_ROW: int32 = 100
+public static SQLITE_DONE: int32 = 101
+
+public static SQLITE_INTEGER: int32 = 1
+public static SQLITE_FLOAT: int32 = 2
+public static SQLITE_TEXT: int32 = 3
+public static SQLITE_BLOB: int32 = 4
+public static SQLITE_NULL: int32 = 5
+
+public static SQLITE_OPEN_READONLY: int32 = 1
+public static SQLITE_OPEN_READWRITE: int32 = 2
+public static SQLITE_OPEN_CREATE: int32 = 4
+public static SQLITE_OPEN_MEMORY: int32 = 128

@@ -1,0 +1,31 @@
+load .common: MIX_SEED, mix, alloc_u32, free_u32
+
+static FACT_N: uint64 = 20000u64
+static LIMB_CAP: int64 = 10000
+static LIMB_BASE: uint64 = 1000000000u64
+
+public fun bigfact_test() -> uint64 {
+    set limbs = alloc_u32(LIMB_CAP)
+    set used: int64 = 1
+    rewrite limbs[0] = 1u32
+    for m in 2..(FACT_N + 1) {
+        set carry: uint64 = 0
+        for i in 0..used {
+            set t: uint64 = cast(limbs[i], "uint64") * m + carry
+            rewrite limbs[i] = cast(t % LIMB_BASE, "uint32")
+            rewrite carry = t / LIMB_BASE
+        }
+        while carry != 0u64 {
+            rewrite limbs[used] = cast(carry % LIMB_BASE, "uint32")
+            rewrite used = used + 1
+            rewrite carry = carry / LIMB_BASE
+        }
+    }
+    set h: uint64 = MIX_SEED
+    for i in 0..used {
+        rewrite h = mix(h, cast(limbs[i], "uint64"))
+    }
+    set res: uint64 = mix(h, cast(used, "uint64"))
+    free_u32(limbs)
+    return res
+}

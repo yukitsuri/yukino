@@ -1,0 +1,61 @@
+public fun format_bytes(bytes: int64) -> string {
+    if bytes < 1024 {
+        return cast(bytes, "string") + " B"
+    }
+    if bytes < 1048576 {
+        set kib = bytes * 10 / 1024
+        set whole = kib / 10
+        set frac = kib % 10
+        return cast(whole, "string") + "." + cast(frac, "string") + " KiB"
+    }
+    if bytes < 1073741824 {
+        set mib = bytes * 10 / 1048576
+        set whole = mib / 10
+        set frac = mib % 10
+        return cast(whole, "string") + "." + cast(frac, "string") + " MiB"
+    }
+    set gib = bytes * 10 / 1073741824
+    set whole = gib / 10
+    set frac = gib % 10
+    return cast(whole, "string") + "." + cast(frac, "string") + " GiB"
+}
+
+public fun format_speed(bytes_per_sec: int64) -> string {
+    return format_bytes(bytes_per_sec) + "/s"
+}
+
+public fun format_percent(current: int64, total: int64) -> string {
+    if total <= 0 {
+        return "  0%"
+    }
+    if current >= total {
+        return "100%"
+    }
+    set pct = current * 100 / total
+    if pct < 10 {
+        return "  " + cast(pct, "string") + "%"
+    }
+    if pct < 100 {
+        return " " + cast(pct, "string") + "%"
+    }
+    return "100%"
+}
+
+public fun format_duration(seconds: int64) -> string {
+    if seconds <= 0 {
+        return "00:00"
+    }
+    set m = seconds / 60
+    set s = seconds % 60
+    if m < 60 {
+        set sm: string = if m < 10 { "0" + cast(m, "string") } else { cast(m, "string") }
+        set ss: string = if s < 10 { "0" + cast(s, "string") } else { cast(s, "string") }
+        return sm + ":" + ss
+    }
+    set h = m / 60
+    set rem_m = m % 60
+    set sh: string = if h < 10 { "0" + cast(h, "string") } else { cast(h, "string") }
+    set sm: string = if rem_m < 10 { "0" + cast(rem_m, "string") } else { cast(rem_m, "string") }
+    set ss: string = if s < 10 { "0" + cast(s, "string") } else { cast(s, "string") }
+    return sh + ":" + sm + ":" + ss
+}

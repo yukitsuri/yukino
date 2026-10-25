@@ -1,0 +1,437 @@
+load ..hash.sha2: sha512
+load .common: CryptoError, constant_time_eq
+load .curve25519: gf_new, pack25519, unpack25519, gf_add, gf_sub, gf_mul, gf_sqr, gf_inv, pow2523, par25519, neq25519
+
+fun init_d() -> int64[] {
+    set d: int64[] = gf_new()
+    rewrite d[0] = 0x78a3; rewrite d[1] = 0x1359; rewrite d[2] = 0x4dca; rewrite d[3] = 0x75eb
+    rewrite d[4] = 0xd8ab; rewrite d[5] = 0x4141; rewrite d[6] = 0x0a4d; rewrite d[7] = 0x0070
+    rewrite d[8] = 0xe898; rewrite d[9] = 0x7779; rewrite d[10] = 0x4079; rewrite d[11] = 0x8cc7
+    rewrite d[12] = 0xfe73; rewrite d[13] = 0x2b6f; rewrite d[14] = 0x6cee; rewrite d[15] = 0x5203
+    return d
+}
+
+fun init_d2() -> int64[] {
+    set d2: int64[] = gf_new()
+    rewrite d2[0] = 0xf159; rewrite d2[1] = 0x26b2; rewrite d2[2] = 0x9b94; rewrite d2[3] = 0xebd6
+    rewrite d2[4] = 0xb156; rewrite d2[5] = 0x8283; rewrite d2[6] = 0x149a; rewrite d2[7] = 0x00e0
+    rewrite d2[8] = 0xd130; rewrite d2[9] = 0xeef3; rewrite d2[10] = 0x80f2; rewrite d2[11] = 0x198e
+    rewrite d2[12] = 0xfce7; rewrite d2[13] = 0x56df; rewrite d2[14] = 0xd9dc; rewrite d2[15] = 0x2406
+    return d2
+}
+
+fun init_base_x() -> int64[] {
+    set x: int64[] = gf_new()
+    rewrite x[0] = 0xd51a; rewrite x[1] = 0x8f25; rewrite x[2] = 0x2d60; rewrite x[3] = 0xc956
+    rewrite x[4] = 0xa7b2; rewrite x[5] = 0x9525; rewrite x[6] = 0xc760; rewrite x[7] = 0x692c
+    rewrite x[8] = 0xdc5c; rewrite x[9] = 0xfdd6; rewrite x[10] = 0xe231; rewrite x[11] = 0xc0a4
+    rewrite x[12] = 0x53fe; rewrite x[13] = 0xcd6e; rewrite x[14] = 0x36d3; rewrite x[15] = 0x2169
+    return x
+}
+
+fun init_base_y() -> int64[] {
+    set y: int64[] = gf_new()
+    rewrite y[0] = 0x6658
+    for i in 1..16 {
+        rewrite y[i] = 0x6666
+    }
+    return y
+}
+
+fun init_const_i() -> int64[] {
+    set ci: int64[] = gf_new()
+    rewrite ci[0] = 0xa0b0; rewrite ci[1] = 0x4a0e; rewrite ci[2] = 0x1b27; rewrite ci[3] = 0xc4ee
+    rewrite ci[4] = 0xe478; rewrite ci[5] = 0xad2f; rewrite ci[6] = 0x1806; rewrite ci[7] = 0x2f43
+    rewrite ci[8] = 0xd7a7; rewrite ci[9] = 0x3dfb; rewrite ci[10] = 0x0099; rewrite ci[11] = 0x2b4d
+    rewrite ci[12] = 0xdf0b; rewrite ci[13] = 0x4fc1; rewrite ci[14] = 0x2480; rewrite ci[15] = 0x2b83
+    return ci
+}
+
+fun init_l() -> int64[] {
+    set l: int64[] = []
+    l.push(0xed); l.push(0xd3); l.push(0xf5); l.push(0x5c)
+    l.push(0x1a); l.push(0x63); l.push(0x12); l.push(0x58)
+    l.push(0xd6); l.push(0x9c); l.push(0xf7); l.push(0xa2)
+    l.push(0xde); l.push(0xf9); l.push(0xde); l.push(0x14)
+    for i in 16..31 {
+        l.push(0)
+    }
+    l.push(0x10)
+    return l
+}
+
+fun ed_point_from_coords(ref x: int64[], ref y: int64[], ref z: int64[], ref t: int64[]) -> int64[] {
+    set p: int64[] = []
+    for i in 0..16 { p.push(x[i]) }
+    for i in 0..16 { p.push(y[i]) }
+    for i in 0..16 { p.push(z[i]) }
+    for i in 0..16 { p.push(t[i]) }
+    return p
+}
+
+fun ed_identity_point() -> int64[] {
+    set p: int64[] = []
+    for i in 0..64 {
+        p.push(0)
+    }
+    rewrite p[16] = 1
+    rewrite p[32] = 1
+    return p
+}
+
+fun ed_get_x(ref p: int64[]) -> int64[] {
+    set o: int64[] = []
+    for i in 0..16 {
+        o.push(p[i])
+    }
+    return o
+}
+
+fun ed_get_y(ref p: int64[]) -> int64[] {
+    set o: int64[] = []
+    for i in 0..16 {
+        o.push(p[16 + i])
+    }
+    return o
+}
+
+fun ed_get_z(ref p: int64[]) -> int64[] {
+    set o: int64[] = []
+    for i in 0..16 {
+        o.push(p[32 + i])
+    }
+    return o
+}
+
+fun ed_get_t(ref p: int64[]) -> int64[] {
+    set o: int64[] = []
+    for i in 0..16 {
+        o.push(p[48 + i])
+    }
+    return o
+}
+
+fun ed_cswap(ref ~p: int64[], ref ~q: int64[], b: int64) {
+    set mask: int64 = ~(b - 1)
+    for i in 0..64 {
+        set t: int64 = mask & (p[i] ^ q[i])
+        rewrite p[i] = p[i] ^ t
+        rewrite q[i] = q[i] ^ t
+    }
+}
+
+fun ed_add(ref p: int64[], ref q: int64[]) -> int64[] {
+    set px: int64[] = ed_get_x(ref p)
+    set py: int64[] = ed_get_y(ref p)
+    set pz: int64[] = ed_get_z(ref p)
+    set pt: int64[] = ed_get_t(ref p)
+
+    set qx: int64[] = ed_get_x(ref q)
+    set qy: int64[] = ed_get_y(ref q)
+    set qz: int64[] = ed_get_z(ref q)
+    set qt: int64[] = ed_get_t(ref q)
+
+    set d2: int64[] = init_d2()
+    set a: int64[] = gf_sub(ref py, ref px)
+    set t: int64[] = gf_sub(ref qy, ref qx)
+    set ma: int64[] = gf_mul(ref a, ref t)
+    set b: int64[] = gf_add(ref px, ref py)
+    set tb: int64[] = gf_add(ref qx, ref qy)
+    set mb: int64[] = gf_mul(ref b, ref tb)
+    set c: int64[] = gf_mul(ref pt, ref qt)
+    set mc: int64[] = gf_mul(ref c, ref d2)
+    set d: int64[] = gf_mul(ref pz, ref qz)
+    set md: int64[] = gf_add(ref d, ref d)
+    set e: int64[] = gf_sub(ref mb, ref ma)
+    set f: int64[] = gf_sub(ref md, ref mc)
+    set g: int64[] = gf_add(ref md, ref mc)
+    set h: int64[] = gf_add(ref mb, ref ma)
+
+    set rx: int64[] = gf_mul(ref e, ref f)
+    set ry: int64[] = gf_mul(ref h, ref g)
+    set rz: int64[] = gf_mul(ref g, ref f)
+    set rt: int64[] = gf_mul(ref e, ref h)
+    return ed_point_from_coords(ref rx, ref ry, ref rz, ref rt)
+}
+
+fun ed_pack(ref ~out_buf: uint8[], ref p: int64[]) {
+    set px: int64[] = ed_get_x(ref p)
+    set py: int64[] = ed_get_y(ref p)
+    set pz: int64[] = ed_get_z(ref p)
+
+    set zi: int64[] = gf_inv(ref pz)
+    set tx: int64[] = gf_mul(ref px, ref zi)
+    set ty: int64[] = gf_mul(ref py, ref zi)
+    pack25519(ref ~out_buf, ref ty)
+    set parity: uint8 = par25519(ref tx)
+    rewrite out_buf[31] = out_buf[31] ^ (parity << 7u8)
+}
+
+fun ed_scalarmult(ref q: int64[], ref s: bytes) -> int64[] {
+    set p: int64[] = ed_identity_point()
+    set cur_q: int64[] = []
+    for i in 0..64 {
+        cur_q.push(q[i])
+    }
+    set i: int64 = 255
+    while i >= 0 {
+        set byte_idx: int64 = i >> 3
+        set bit_idx: int64 = i & 7
+        set b: int64 = cast((s[byte_idx] >> cast(bit_idx, "uint8")) & 1u8, "int64")
+        ed_cswap(ref ~p, ref ~cur_q, b)
+        rewrite cur_q = ed_add(ref cur_q, ref p)
+        rewrite p = ed_add(ref p, ref p)
+        ed_cswap(ref ~p, ref ~cur_q, b)
+        rewrite i = i - 1
+    }
+    return p
+}
+
+fun ed_scalarbase(ref s: bytes) -> int64[] {
+    set bx: int64[] = init_base_x()
+    set by: int64[] = init_base_y()
+    set bz: int64[] = gf_new()
+    rewrite bz[0] = 1
+    set bt: int64[] = gf_mul(ref bx, ref by)
+    set q: int64[] = ed_point_from_coords(ref bx, ref by, ref bz, ref bt)
+    return ed_scalarmult(ref q, ref s)
+}
+
+fun mod_l(ref ~r: uint8[], ref ~x: int64[]) {
+    set l: int64[] = init_l()
+    set i: int64 = 63
+    while i >= 32 {
+        set carry: int64 = 0
+        set j: int64 = i - 32
+        while j < (i - 12) {
+            rewrite x[j] = x[j] + carry - 16 * x[i] * l[j - (i - 32)]
+            rewrite carry = (x[j] + 128) >> 8
+            rewrite x[j] = x[j] - (carry << 8)
+            rewrite j = j + 1
+        }
+        rewrite x[j] = x[j] + carry
+        rewrite x[i] = 0
+        rewrite i = i - 1
+    }
+    set carry: int64 = 0
+    for j in 0..32 {
+        rewrite x[j] = x[j] + carry - (x[31] >> 4) * l[j]
+        rewrite carry = x[j] >> 8
+        rewrite x[j] = x[j] & 255
+    }
+    for j in 0..32 {
+        rewrite x[j] = x[j] - carry * l[j]
+    }
+    for j in 0..32 {
+        if j < 31 {
+            rewrite x[j + 1] = x[j + 1] + (x[j] >> 8)
+        }
+        rewrite r[j] = cast(x[j] & 255, "uint8")
+    }
+}
+
+fun reduce_l(ref ~r: uint8[]) {
+    set x: int64[] = []
+    for i in 0..64 {
+        x.push(cast(r[i], "int64"))
+    }
+    for i in 0..64 {
+        rewrite r[i] = 0u8
+    }
+    mod_l(ref ~r, ref ~x)
+}
+
+fun unpack_neg(ref p: bytes) -> int64[] {
+    set d_const: int64[] = init_d()
+    set i_const: int64[] = init_const_i()
+
+    set rz: int64[] = gf_new()
+    rewrite rz[0] = 1
+    set ry: int64[] = gf_new()
+    unpack25519(ref ~ry, ref p)
+
+    set num: int64[] = gf_sqr(ref ry)
+    set den: int64[] = gf_mul(ref num, ref d_const)
+    rewrite num = gf_sub(ref num, ref rz)
+    rewrite den = gf_add(ref rz, ref den)
+
+    set den2: int64[] = gf_sqr(ref den)
+    set den4: int64[] = gf_sqr(ref den2)
+    set den6: int64[] = gf_mul(ref den4, ref den2)
+    set t: int64[] = gf_mul(ref den6, ref num)
+    rewrite t = gf_mul(ref t, ref den)
+
+    rewrite t = pow2523(ref t)
+    rewrite t = gf_mul(ref t, ref num)
+    rewrite t = gf_mul(ref t, ref den)
+    rewrite t = gf_mul(ref t, ref den)
+    set rx: int64[] = gf_mul(ref t, ref den)
+
+    set chk: int64[] = gf_sqr(ref rx)
+    rewrite chk = gf_mul(ref chk, ref den)
+    if neq25519(ref chk, ref num) {
+        rewrite rx = gf_mul(ref rx, ref i_const)
+    }
+    rewrite chk = gf_sqr(ref rx)
+    rewrite chk = gf_mul(ref chk, ref den)
+    if neq25519(ref chk, ref num) {
+        set empty: int64[] = []
+        return empty
+    }
+    if par25519(ref rx) == ((p[31] >> 7u8) & 1u8) {
+        set zero: int64[] = gf_new()
+        rewrite rx = gf_sub(ref zero, ref rx)
+    }
+    set rt: int64[] = gf_mul(ref rx, ref ry)
+    return ed_point_from_coords(ref rx, ref ry, ref rz, ref rt)
+}
+
+public fun ed25519_public_key(ref seed: bytes) -> bytes {
+    if seed.len() != 32 {
+        panic(CryptoError { message: "ed25519 seed must be 32 bytes", code: 51 })
+    }
+    set hash_out: bytes = sha512(ref seed)
+    set d: uint8[] = []
+    for i in 0..64 {
+        d.push(hash_out[i])
+    }
+    rewrite d[0] = d[0] & 248u8
+    rewrite d[31] = (d[31] & 127u8) | 64u8
+
+    set d_bytes: bytes = from_raw_parts(d.as_ptr(), 32, 32)
+    set p: int64[] = ed_scalarbase(ref d_bytes)
+
+    set pk: uint8[] = []
+    for i in 0..32 {
+        pk.push(0u8)
+    }
+    ed_pack(ref ~pk, ref p)
+    return from_raw_parts(pk.as_ptr(), 32, 32)
+}
+
+public fun ed25519_sign(ref seed: bytes, ref message: bytes) -> bytes {
+    if seed.len() != 32 {
+        panic(CryptoError { message: "ed25519 seed must be 32 bytes", code: 52 })
+    }
+    set pk: bytes = ed25519_public_key(ref seed)
+    set hash_out: bytes = sha512(ref seed)
+    set d: uint8[] = []
+    for i in 0..64 {
+        d.push(hash_out[i])
+    }
+    rewrite d[0] = d[0] & 248u8
+    rewrite d[31] = (d[31] & 127u8) | 64u8
+
+    set r_buf: uint8[] = []
+    for i in 32..64 {
+        r_buf.push(d[i])
+    }
+    for i in 0..message.len() {
+        r_buf.push(message[i])
+    }
+    set r_hash_in: bytes = from_raw_parts(r_buf.as_ptr(), r_buf.len(), r_buf.len())
+    set r_hash: bytes = sha512(ref r_hash_in)
+    set r: uint8[] = []
+    for i in 0..64 {
+        r.push(r_hash[i])
+    }
+    reduce_l(ref ~r)
+
+    set r_bytes: bytes = from_raw_parts(r.as_ptr(), 32, 32)
+    set p: int64[] = ed_scalarbase(ref r_bytes)
+
+    set sm: uint8[] = []
+    for i in 0..64 {
+        sm.push(0u8)
+    }
+    ed_pack(ref ~sm, ref p)
+
+    set h_buf: uint8[] = []
+    for i in 0..32 {
+        h_buf.push(sm[i])
+    }
+    for i in 0..32 {
+        h_buf.push(pk[i])
+    }
+    for i in 0..message.len() {
+        h_buf.push(message[i])
+    }
+    set h_hash_in: bytes = from_raw_parts(h_buf.as_ptr(), h_buf.len(), h_buf.len())
+    set h_hash: bytes = sha512(ref h_hash_in)
+    set h: uint8[] = []
+    for i in 0..64 {
+        h.push(h_hash[i])
+    }
+    reduce_l(ref ~h)
+
+    set x: int64[] = []
+    for i in 0..64 {
+        x.push(0)
+    }
+    for i in 0..32 {
+        rewrite x[i] = cast(r[i], "int64")
+    }
+    for i in 0..32 {
+        for j in 0..32 {
+            rewrite x[i + j] = x[i + j] + cast(h[i], "int64") * cast(d[j], "int64")
+        }
+    }
+    set s_part: uint8[] = []
+    for i in 0..32 {
+        s_part.push(0u8)
+    }
+    mod_l(ref ~s_part, ref ~x)
+    for i in 0..32 {
+        rewrite sm[32 + i] = s_part[i]
+    }
+    return from_raw_parts(sm.as_ptr(), 64, 64)
+}
+
+public fun ed25519_verify(ref public_key: bytes, ref message: bytes, ref signature: bytes) -> bool {
+    if public_key.len() != 32 { return false }
+    if signature.len() != 64 { return false }
+
+    set q: int64[] = unpack_neg(ref public_key)
+    if q.len() != 64 {
+        return false
+    }
+
+    set h_buf: uint8[] = []
+    for i in 0..32 {
+        h_buf.push(signature[i])
+    }
+    for i in 0..32 {
+        h_buf.push(public_key[i])
+    }
+    for i in 0..message.len() {
+        h_buf.push(message[i])
+    }
+    set h_hash_in: bytes = from_raw_parts(h_buf.as_ptr(), h_buf.len(), h_buf.len())
+    set h_hash: bytes = sha512(ref h_hash_in)
+    set h: uint8[] = []
+    for i in 0..64 {
+        h.push(h_hash[i])
+    }
+    reduce_l(ref ~h)
+
+    set h_bytes: bytes = from_raw_parts(h.as_ptr(), 32, 32)
+    set p: int64[] = ed_scalarmult(ref q, ref h_bytes)
+
+    set s_buf: uint8[] = []
+    for i in 0..32 {
+        s_buf.push(signature[32 + i])
+    }
+    set s_bytes: bytes = from_raw_parts(s_buf.as_ptr(), 32, 32)
+    set s_point: int64[] = ed_scalarbase(ref s_bytes)
+    set sum_point: int64[] = ed_add(ref p, ref s_point)
+
+    set t: uint8[] = []
+    for i in 0..32 {
+        t.push(0u8)
+    }
+    ed_pack(ref ~t, ref sum_point)
+
+    set t_bytes: bytes = from_raw_parts(t.as_ptr(), 32, 32)
+    set r_bytes: bytes = from_raw_parts(signature.as_ptr(), 32, 32)
+    return constant_time_eq(ref t_bytes, ref r_bytes)
+}
