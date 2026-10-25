@@ -1504,7 +1504,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let fn_val = match self.module.get_function(effective_name) {
             Some(f) => f,
-            None => self.declare_external_function(effective_name, arg_vals),
+            None => self.declare_external_function(effective_name, sem_name, arg_vals),
         };
 
         let params = fn_val.get_params();
@@ -1600,17 +1600,20 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
     fn declare_external_function(
         &self,
         name: &str,
+        sem_name: &str,
         arg_vals: &[BasicValueEnum<'ctx>],
     ) -> inkwell::values::FunctionValue<'ctx> {
         let is_cfun = name.starts_with("yukistd_")
             || name.starts_with("yukimacrosdk_")
             || name.starts_with("c_")
             || self.registry.cfun_types.contains_key(name)
-            || self.registry.c_symbols.values().any(|s| s == name)
+            || self.registry.cfun_types.contains_key(sem_name)
+            || self.registry.c_symbols.values().any(|s| s == name || s == sem_name)
             || self
                 .registry
                 .fn_types
                 .get(name)
+                .or_else(|| self.registry.fn_types.get(sem_name))
                 .is_some_and(|t| matches!(t, yukic_types::Type::Fn { is_cfun: true, .. }));
         let call_conv = if is_cfun {
             inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32
@@ -1618,7 +1621,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             inkwell::llvm_sys::LLVMCallConv::LLVMFastCallConv as u32
         };
 
-        let ret_ty = self.registry.functions.get(name);
+        let ret_ty = self
+            .registry
+            .functions
+            .get(name)
+            .or_else(|| self.registry.functions.get(sem_name));
         let needs_dest = !is_cfun
             && ret_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret));
 
