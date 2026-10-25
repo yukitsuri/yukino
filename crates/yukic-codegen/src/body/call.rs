@@ -220,6 +220,30 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         if let Some(Type::Class(class_name)) = unwrapped.as_ref() {
             return self.compile_class_instance_method_call(class_name, target_val, method, args);
         }
+        let target_val = if let Some(Type::Ref { inner, .. }) = target_ty {
+            if target_val.is_pointer_value() {
+                let pv = target_val.into_pointer_value();
+                match inner.as_ref() {
+                    Type::Array(_) | Type::Bytes => {
+                        let slice_ty = self.intrinsic.slice_type();
+                        self.builder
+                            .build_load(slice_ty, pv, "deref.slice")
+                            .map_err(|e| e.to_string())?
+                    }
+                    Type::String => {
+                        let str_ty = self.intrinsic.string_type();
+                        self.builder
+                            .build_load(str_ty, pv, "deref.str")
+                            .map_err(|e| e.to_string())?
+                    }
+                    _ => target_val,
+                }
+            } else {
+                target_val
+            }
+        } else {
+            target_val
+        };
         match method.name.as_str() {
             "as_ptr" => {
                 let ptr = self.intrinsic.emit_slice_as_ptr(self.builder, target_val)?;
@@ -1626,8 +1650,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .functions
             .get(name)
             .or_else(|| self.registry.functions.get(sem_name));
+        let is_class_init = (name.starts_with("_Y_") && name.ends_with("_init"))
+            || sem_name.ends_with("::init");
         let needs_dest = !is_cfun
-            && ret_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret));
+            && (is_class_init
+                || ret_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret)));
 
         let mut param_types: Vec<BasicMetadataTypeEnum<'ctx>> =
             Vec::with_capacity(arg_vals.len() + usize::from(needs_dest));
@@ -1654,6 +1681,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             self.context.void_type().fn_type(&param_types, false)
         };
         let f = self.module.add_function(name, fn_type, Some(Linkage::External));
+        if needs_dest {
+            if let Some(p) = f.get_first_param() {
+                p.set_name("_dest_region");
+            }
+        }
         f.set_call_conventions(call_conv);
         f
     }
