@@ -39,6 +39,7 @@ The Yukino standard library is designed with a modular architecture, offering hi
   - [std.toml - TOML v1.0.0 Parsing, Serialization, and TomlValue](30-toml.md)
   - [std.yaml - YAML v1.2 Parsing, Serialization, and YamlValue](31-yaml.md)
   - [std.sqlite - Embedded SQLite 3 database, transactions, prepared statements, and SqliteValue / SqliteRow](32-sqlite.md)
+  - [std.encore - UTF-8 validation, Unicode codepoints, UAX #29 grapheme clusters, and UTF-16 interop (Win32/JVM)](33-encore.md)
   - [Directory of Third-Party Libraries and Ecosystem](../../libs-en.md)
 
 ---
@@ -88,7 +89,7 @@ This brings all public components into the current scope:
 
 - **`std.strings`** - string functions (slices, search, case conversion, trimming, formatting, parsing `int64`, `float64`, `bool`) and error structs (`StringIndexError`, `StringParseError`).
 - **`std.io`** - console and stream I/O (`print`, `println`), input reading.
-- **`std.threads`** - system threads and concurrency primitives.
+- **`std.threads`** (and companion module **`std.sync`**) - OS system threads, synchronization primitives (Mutex, RwLock, CondVar, Semaphore, Barrier, Once), atomic operations, and cross-thread message channels.
 - **`std.platformio`** - platform-dependent low-level I/O for Linux, Unix, and Windows.
 - **`std.math`** - IEEE 754 bitcasts, hardware square root and FMA, bit counters (`clz`, `ctz`, `popcount`), carry arithmetic (`mul_wide`, `add_carry`, `sub_borrow`), and fundamental constants.
 - **`std.datetime`** - civil and monotonic time (`DateTime`, `Duration`), timezone offsets, the Gregorian calendar, intervals, `Stopwatch` and `Timer` classes for precise timing and countdowns, and ISO 8601 formatting/parsing.
@@ -116,6 +117,8 @@ This brings all public components into the current scope:
 - **`std.regex`** - regular expressions: linear-time engine free of ReDoS, full Unicode support, compilation flags, match boundary structures (`Match`), named and numbered capture groups (`Captures`), substring replacement with expansions (`$1`, `${name}`), and regular expression splitting.
 - **`std.toml`** - TOML v1.0.0 configuration format: parsing tables, table arrays, dates, and scalars, TomlValue class, factory constructors, and serialization.
 - **`std.yaml`** - YAML v1.2 structured data format: block and flow collections, mappings, sequences, YamlValue class, validation, and serialization.
+- **`std.sqlite`** - embedded SQLite 3 relational database: Database connections, SQL query execution, transactions, prepared statements, and typed SqliteRow records.
+- **`std.encore`** - systems and application Unicode processing: UTF-8 validation and lossy decoding, codepoints extraction and encoding, UAX #29 grapheme cluster segmentation, and UTF-16 encoding/decoding for Win32 API and JVM interoperability.
 
 ## 3. Standard Library Modules
 
@@ -123,7 +126,7 @@ This brings all public components into the current scope:
 | :--- | :--- | :--- |
 | `std.strings` | String search, slicing, case conversion, replacement, padding, and primitive type parsing. | [1-strings.md](1-strings.md) |
 | `std.io` | Stream and console I/O (`print`, `println`, `read_line`, generic `Reader<T>`/`Writer<T>` interfaces, raw terminal mode). | [2-io.md](2-io.md) |
-| `std.threads` | OS thread management (`spawn`, `join`, `sleep`), synchronization primitives (`mutex`). | [3-threads.md](3-threads.md) |
+| `std.threads` (`std.sync`) | OS thread management (`spawn`, `join`), synchronization primitives (`Mutex`, `RwLock`, `CondVar`, `Semaphore`, `Barrier`, `Once`), atomics, and `Channel`. | [3-threads.md](3-threads.md) |
 | `std.platformio` | Low-level syscalls and descriptors for POSIX (pipes, dup, sync), Linux (splice, tee), and Windows (Console, pipes). | [4-platformio.md](4-platformio.md) |
 | `std.math` | IEEE 754 bitcasts, float operations, bit twiddling, extended precision arithmetic. | [5-math.md](5-math.md) |
 | `std.datetime` | Date, time, timezones, Duration intervals, Stopwatch, Timer, monotonic clock, ISO 8601. | [6-datetime.md](6-datetime.md) |
@@ -153,6 +156,7 @@ This brings all public components into the current scope:
 | `std.toml` | TOML v1.0.0 configuration format: parsing tables, table arrays, dates, and scalars, TomlValue class, factory constructors, and serialization. | [30-toml.md](30-toml.md) |
 | `std.yaml` | YAML v1.2 structured data format: block and flow collections, mappings, sequences, YamlValue class, validation, and serialization. | [31-yaml.md](31-yaml.md) |
 | `std.sqlite` | Embedded SQLite 3 database, transactions, prepared statements, and typed SqliteRow records. | [32-sqlite.md](32-sqlite.md) |
+| `std.encore` | UTF-8 validation/decoding, Unicode scalar codepoints, UAX #29 grapheme segmentation, UTF-16 Win32/JVM interop. | [33-encore.md](33-encore.md) |
 | *Ecosystem* | Official packages and community third-party libraries for Yukino. | [libs-en.md](../../libs-en.md) |
 
 > [!TIP]

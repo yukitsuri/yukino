@@ -1,6 +1,7 @@
 pub mod collections;
 pub mod compress;
 pub mod datetime;
+pub mod encore;
 pub mod fs;
 pub mod io;
 pub mod locale;
@@ -15,7 +16,9 @@ pub mod regex;
 pub mod sharedc;
 pub mod sqlite;
 pub mod strings;
+pub mod sync;
 pub mod sysinfo;
+pub mod sysinfox;
 pub mod threads;
 
 pub use io::reader_thread;

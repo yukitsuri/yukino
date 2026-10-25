@@ -319,4 +319,216 @@ println("Mutex destroyed: ${ok}")
 
 ---
 
+## 5. Module std.sync: Synchronization Primitives
+
+The `std.sync` module serves as a companion to `std.threads`, delivering high-level object-oriented synchronization primitives, data-sharing utilities, and cross-thread communication tools. The module is imported independently and explicitly:
+
+```yukino
+load std.sync
+```
+
+> [!NOTE]
+> The `std.threads` module does not re-export `std.sync`. To use synchronization primitives, import `load std.sync`.
+
+### 5.1 Error Structure: SyncError
+
+```yukino
+public struct SyncError {
+    message: string
+    code: int32
+}
+```
+
+- `code: 401` — runtime error creating a primitive or invalid handle (`0`) passed.
+
+### 5.2 Class Mutex (Mutual Exclusion Lock)
+
+An object-oriented wrapper around the system mutex:
+- `fun init()` — constructor (`init Mutex()` or factory `mutex()`).
+- `fun lock()` — acquires the lock.
+- `fun try_lock() -> bool` — non-blocking lock attempt (`true` if successfully acquired).
+- `fun unlock()` — releases the lock.
+- `fun destroy()` — frees internal resources.
+- `fun get_handle() -> uint64` — raw mutex handle.
+
+```yukino
+load std.sync: mutex, Mutex
+load std.io: println
+
+set m = mutex()
+m.lock()
+println("Critical section protected by Mutex")
+m.unlock()
+m.destroy()
+```
+
+### 5.3 Class RwLock (Reader-Writer Lock)
+
+Allows concurrent read access for multiple readers, or exclusive access for a single writer:
+- `fun init()` / `rwlock() -> RwLock` — creates the lock.
+- `fun read()` — blocking read acquisition.
+- `fun try_read() -> bool` — non-blocking read attempt.
+- `fun unlock_read()` — releases the read lock.
+- `fun write()` — blocking write acquisition.
+- `fun try_write() -> bool` — non-blocking write attempt.
+- `fun unlock_write()` — releases the write lock.
+- `fun destroy()` — frees resources.
+
+```yukino
+load std.sync: rwlock
+load std.io: println
+
+set rw = rwlock()
+rw.read()
+println("Concurrent read")
+rw.unlock_read()
+
+rw.write()
+println("Exclusive write")
+rw.unlock_write()
+rw.destroy()
+```
+
+### 5.4 Class CondVar (Condition Variable)
+
+Enables threads to wait for conditions while releasing the associated mutex during the wait:
+- `fun init()` / `condvar() -> CondVar` — creates the condition variable.
+- `fun wait(ref m: Mutex)` — releases mutex `m`, waits for notification, and re-acquires `m`.
+- `fun wait_handle(mutex_id: uint64)` — wait variant accepting a raw mutex handle.
+- `fun wait_timeout(ref m: Mutex, ms: uint64) -> bool` — timed wait (returns `true` if signaled before `ms` elapsed).
+- `fun notify_one()` — wakes up one waiting thread.
+- `fun notify_all()` — wakes up all waiting threads.
+- `fun destroy()` — frees resources.
+
+```yukino
+load std.sync: mutex, condvar
+load std.io: println
+
+set cv = condvar()
+set m = mutex()
+
+m.lock()
+set signaled = cv.wait_timeout(ref m, 50u64)
+m.unlock()
+
+cv.notify_one()
+cv.destroy()
+m.destroy()
+```
+
+### 5.5 Class AtomicInt64 and Class AtomicBool (Atomic Primitives)
+
+Provide hardware lock-free atomic operations for counters and flags:
+- `fun init(init_val)` / `atomic_i64(init)` and `atomic_bool(init)` — initialization.
+- `.get() -> int64` / `.get() -> bool` — reads value (`load`).
+- `.set(val)` — writes value (`store`).
+- `.fetch_add(val: int64) -> int64` — atomic addition (returns previous value).
+- `.fetch_sub(val: int64) -> int64` — atomic subtraction.
+- `.swap(val) -> int64 / bool` — atomic swap.
+- `.compare_exchange(expected, desired) -> bool` — Compare-And-Swap (CAS).
+- `.destroy()` — frees handle.
+
+```yukino
+load std.sync: atomic_i64, atomic_bool
+load std.io: println
+
+set counter = atomic_i64(0)
+counter.fetch_add(1)
+println("Counter: " + cast(counter.get(), "string"))
+
+set flag = atomic_bool(false)
+set ok = flag.compare_exchange(false, true)
+println("CAS succeeded: " + cast(ok, "string"))
+```
+
+### 5.6 Class Once (One-Time Initialization)
+
+Guarantees that an initialization routine runs exactly once, even if multiple threads invoke it concurrently:
+- `fun init()` / `once() -> Once` — creation.
+- `fun call_once(task: ptr<void>, arg: ptr<void> = null)` — executes the procedure once.
+- `fun is_completed() -> bool` — checks whether initialization completed.
+- `fun destroy()` — frees resources.
+
+```yukino
+load std.sync: once
+load std.io: println
+
+set init_once = once()
+if !init_once.is_completed() {
+    init_once.call_once(null, null)
+}
+println("Initialization done: " + cast(init_once.is_completed(), "string"))
+```
+
+### 5.7 Class Channel (Cross-Thread Message Queues)
+
+Provides a thread-safe message passing channel for 64-bit values (`int64`, descriptors, or raw pointers `ptr<void>`):
+- `fun init(bound: int64 = 0)` / `channel(bound = 0) -> Channel` — creates a channel (`bound = 0` unbounded, `bound > 0` bounded).
+- `fun send_i64(val: int64) -> bool` — sends an integer into the channel.
+- `fun recv_i64() -> int64?` — blocking receive (`null` if closed and empty).
+- `fun try_recv_i64() -> int64?` — non-blocking receive (`null` if empty or closed).
+- `fun recv_timeout_i64(ms: int64) -> int64?` — receive with timeout.
+- `fun send_ptr(p: ptr<void>) -> bool` — sends a pointer into the channel.
+- `fun recv_ptr() -> ptr<void>?` — receives a pointer.
+- `fun try_recv_ptr() -> ptr<void>?` — non-blocking pointer receive.
+- `fun close()` — closes channel for sending.
+- `fun is_closed() -> bool` — checks closure.
+- `fun len() -> int64` — current item count.
+- `fun destroy()` — frees channel resources.
+
+```yukino
+load std.sync: channel
+load std.io: println
+
+set ch = channel(10)
+ch.send_i64(100)
+ch.send_i64(200)
+
+set item = ch.recv_i64()
+if item != null {
+    println("Received: " + cast(item ?? 0, "string"))
+}
+ch.close()
+ch.destroy()
+```
+
+### 5.8 Class Semaphore (Counting Semaphore)
+
+Controls access to a pool of $N$ shared resources:
+- `fun init(permits: int64 = 1)` / `semaphore(permits = 1) -> Semaphore` — creates semaphore.
+- `fun acquire() -> bool` — blocking permit acquisition.
+- `fun try_acquire() -> bool` — non-blocking permit attempt (`true` if granted).
+- `fun release() -> bool` — releases a permit.
+- `fun destroy()` — frees resources.
+
+```yukino
+load std.sync: semaphore
+load std.io: println
+
+set sem = semaphore(2)
+if sem.acquire() {
+    println("Permit acquired")
+    set _ = sem.release()
+}
+sem.destroy()
+```
+
+### 5.9 Class Barrier (Synchronization Barrier)
+
+Blocks a set of $N$ threads until all threads reach the common rendezvous point:
+- `fun init(parties: uint32)` / `barrier(parties) -> Barrier` — creates barrier.
+- `fun wait() -> bool` — waits for all participants. Returns `true` for exactly one thread (phase leader) and `false` for others.
+- `fun destroy()` — frees resources.
+
+```yukino
+load std.sync: barrier
+load std.io: println
+
+set bar = barrier(2u32)
+// Worker threads call bar.wait()
+bar.destroy()
+```
+
+---
+
 [← Back: Module std.io](2-io.md) | [Next: Module std.platformio →](4-platformio.md)

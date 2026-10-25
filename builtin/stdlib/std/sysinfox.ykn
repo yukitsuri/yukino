@@ -1,14 +1,113 @@
-// TODO: std.sysinfox - extended system monitoring (networks, thermal sensors, process table)
-// Planned for future sysinfo expansion.
+// cfun declarations for sysinfox
 
-// 1. Networks and traffic metrics:
-//    - network_interfaces() -> map<string, NetworkInterfaceInfo>
-//    - rx_bytes, tx_bytes, packet counters, errors
+cfun yukistd_sysinfox_network_interfaces(out_count: ptr<int64>) -> ptr<NetworkInterfaceInfo>
+cfun yukistd_sysinfox_thermal_sensors(out_count: ptr<int64>) -> ptr<ThermalSensorRaw>
+cfun yukistd_sysinfox_process_list(out_count: ptr<int64>) -> ptr<ProcessInfo>
 
-// 2. Hardware sensors and components:
-//    - thermal_sensors() -> ComponentInfo[]
-//    - temperature_celsius, critical_limits, fan_speeds
+public struct NetworkInterfaceInfo {
+    name: string
+    mac_address: string
+    is_up: bool
+    is_loopback: bool
+    rx_bytes: uint64
+    tx_bytes: uint64
+    rx_packets: uint64
+    tx_packets: uint64
+    rx_errors: uint64
+    tx_errors: uint64
+}
 
-// 3. System process table inspection:
-//    - process_list() -> ProcessInfo[]
-//    - cpu_usage, memory_rss, virtual_memory, open_descriptors
+struct ThermalSensorRaw {
+    label: string
+    temperature_celsius: float32
+    has_critical: bool
+    critical_temp: float32
+}
+
+public struct ThermalSensorInfo {
+    label: string
+    temperature_celsius: float32
+    critical_temp: float32?
+}
+
+public struct ProcessInfo {
+    pid: uint32
+    parent_pid: uint32
+    name: string
+    cmdline: string
+    cpu_usage: float32
+    memory_rss: uint64
+    memory_virtual: uint64
+}
+
+// network interfaces and traffic metrics
+
+public fun network_interfaces() -> NetworkInterfaceInfo[] {
+    set out_count: int64 = 0
+    set p = yukistd_sysinfox_network_interfaces(ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<NetworkInterfaceInfo> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun network_interface(name: string) -> NetworkInterfaceInfo? {
+    set list = network_interfaces()
+    for i in 0..list.len() {
+        set item = list[i]
+        if item.name == name {
+            return item
+        }
+    }
+    return null
+}
+
+// thermal sensors
+
+public fun thermal_sensors() -> ThermalSensorInfo[] {
+    set out_count: int64 = 0
+    set p = yukistd_sysinfox_thermal_sensors(ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<ThermalSensorInfo> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    set raw_slice: ThermalSensorRaw[] = from_raw_parts(p, out_count, out_count)
+    set result: ThermalSensorInfo[] = []
+    for i in 0..raw_slice.len() {
+        set r = raw_slice[i]
+        set crit: float32? = null
+        if r.has_critical {
+            rewrite crit = r.critical_temp
+        }
+        result.push(ThermalSensorInfo {
+            label: r.label,
+            temperature_celsius: r.temperature_celsius,
+            critical_temp: crit,
+        })
+    }
+    return result
+}
+
+// process inspection
+
+public fun process_list() -> ProcessInfo[] {
+    set out_count: int64 = 0
+    set p = yukistd_sysinfox_process_list(ptr_of(out_count))
+    if out_count <= 0 || p == null {
+        set empty_p: ptr<ProcessInfo> = null
+        return from_raw_parts(empty_p, 0, 0)
+    }
+    return from_raw_parts(p, out_count, out_count)
+}
+
+public fun process_by_pid(pid: uint32) -> ProcessInfo? {
+    set list = process_list()
+    for i in 0..list.len() {
+        set item = list[i]
+        if item.pid == pid {
+            return item
+        }
+    }
+    return null
+}

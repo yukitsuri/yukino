@@ -408,4 +408,4 @@ fun main() {
 
 ---
 
-[← Previous: Module std.yaml](31-yaml.md) | [Next: Third-Party and Community Libraries →](../../libs-en.md)
+[← Previous: Module std.yaml](31-yaml.md) | [Next: Module std.encore →](33-encore.md)

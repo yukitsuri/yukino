@@ -17,7 +17,10 @@ All public components of `std.sysinfo` are loaded into the current scope:
 - **Data Structures:**
   - `LoadAverage` — system load average metrics for 1, 5, and 15 minutes;
   - `DiskSpace` — total and available filesystem storage space;
-  - `DiskInfo` — mounted block device and filesystem attributes.
+  - `DiskInfo` — mounted block device and filesystem attributes;
+  - `NetworkInterfaceInfo` — network interface details, MAC addresses, and packet/byte counters;
+  - `ThermalSensorInfo` — hardware thermal sensor readings and critical trip temperatures;
+  - `ProcessInfo` — detailed metadata for running system processes.
 - **Host, OS, and Kernel:**
   - `host_name`, `os_name`, `os_version`, `kernel_version`, `distribution_id`, `cpu_arch`, `uptime`, `boot_time`.
 - **Users and Privileges:**
@@ -30,6 +33,12 @@ All public components of `std.sysinfo` are loaded into the current scope:
   - `disk_space`, `disks`.
 - **Battery and Power:**
   - `battery_percent`, `is_battery_charging`.
+- **Network Interfaces & Traffic (std.sysinfox):**
+  - `network_interfaces`, `network_interface`.
+- **Hardware Thermal Sensors:**
+  - `thermal_sensors`.
+- **System Process Table:**
+  - `process_list`, `process_by_pid`.
 
 All of these items are also accessible when importing the whole standard library: `load std`.
 
@@ -96,6 +105,76 @@ public struct DiskInfo {
 - `available_space` — remaining available space in bytes.
 - `is_removable` — `true` if media is removable (such as USB flash or SD cards).
 - `is_read_only` — `true` if volume is mounted in read-only mode.
+
+### 3.4 NetworkInterfaceInfo
+
+Contains network interface attributes, link status, MAC address, and traffic packet/byte counters.
+
+```yukino
+public struct NetworkInterfaceInfo {
+    name: string
+    mac_address: string
+    is_up: bool
+    is_loopback: bool
+    rx_bytes: uint64
+    tx_bytes: uint64
+    rx_packets: uint64
+    tx_packets: uint64
+    rx_errors: uint64
+    tx_errors: uint64
+}
+```
+
+- `name` — interface system identifier (e.g. `"eth0"`, `"wlan0"`, `"lo"`).
+- `mac_address` — hardware MAC address string (e.g. `"9c:c7:d3:eb:e0:38"`).
+- `is_up` — `true` if interface link is operational and active.
+- `is_loopback` — `true` if loopback device (`lo`).
+- `rx_bytes` — cumulative received payload bytes.
+- `tx_bytes` — cumulative transmitted payload bytes.
+- `rx_packets` — cumulative received packets.
+- `tx_packets` — cumulative transmitted packets.
+- `rx_errors` — cumulative receive error count.
+- `tx_errors` — cumulative transmit error count.
+
+### 3.5 ThermalSensorInfo
+
+Represents hardware thermal zone or onboard sensor temperature metrics.
+
+```yukino
+public struct ThermalSensorInfo {
+    label: string
+    temperature_celsius: float32
+    critical_temp: float32?
+}
+```
+
+- `label` — device or sensor label identifier (e.g. `"k10temp Tctl"`, `"acpitz"`, `"coretemp Package id 0"`).
+- `temperature_celsius` — current temperature in degrees Celsius.
+- `critical_temp` — critical threshold temperature in degrees Celsius, or `null` if unspecified by hardware drivers.
+
+### 3.6 ProcessInfo
+
+Represents a running operating system process inspectable from the system process table.
+
+```yukino
+public struct ProcessInfo {
+    pid: uint32
+    parent_pid: uint32
+    name: string
+    cmdline: string
+    cpu_usage: float32
+    memory_rss: uint64
+    memory_virtual: uint64
+}
+```
+
+- `pid` — unique process identifier (PID).
+- `parent_pid` — parent process identifier (PPID).
+- `name` — executable name or process command moniker.
+- `cmdline` — full command-line invocation string with arguments.
+- `cpu_usage` — estimated processor utilization percentage.
+- `memory_rss` — resident set size (physical RAM occupied by process, in bytes).
+- `memory_virtual` — total allocated virtual address space, in bytes.
 
 ---
 
@@ -686,6 +765,135 @@ load std.io: println
 set charging = is_battery_charging()
 if charging != null {
     println("AC power connected: ${charging}")
+}
+```
+
+---
+
+## 10. Function Reference: Network Interfaces & Traffic
+
+### 10.1 network_interfaces
+
+Returns a list of all detected physical and virtual network interfaces along with traffic telemetry.
+
+```yukino
+public fun network_interfaces() -> NetworkInterfaceInfo[]
+```
+
+Returns a slice of `NetworkInterfaceInfo[]`. If no interfaces are found, returns an empty slice.
+
+This function never panics.
+
+```yukino
+load std.sysinfox: network_interfaces
+load std.io: println
+
+set ifaces = network_interfaces()
+for i in 0..ifaces.len() {
+    set iface = ifaces[i]
+    println("Interface: ${iface.name}, MAC: ${iface.mac_address}, Up: ${iface.is_up}, RX: ${iface.rx_bytes} bytes")
+}
+```
+
+### 10.2 network_interface (nullable)
+
+Finds a network interface by its exact system name.
+
+```yukino
+public fun network_interface(name: string) -> NetworkInterfaceInfo?
+```
+
+Returns a `NetworkInterfaceInfo` structure or `null` if no interface with the specified name exists.
+
+This function never panics.
+
+```yukino
+load std.sysinfox: network_interface
+load std.io: println
+
+set eth = network_interface("eth0")
+if eth != null {
+    println("Found eth0 with MAC: " + (eth?.mac_address ?? "no MAC"))
+} else {
+    println("Interface eth0 not found")
+}
+```
+
+---
+
+## 11. Function Reference: Hardware Thermal Sensors
+
+### 11.1 thermal_sensors
+
+Queries readings from available hardware thermal sensors across the CPU, GPU, motherboard, and drives.
+
+```yukino
+public fun thermal_sensors() -> ThermalSensorInfo[]
+```
+
+Returns a slice of `ThermalSensorInfo[]`. If thermal sensors are unsupported or unavailable on the current system, returns an empty slice.
+
+This function never panics.
+
+```yukino
+load std.sysinfox: thermal_sensors
+load std.io: println
+
+set sensors = thermal_sensors()
+for i in 0..sensors.len() {
+    set s = sensors[i]
+    println("Sensor [${s.label}]: " + cast(s.temperature_celsius, "string") + " °C")
+}
+```
+
+---
+
+## 12. Function Reference: System Process Table
+
+### 12.1 process_list
+
+Returns a snapshot of currently running operating system processes.
+
+```yukino
+public fun process_list() -> ProcessInfo[]
+```
+
+Returns a slice of `ProcessInfo[]`. If access to the process table is restricted, returns an empty slice.
+
+This function never panics.
+
+```yukino
+load std.sysinfox: process_list
+load std.io: println
+
+set procs = process_list()
+for i in 0..procs.len() {
+    set p = procs[i]
+    println("PID ${p.pid} (${p.name}): RSS = ${p.memory_rss} bytes")
+}
+```
+
+### 12.2 process_by_pid (nullable)
+
+Finds a process entry in the system process table by its unique process identifier (PID).
+
+```yukino
+public fun process_by_pid(pid: uint32) -> ProcessInfo?
+```
+
+Returns a `ProcessInfo` structure or `null` if no process matches the specified PID.
+
+This function never panics.
+
+```yukino
+load std.sysinfox: process_by_pid
+load std.io: println
+
+set proc = process_by_pid(1u32)
+if proc != null {
+    println("Init root process: ${proc?.name} (${proc?.cmdline})")
+} else {
+    println("PID 1 not found")
 }
 ```
 

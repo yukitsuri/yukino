@@ -319,4 +319,216 @@ println("Мьютекс уничтожен: ${ok}")
 
 ---
 
+## 5. Модуль std.sync: примитивы синхронизации
+
+Модуль `std.sync` является компаньоном `std.threads` и предоставляет высокоуровневые объектно-ориентированные примитивы синхронизации, разделения данных и межпоточного взаимодействия. Модуль импортируется отдельно и явно:
+
+```yukino
+load std.sync
+```
+
+> [!NOTE]
+> Модуль `std.threads` не реэкспортирует сущности `std.sync`. Чтобы использовать примитивы синхронизации, подключайте `load std.sync`.
+
+### 5.1 Структура ошибки SyncError
+
+```yukino
+public struct SyncError {
+    message: string
+    code: int32
+}
+```
+
+- `code: 401` — системная ошибка создания примитива или передан невалидный дескриптор (`0`).
+
+### 5.2 Класс Mutex (взаимная блокировка)
+
+Объектно-ориентированная обертка над системным мьютексом:
+- `fun init()` — конструктор (`init Mutex()` или фабрика `mutex()`).
+- `fun lock()` — захват блокировки.
+- `fun try_lock() -> bool` — неблокирующая попытка захвата (`true`, если мьютекс успешно захвачен).
+- `fun unlock()` — освобождение блокировки.
+- `fun destroy()` — освобождение внутренних ресурсов.
+- `fun get_handle() -> uint64` — дескриптор мьютекса.
+
+```yukino
+load std.sync: mutex, Mutex
+load std.io: println
+
+set m = mutex()
+m.lock()
+println("Критическая секция под защитой Mutex")
+m.unlock()
+m.destroy()
+```
+
+### 5.3 Класс RwLock (блокировка читателей-писателей)
+
+Предоставляет параллельный доступ для множества читателей либо эксклюзивный доступ для одного писателя:
+- `fun init()` / `rwlock() -> RwLock` — создание блокировки.
+- `fun read()` — блокирующий захват на чтение.
+- `fun try_read() -> bool` — неблокирующая попытка чтения.
+- `fun unlock_read()` — освобождение блокировки чтения.
+- `fun write()` — блокирующий захват на запись.
+- `fun try_write() -> bool` — неблокирующая попытка записи.
+- `fun unlock_write()` — освобождение блокировки записи.
+- `fun destroy()` — освобождение ресурсов.
+
+```yukino
+load std.sync: rwlock
+load std.io: println
+
+set rw = rwlock()
+rw.read()
+println("Параллельное чтение")
+rw.unlock_read()
+
+rw.write()
+println("Эксклюзивная запись")
+rw.unlock_write()
+rw.destroy()
+```
+
+### 5.4 Класс CondVar (условная переменная)
+
+Позволяет потокам ожидать выполнения условий, освобождая связанный мьютекс на время ожидания:
+- `fun init()` / `condvar() -> CondVar` — создание условной переменной.
+- `fun wait(ref m: Mutex)` — освобождает мьютекс `m`, ожидает уведомления и снова захватывает `m`.
+- `fun wait_handle(mutex_id: uint64)` — вариант ожидания по сырому дескриптору.
+- `fun wait_timeout(ref m: Mutex, ms: uint64) -> bool` — ожидание с таймаутом (возвращает `true`, если условие получено до истечения `ms`).
+- `fun notify_one()` — пробуждение одного ожидающего потока.
+- `fun notify_all()` — пробуждение всех ожидающих потоков.
+- `fun destroy()` — освобождение ресурсов.
+
+```yukino
+load std.sync: mutex, condvar
+load std.io: println
+
+set cv = condvar()
+set m = mutex()
+
+m.lock()
+set signaled = cv.wait_timeout(ref m, 50u64)
+m.unlock()
+
+cv.notify_one()
+cv.destroy()
+m.destroy()
+```
+
+### 5.5 Класс AtomicInt64 и класс AtomicBool (атомарные примитивы)
+
+Предоставляют аппаратные lock-free атомарные операции для счетчиков и флагов:
+- `fun init(init_val)` / `atomic_i64(init)` и `atomic_bool(init)` — инициализация.
+- `.get() -> int64` / `.get() -> bool` — чтение значения (`load`).
+- `.set(val)` — запись значения (`store`).
+- `.fetch_add(val: int64) -> int64` — атомарное прибавление (возвращает предыдущее значение).
+- `.fetch_sub(val: int64) -> int64` — атомарное вычитание.
+- `.swap(val) -> int64 / bool` — атомарный обмен.
+- `.compare_exchange(expected, desired) -> bool` — Compare-And-Swap (CAS).
+- `.destroy()` — освобождение дескриптора.
+
+```yukino
+load std.sync: atomic_i64, atomic_bool
+load std.io: println
+
+set counter = atomic_i64(0)
+counter.fetch_add(1)
+println("Счетчик: " + cast(counter.get(), "string"))
+
+set flag = atomic_bool(false)
+set ok = flag.compare_exchange(false, true)
+println("CAS успешен: " + cast(ok, "string"))
+```
+
+### 5.6 Класс Once (однократная инициализация)
+
+Гарантирует, что переданная подпрограмма будет выполнена ровно один раз, даже если несколько потоков вызывают ее одновременно:
+- `fun init()` / `once() -> Once` — создание.
+- `fun call_once(task: ptr<void>, arg: ptr<void> = null)` — вызов инициализирующей процедуры.
+- `fun is_completed() -> bool` — проверка завершения инициализации.
+- `fun destroy()` — освобождение ресурсов.
+
+```yukino
+load std.sync: once
+load std.io: println
+
+set init_once = once()
+if !init_once.is_completed() {
+    init_once.call_once(null, null)
+}
+println("Инициализация завершена: " + cast(init_once.is_completed(), "string"))
+```
+
+### 5.7 Класс Channel (межпоточные очереди сообщений)
+
+Предоставляет потокобезопасный канал передачи 64-битных данных (`int64`, числовые дескрипторы или сырые указатели `ptr<void>`):
+- `fun init(bound: int64 = 0)` / `channel(bound = 0) -> Channel` — создание канала (`bound = 0` — неограниченный, `bound > 0` — ограниченный).
+- `fun send_i64(val: int64) -> bool` — отправка числа в канал.
+- `fun recv_i64() -> int64?` — блокирующее чтение (возвращает `null`, если канал закрыт и пуст).
+- `fun try_recv_i64() -> int64?` — неблокирующее чтение (`null`, если пуст или закрыт).
+- `fun recv_timeout_i64(ms: int64) -> int64?` — чтение с таймаутом.
+- `fun send_ptr(p: ptr<void>) -> bool` — отправка указателя.
+- `fun recv_ptr() -> ptr<void>?` — чтение указателя.
+- `fun try_recv_ptr() -> ptr<void>?` — неблокирующее чтение указателя.
+- `fun close()` — закрытие канала для новых отправок.
+- `fun is_closed() -> bool` — проверка закрытия.
+- `fun len() -> int64` — текущее количество элементов в очереди.
+- `fun destroy()` — освобождение ресурсов канала.
+
+```yukino
+load std.sync: channel
+load std.io: println
+
+set ch = channel(10)
+ch.send_i64(100)
+ch.send_i64(200)
+
+set item = ch.recv_i64()
+if item != null {
+    println("Получено значение: " + cast(item ?? 0, "string"))
+}
+ch.close()
+ch.destroy()
+```
+
+### 5.8 Класс Semaphore (счетный семафор)
+
+Управляет доступом к пулу из $N$ ресурсов:
+- `fun init(permits: int64 = 1)` / `semaphore(permits = 1) -> Semaphore` — создание семафора.
+- `fun acquire() -> bool` — блокирующий захват одного разрешения.
+- `fun try_acquire() -> bool` — неблокирующая попытка захвата (`true`, если получено).
+- `fun release() -> bool` — освобождение разрешения.
+- `fun destroy()` — освобождение ресурсов.
+
+```yukino
+load std.sync: semaphore
+load std.io: println
+
+set sem = semaphore(2)
+if sem.acquire() {
+    println("Разрешение получено")
+    set _ = sem.release()
+}
+sem.destroy()
+```
+
+### 5.9 Класс Barrier (барьер синхронизации)
+
+Блокирует группу из $N$ потоков до тех пор, пока все они не дойдут до общей точки рандеву:
+- `fun init(parties: uint32)` / `barrier(parties) -> Barrier` — создание барьера.
+- `fun wait() -> bool` — ожидание всех участников. Возвращает `true` ровно для одного потока (лидера фазы) и `false` для остальных.
+- `fun destroy()` — освобождение ресурсов.
+
+```yukino
+load std.sync: barrier
+load std.io: println
+
+set bar = barrier(2u32)
+// Потоки вызывают bar.wait()
+bar.destroy()
+```
+
+---
+
 [← Назад: Модуль std.io](2-io.md) | [Вперед: Модуль std.platformio →](4-platformio.md)

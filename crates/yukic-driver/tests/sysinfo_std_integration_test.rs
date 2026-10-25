@@ -98,6 +98,33 @@ fun main() {
     set bat = battery_percent()
     set charging = is_battery_charging()
 
+    // 7. Sysinfox: Network Interfaces
+    set ifaces = network_interfaces()
+    if ifaces.len() == 0 {
+        fail(8, "network interfaces list not empty")
+    }
+    set lo_iface = network_interface("lo")
+    if lo_iface != null {
+        set is_loop = lo_iface?.is_loopback ?? false
+        if !is_loop {
+            fail(9, "lo interface must be loopback")
+        }
+    }
+
+    // 8. Sysinfox: Thermal Sensors
+    set thermals = thermal_sensors()
+
+    // 9. Sysinfox: Processes
+    set procs = process_list()
+    if procs.len() == 0 {
+        fail(10, "process list not empty")
+    }
+    set first_proc = procs[0]
+    set by_pid = process_by_pid(first_proc.pid)
+    if by_pid == null {
+        fail(11, "process_by_pid lookup failed")
+    }
+
     println("Sysinfo test passed successfully: OS=" + os + ", Arch=" + arch + ", LogicalCores=${logical}")
 }
 "#,
