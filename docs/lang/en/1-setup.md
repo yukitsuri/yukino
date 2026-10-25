@@ -94,8 +94,8 @@ export LIBCLANG_PATH=/path/to/libclang/lib
 Once the environment is configured, install both binaries from the release tag:
 
 ```sh
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked --package yukino
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked --package yukic-driver
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukino
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
 ```
 
 Cargo installs the binaries into `~/.cargo/bin`:
