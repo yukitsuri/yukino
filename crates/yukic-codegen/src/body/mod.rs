@@ -531,7 +531,11 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                     _ => {}
                 }
             }
-            let unwrapped = target_ty.unwrap_nullable();
+            let actual = match &target_ty {
+                Type::Ref { inner, .. } => inner.as_ref(),
+                other => other,
+            };
+            let unwrapped = actual.unwrap_nullable();
             let base_name = match unwrapped {
                 Type::Class(name) | Type::Struct(name) | Type::Interface(name) => Some(name),
                 _ => None,
@@ -580,7 +584,11 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
 
     fn field_semantic_ty(&self, target: &Expr, field_name: &str) -> Option<Type> {
         let target_ty = self.expr_semantic_ty(target)?;
-        let unwrapped = target_ty.unwrap_nullable();
+        let actual = match &target_ty {
+            Type::Ref { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        let unwrapped = actual.unwrap_nullable();
         match unwrapped {
             Type::Struct(name) => {
                 if let Some(layout) = self.registry.structs.get(&name) {

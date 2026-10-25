@@ -40,7 +40,10 @@ impl<'ctx> RegionManager<'ctx> {
             | Type::Array(_)
             | Type::Map(_, _)
             | Type::Class(_)
-            | Type::Interface(_) => true,
+            | Type::Interface(_)
+            | Type::Struct(_)
+            | Type::Enum(_) => true,
+            Type::Ref { inner, .. } => Self::is_regional_type(inner),
             Type::Union(variants) => variants.iter().any(Self::is_regional_type),
             _ => false,
         }

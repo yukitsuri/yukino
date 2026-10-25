@@ -124,6 +124,14 @@ pub fn resolve_lib_dir(path: &Path) -> PathBuf {
     if path.join("src").is_dir() {
         return path.join("src");
     }
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && (p.join("lib.ykn").is_file() || p.join("mod.ykn").is_file()) {
+                return p;
+            }
+        }
+    }
     path.to_path_buf()
 }
 

@@ -1970,8 +1970,8 @@ mod tests {
 
         assert!(codegen.module.verify().is_ok());
         let ir = codegen.emit_llvm_ir_to_string();
-        assert!(ir.contains("@_Y_argc = internal global i32 0"));
-        assert!(ir.contains("@_Y_argv = internal global ptr null"));
+        assert!(ir.contains("@_Y_argc = common global i32 0"));
+        assert!(ir.contains("@_Y_argv = common global ptr null"));
         assert!(ir.contains("store i32 %0, ptr @_Y_argc"));
         assert!(ir.contains("store ptr %1, ptr @_Y_argv"));
         assert!(ir.contains("call void @yukino_rt_get_args"));

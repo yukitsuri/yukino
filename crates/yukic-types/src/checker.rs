@@ -1977,6 +1977,35 @@ impl TypeChecker {
                 is_cfun: sig.is_cfun,
             });
         }
+        if segments.len() == 2 {
+            let enum_name = &segments[0].name;
+            let variant_name = &segments[1].name;
+            if let Some(enum_def) = self.env.lookup_enum(enum_name).cloned() {
+                if let Some(payload) = enum_def.variants.get(variant_name) {
+                    return match payload {
+                        None => Ok(Type::Enum(enum_name.clone())),
+                        Some(Type::Tuple(fields)) => {
+                            let params = fields
+                                .iter()
+                                .map(|ty| TypeParam::value(ty.clone()))
+                                .collect();
+                            Ok(Type::Fn {
+                                params,
+                                ret: Box::new(Type::Enum(enum_name.clone())),
+                                is_cfun: false,
+                            })
+                        }
+                        Some(single_ty) => {
+                            Ok(Type::Fn {
+                                params: vec![TypeParam::value(single_ty.clone())],
+                                ret: Box::new(Type::Enum(enum_name.clone())),
+                                is_cfun: false,
+                            })
+                        }
+                    };
+                }
+            }
+        }
         let diag = Diagnostic::error(ErrorCode::E0402, format!("symbol `{path}` not found"), span);
         self.diagnostics.push(diag.clone());
         Err(diag)
@@ -2278,11 +2307,50 @@ impl TypeChecker {
 
         let mut body_types = Vec::new();
         for arm in arms {
+            self.env.push_scope();
+            self.bind_pattern_vars(&arm.pattern, &target_ty);
             let arm_ty = self.check_block(&arm.body, None)?;
+            self.env.pop_scope();
             body_types.push(arm_ty);
         }
 
         Ok(Type::union(body_types))
+    }
+
+    fn bind_pattern_vars(&mut self, pattern: &Pattern, target_ty: &Type) {
+        match &pattern.kind {
+            PatternKind::Ident(id) if id.name != "else" => {
+                self.env
+                    .insert_var(id.name.clone(), target_ty.clone(), false, id.span);
+            }
+            PatternKind::Variant(opt_enum, var_id, sub_pats) => {
+                let enum_name = opt_enum.as_ref().map(|id| id.name.as_str()).unwrap_or_else(|| {
+                    if let Type::Enum(n) = target_ty {
+                        n.as_str()
+                    } else {
+                        ""
+                    }
+                });
+                if let Some(enum_def) = self.env.lookup_enum(enum_name).cloned() {
+                    if let Some(payload) = enum_def.variants.get(&var_id.name) {
+                        match payload {
+                            Some(Type::Tuple(elem_tys)) => {
+                                for (sub_pat, ty) in sub_pats.iter().zip(elem_tys) {
+                                    self.bind_pattern_vars(sub_pat, ty);
+                                }
+                            }
+                            Some(single_ty) => {
+                                if let Some(sub_pat) = sub_pats.first() {
+                                    self.bind_pattern_vars(sub_pat, single_ty);
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn infer_array(&mut self, elems: &[Expr], span: Span) -> Result<Type, Diagnostic> {

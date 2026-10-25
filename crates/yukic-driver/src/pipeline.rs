@@ -277,6 +277,24 @@ pub struct LoadedModule {
     pub tracked_files: Vec<PathBuf>,
 }
 
+fn extract_manifest_name(dir: &Path) -> Option<String> {
+    let manifest_path = if dir.join("lib.toml").is_file() {
+        Some(dir.join("lib.toml"))
+    } else if dir.join("yuki.toml").is_file() {
+        Some(dir.join("yuki.toml"))
+    } else {
+        None
+    };
+    let val = load_manifest_value(manifest_path.as_deref())?;
+    let table = val.as_table()?;
+    let section = table
+        .get("lib")
+        .or_else(|| table.get("package"))
+        .or_else(|| table.get("project"))
+        .and_then(toml::Value::as_table)?;
+    section.get("name").and_then(toml::Value::as_str).map(|s| s.to_string())
+}
+
 fn build_search_paths(
     config: &DriverConfig,
     manifest_value: Option<&toml::Value>,
@@ -284,10 +302,23 @@ fn build_search_paths(
 ) -> SearchPaths {
     let mut search_paths = SearchPaths::new();
     for inc in &config.include_dirs {
-        search_paths.add_search_dir(inc);
-        if let Some(name) = inc.file_name().and_then(|n| n.to_str()) {
-            if inc.join("lib.toml").is_file() || inc.join("yuki.toml").is_file() {
-                search_paths.add_lib(name.to_string(), inc.clone());
+        if inc.join("lib.toml").is_file() || inc.join("yuki.toml").is_file() {
+            let name = extract_manifest_name(inc)
+                .or_else(|| inc.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()));
+            if let Some(name) = name {
+                search_paths.add_lib(name, inc.clone());
+            }
+        } else {
+            search_paths.add_search_dir(inc);
+            if let Ok(entries) = std::fs::read_dir(inc) {
+                for entry in entries.flatten() {
+                    let child_path = entry.path();
+                    if child_path.is_dir() {
+                        if let Some(name) = extract_manifest_name(&child_path) {
+                            search_paths.add_lib(name, child_path);
+                        }
+                    }
+                }
             }
         }
     }
@@ -456,7 +487,7 @@ fn compute_canonical_module_name(
 ) -> String {
     let norm_path = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
     for lib in search_paths.libs() {
-        let actual_lib = yukic_resolve::module_path::resolve_lib_dir(&lib.path);
+        let actual_lib = yukic_resolve::module_path::resolve_lib_dir_for_package(&lib.path, &lib.name);
         let norm_lib = actual_lib.canonicalize().unwrap_or_else(|_| actual_lib);
         if let Ok(rel) = norm_path.strip_prefix(&norm_lib) {
             let without_ext = rel.with_extension("");
@@ -1926,7 +1957,12 @@ fn compile_ykn_file(
     search_paths.add_search_dir(&manifest_dir);
     search_paths.add_search_dir(&src_dir);
     if let Some(val) = macro_cfg.manifest_value.as_ref() {
-        if let Some(pkg_tbl) = val.get("package").or_else(|| val.get("project")).and_then(toml::Value::as_table) {
+        if let Some(pkg_tbl) = val
+            .get("package")
+            .or_else(|| val.get("project"))
+            .or_else(|| val.get("lib"))
+            .and_then(toml::Value::as_table)
+        {
             if let Some(pkg_name) = pkg_tbl.get("name").and_then(toml::Value::as_str) {
                 search_paths.add_lib(pkg_name.to_string(), manifest_dir.clone());
             }
