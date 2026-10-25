@@ -61,6 +61,9 @@ impl ModuleScope {
         binding: ScopeBinding,
     ) -> Result<(), Diagnostic> {
         if let Some(existing) = self.bindings.get(&name) {
+            if existing.symbol_id == binding.symbol_id {
+                return Ok(());
+            }
             return Err(build_conflict_diagnostic(
                 &name,
                 existing.span,

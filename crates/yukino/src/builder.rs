@@ -561,25 +561,45 @@ fn build_single_dependency(
         let _ = fs::remove_dir_all(&dep_cache_dir);
     }
     fs::create_dir_all(&dep_cache_dir).map_err(|e| ProjectError::Io(e.to_string()))?;
-    invoke_yukic_for_dep(
-        env.compiler,
-        &entry,
-        &dep_artifact,
-        dep_target,
-        &dep_cfg,
-        &chosen_profile,
-        Some(&dep_path),
-        env.host_manifest.as_deref(),
-        env.host_workspace.as_deref(),
-        Some(&dep_cache_dir),
-        &dep_spec.features,
-        env.dashboard,
-        env.no_lib_log,
-        env.no_warns,
-        env.threads,
-        env.cgunits,
-        is_macro,
-    )?;
+    if is_macro {
+        let macro_opts = BuildOptions {
+            project_dir: dep_dir.clone(),
+            profile: chosen_profile.clone(),
+            target: Some(dep_target.as_str().to_string()),
+            rebuild: should_rebuild,
+            refresh_deps: env.refresh_deps,
+            features: dep_spec.features.clone(),
+            no_lib_log: env.no_lib_log,
+            no_warns: env.no_warns,
+            threads: Some(env.threads),
+            cgunits: Some(env.cgunits),
+            ..BuildOptions::default()
+        };
+        let built_macro_path = build_project(&macro_opts)?;
+        if built_macro_path != dep_artifact {
+            fs::copy(&built_macro_path, &dep_artifact).map_err(|e| ProjectError::Io(e.to_string()))?;
+        }
+    } else {
+        invoke_yukic_for_dep(
+            env.compiler,
+            &entry,
+            &dep_artifact,
+            dep_target,
+            &dep_cfg,
+            &chosen_profile,
+            Some(&dep_path),
+            env.host_manifest.as_deref(),
+            env.host_workspace.as_deref(),
+            Some(&dep_cache_dir),
+            &dep_spec.features,
+            env.dashboard,
+            env.no_lib_log,
+            env.no_warns,
+            env.threads,
+            env.cgunits,
+            false,
+        )?;
+    }
 
     if !env.no_lib_log {
         if should_color() {

@@ -186,12 +186,12 @@ impl<'ctx> IntrinsicManager<'ctx> {
         if module.get_global("_Y_argc").is_none() {
             let argc_var = module.add_global(i32_ty, Some(AddressSpace::default()), "_Y_argc");
             argc_var.set_initializer(&i32_ty.const_int(0, false));
-            argc_var.set_linkage(Linkage::Internal);
+            argc_var.set_linkage(Linkage::Common);
         }
         if module.get_global("_Y_argv").is_none() {
             let argv_var = module.add_global(ptr_ty, Some(AddressSpace::default()), "_Y_argv");
             argv_var.set_initializer(&ptr_ty.const_null());
-            argv_var.set_linkage(Linkage::Internal);
+            argv_var.set_linkage(Linkage::Common);
         }
 
         // runtime slice helpers

@@ -17,6 +17,7 @@ use yukic_types::convert::ast_type_to_type;
 
 use super::{BodyCompiler, LoopContext};
 use crate::exception::{CleanupAction, ScopeKind};
+use crate::registry::EnumVariantLayout;
 
 impl<'ctx> BodyCompiler<'_, 'ctx> {
     pub fn compile_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
@@ -35,6 +36,15 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                         .unwrap_or_else(|| fn_name.clone());
                     if let Some(fn_val) = self.module.get_function(&c_sym) {
                         return Ok(fn_val.as_global_value().as_pointer_value().into());
+                    }
+                }
+                if idents.len() == 2 {
+                    let enum_name = &idents[0].name;
+                    let variant_name = &idents[1].name;
+                    if let Some(enum_layout) = self.registry.enums.get(enum_name).cloned() {
+                        if let Some(variant) = enum_layout.variants.iter().find(|v| v.name == *variant_name) {
+                            return self.compile_enum_instantiation(enum_name, variant, &[]);
+                        }
                     }
                 }
                 let name = idents.last().map_or("", |id| &id.name);
@@ -1818,6 +1828,70 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
     }
 
+    pub(crate) fn compile_enum_instantiation(
+        &mut self,
+        enum_name: &str,
+        variant: &EnumVariantLayout,
+        arg_vals: &[BasicValueEnum<'ctx>],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+        let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+        let enum_st = lowerer.lower_named_enum(enum_name)?;
+        let alloca = self.create_entry_alloca(enum_st.into(), &format!("enum.{enum_name}.{}", variant.name))?;
+
+        let zero = enum_st.const_zero();
+        self.builder.build_store(alloca, zero).map_err(|e| e.to_string())?;
+
+        let tag_ptr = self
+            .builder
+            .build_struct_gep(enum_st, alloca, 0, "tag_ptr")
+            .map_err(|e| e.to_string())?;
+        let tag_val = self.context.i32_type().const_int(variant.tag as u64, false);
+        self.builder
+            .build_store(tag_ptr, tag_val)
+            .map_err(|e| e.to_string())?;
+
+        if !variant.payload.is_empty() && !arg_vals.is_empty() {
+            let mut payload_field_tys = Vec::with_capacity(variant.payload.len());
+            for p in &variant.payload {
+                payload_field_tys.push(lowerer.lower_type(p)?);
+            }
+            let payload_st = self.context.struct_type(&payload_field_tys, false);
+            let payload_buf_ptr = self
+                .builder
+                .build_struct_gep(enum_st, alloca, 1, "payload_buf")
+                .map_err(|e| e.to_string())?;
+            let typed_payload_ptr = self
+                .builder
+                .build_bit_cast(
+                    payload_buf_ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "typed_payload",
+                )
+                .map_err(|e| e.to_string())?
+                .into_pointer_value();
+
+            for (idx, arg_val) in arg_vals.iter().enumerate() {
+                if idx >= variant.payload.len() {
+                    break;
+                }
+                let field_ptr = self
+                    .builder
+                    .build_struct_gep(payload_st, typed_payload_ptr, idx as u32, &format!("p_{idx}"))
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_store(field_ptr, *arg_val)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        let val = self
+            .builder
+            .build_load(enum_st, alloca, "enum_val")
+            .map_err(|e| e.to_string())?;
+        Ok(val)
+    }
+
     fn compile_pattern_match(
         &mut self,
         target_val: BasicValueEnum<'ctx>,
@@ -1840,6 +1914,38 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 let lit_val = self.compile_literal(lit);
                 self.compile_value_equality(target_val, lit_val)
             }
+            PatternKind::Variant(opt_enum, var_ident, _) => {
+                let mut found_variant = None;
+                if let Some(enum_id) = opt_enum {
+                    if let Some(enum_layout) = self.registry.enums.get(&enum_id.name) {
+                        if let Some(v) = enum_layout.variants.iter().find(|v| v.name == var_ident.name) {
+                            found_variant = Some((enum_layout.name.clone(), v.clone()));
+                        }
+                    }
+                } else {
+                    for enum_layout in self.registry.enums.values() {
+                        if let Some(v) = enum_layout.variants.iter().find(|v| v.name == var_ident.name) {
+                            found_variant = Some((enum_layout.name.clone(), v.clone()));
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((enum_name, variant)) = found_variant {
+                    let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+        let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+                    let enum_st = lowerer.lower_named_enum(&enum_name)?;
+                    let alloca = self.create_entry_alloca(enum_st.into(), "sw.enum_tgt")?;
+                    self.builder.build_store(alloca, target_val).map_err(|e| e.to_string())?;
+
+                    let tag_ptr = self.builder.build_struct_gep(enum_st, alloca, 0, "sw.tag_ptr").map_err(|e| e.to_string())?;
+                    let tag_val = self.builder.build_load(self.context.i32_type(), tag_ptr, "sw.tag").map_err(|e| e.to_string())?.into_int_value();
+                    let expected_tag = self.context.i32_type().const_int(variant.tag as u64, false);
+                    self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_val, expected_tag, "sw.tag_cmp").map_err(|e| e.to_string())
+                } else {
+                    Err(format!("unknown enum variant '{}'", var_ident.name))
+                }
+            }
             PatternKind::Or(pats) => {
                 let mut matched = bool_ty.const_int(0, false);
                 for p in pats {
@@ -1853,6 +1959,81 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             }
             _ => Ok(bool_ty.const_int(1, false)),
         }
+    }
+
+    fn unpack_pattern_bindings(
+        &mut self,
+        target_val: BasicValueEnum<'ctx>,
+        pattern: &Pattern,
+    ) -> Result<(), String> {
+        match &pattern.kind {
+            PatternKind::Ident(id) if id.name != "else" => {
+                let var_alloca = self
+                    .create_entry_alloca(target_val.get_type(), &id.name)?;
+                self.builder
+                    .build_store(var_alloca, target_val)
+                    .map_err(|e| e.to_string())?;
+                self.add_local(id.name.clone(), var_alloca, target_val.get_type());
+            }
+            PatternKind::Variant(opt_enum, var_ident, sub_pats) => {
+                if sub_pats.is_empty() {
+                    return Ok(());
+                }
+                let mut found_variant = None;
+                if let Some(enum_id) = opt_enum {
+                    if let Some(enum_layout) = self.registry.enums.get(&enum_id.name) {
+                        if let Some(v) = enum_layout.variants.iter().find(|v| v.name == var_ident.name) {
+                            found_variant = Some((enum_layout.name.clone(), v.clone()));
+                        }
+                    }
+                } else {
+                    for enum_layout in self.registry.enums.values() {
+                        if let Some(v) = enum_layout.variants.iter().find(|v| v.name == var_ident.name) {
+                            found_variant = Some((enum_layout.name.clone(), v.clone()));
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((enum_name, variant)) = found_variant {
+                    if !variant.payload.is_empty() {
+                        let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+        let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+                        let enum_st = lowerer.lower_named_enum(&enum_name)?;
+                        let alloca = self.create_entry_alloca(enum_st.into(), "sw.enum_bind")?;
+                        self.builder.build_store(alloca, target_val).map_err(|e| e.to_string())?;
+
+                        let mut payload_field_tys = Vec::with_capacity(variant.payload.len());
+                        for p in &variant.payload {
+                            payload_field_tys.push(lowerer.lower_type(p)?);
+                        }
+                        let payload_st = self.context.struct_type(&payload_field_tys, false);
+                        let payload_buf_ptr = self.builder.build_struct_gep(enum_st, alloca, 1, "sw.payload_buf").map_err(|e| e.to_string())?;
+                        let typed_payload_ptr = self.builder.build_bit_cast(
+                            payload_buf_ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "sw.typed_payload",
+                        ).map_err(|e| e.to_string())?.into_pointer_value();
+
+                        for (idx, sub_pat) in sub_pats.iter().enumerate() {
+                            if idx >= variant.payload.len() {
+                                break;
+                            }
+                            if let PatternKind::Ident(id) = &sub_pat.kind {
+                                let fty = payload_field_tys[idx];
+                                let field_ptr = self.builder.build_struct_gep(payload_st, typed_payload_ptr, idx as u32, &format!("{}.ptr", id.name)).map_err(|e| e.to_string())?;
+                                let field_val = self.builder.build_load(fty, field_ptr, &id.name).map_err(|e| e.to_string())?;
+                                let var_alloca = self.create_entry_alloca(fty, &id.name)?;
+                                self.builder.build_store(var_alloca, field_val).map_err(|e| e.to_string())?;
+                                self.add_local_with_ty(id.name.clone(), var_alloca, fty, Some(variant.payload[idx].clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn compile_switch(
@@ -1885,7 +2066,10 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 .map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(arm_bb);
+            self.push_scope();
+            self.unpack_pattern_bindings(target_val, &arm.pattern)?;
             let val = self.compile_block(&arm.body)?;
+            self.pop_scope();
             if !self.is_terminated() {
                 if let Some(v) = val {
                     let (slot, ty) = match res_slot {
@@ -2234,12 +2418,6 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .get_struct_type(&format!("struct.{}", ident.name))
             .or_else(|| self.context.get_struct_type(&format!("cstruct.{}", ident.name)))
             .or_else(|| {
-                // Named cstruct types are created lazily by TypeLowerer;
-                // instantiate the layout from the registry so literals
-                // get the declared field types instead of value types.
-                if !self.registry.cstructs.contains_key(&ident.name) {
-                    return None;
-                }
                 let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
                 let lowerer = crate::types::TypeLowerer::new(
                     self.context,
@@ -2247,9 +2425,18 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     self.target,
                     self.registry,
                 );
-                match lowerer.lower_type(&Type::Cstruct(ident.name.clone())) {
-                    Ok(BasicTypeEnum::StructType(st)) => Some(st),
-                    _ => None,
+                if self.registry.structs.contains_key(&ident.name) {
+                    match lowerer.lower_type(&Type::Struct(ident.name.clone())) {
+                        Ok(BasicTypeEnum::StructType(st)) => Some(st),
+                        _ => None,
+                    }
+                } else if self.registry.cstructs.contains_key(&ident.name) {
+                    match lowerer.lower_type(&Type::Cstruct(ident.name.clone())) {
+                        Ok(BasicTypeEnum::StructType(st)) => Some(st),
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
             })
             .unwrap_or_else(|| self.context.struct_type(&types, false));
@@ -2298,11 +2485,31 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 Some(Type::Ref { inner, .. }) => Some(inner.as_ref()),
                 other => other.as_ref(),
             };
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let lowerer =
+                crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
             if let Some(Type::Class(cname)) = actual_ty {
-                let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
-                let lowerer =
-                    crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
                 let struct_ty = lowerer.class_instance_type(&cname)?;
+                let field_ty = struct_ty
+                    .get_field_type_at_index(field_idx)
+                    .unwrap_or_else(|| self.context.i64_type().into());
+                let gep = self
+                    .builder
+                    .build_struct_gep(struct_ty, pv, field_idx, &field.name)
+                    .map_err(|e| e.to_string())?;
+                return Ok((gep, field_ty));
+            } else if let Some(Type::Struct(sname)) = actual_ty {
+                let struct_ty = lowerer.lower_named_struct(&sname)?;
+                let field_ty = struct_ty
+                    .get_field_type_at_index(field_idx)
+                    .unwrap_or_else(|| self.context.i64_type().into());
+                let gep = self
+                    .builder
+                    .build_struct_gep(struct_ty, pv, field_idx, &field.name)
+                    .map_err(|e| e.to_string())?;
+                return Ok((gep, field_ty));
+            } else if let Some(Type::Cstruct(sname)) = actual_ty {
+                let struct_ty = lowerer.lower_named_cstruct(&sname)?;
                 let field_ty = struct_ty
                     .get_field_type_at_index(field_idx)
                     .unwrap_or_else(|| self.context.i64_type().into());
@@ -2417,12 +2624,17 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             let pv = target_val.into_pointer_value();
             let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
             let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
-            let struct_ty = match self.expr_semantic_ty(target) {
-                Some(Type::Struct(ref sname)) => match lowerer.lower_type(&Type::Struct(sname.clone())) {
+            let sem_ty = self.expr_semantic_ty(target);
+            let actual_ty = match &sem_ty {
+                Some(Type::Ref { inner, .. }) => Some(inner.as_ref()),
+                other => other.as_ref(),
+            };
+            let struct_ty = match actual_ty {
+                Some(Type::Struct(sname)) => match lowerer.lower_type(&Type::Struct((*sname).clone())) {
                     Ok(BasicTypeEnum::StructType(st)) => Some(st),
                     _ => None,
                 },
-                Some(Type::Class(ref cname)) => lowerer.class_instance_type(cname).ok(),
+                Some(Type::Class(cname)) => lowerer.class_instance_type(cname).ok(),
                 _ => None,
             };
             if let Some(st) = struct_ty {
@@ -2716,7 +2928,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             return Some(idx);
         }
         if let Some(sem) = self.expr_semantic_ty(target) {
-            let unwrapped = sem.unwrap_nullable();
+            let actual = match &sem {
+                Type::Ref { inner, .. } => inner.as_ref(),
+                other => other,
+            };
+            let unwrapped = actual.unwrap_nullable();
             match unwrapped {
                 Type::Struct(name) => {
                     if let Some(layout) = self.registry.structs.get(&name) {

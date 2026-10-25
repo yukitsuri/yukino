@@ -60,6 +60,15 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                         .unwrap_or_else(|| fn_name.clone());
                     return self.resolve_and_emit_c_fn_call(&c_sym, &arg_vals);
                 }
+                if idents.len() == 2 {
+                    let enum_name = &idents[0].name;
+                    let variant_name = &idents[1].name;
+                    if let Some(enum_layout) = self.registry.enums.get(enum_name).cloned() {
+                        if let Some(variant) = enum_layout.variants.iter().find(|v| v.name == *variant_name) {
+                            return self.compile_enum_instantiation(enum_name, variant, &arg_vals);
+                        }
+                    }
+                }
                 let name = idents.last().map_or("", |id| &id.name);
                 self.resolve_and_emit_fn_call(name, &arg_vals)
             }
