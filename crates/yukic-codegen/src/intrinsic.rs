@@ -489,9 +489,13 @@ impl<'ctx> IntrinsicManager<'ctx> {
             }
             BasicValueEnum::PointerValue(pv) => {
                 // len is at field index 1 in both string and slice types
-                let str_ty = self.string_type();
+                let slice_ty = self.slice_type();
                 let gep = builder
-                    .build_struct_gep(str_ty, pv, 1, "len_gep")
+                    .build_struct_gep(slice_ty, pv, 1, "len_gep")
+                    .or_else(|_| {
+                        let str_ty = self.string_type();
+                        builder.build_struct_gep(str_ty, pv, 1, "len_gep")
+                    })
                     .map_err(|e| e.to_string())?;
                 let val = builder
                     .build_load(self.context.i64_type(), gep, "len")
@@ -543,9 +547,13 @@ impl<'ctx> IntrinsicManager<'ctx> {
             }
             BasicValueEnum::PointerValue(pv) => {
                 // buf ptr is at field index 0 in both str and slice layouts
-                let str_ty = self.string_type();
+                let slice_ty = self.slice_type();
                 let gep = builder
-                    .build_struct_gep(str_ty, pv, 0, "ptr_gep")
+                    .build_struct_gep(slice_ty, pv, 0, "ptr_gep")
+                    .or_else(|_| {
+                        let str_ty = self.string_type();
+                        builder.build_struct_gep(str_ty, pv, 0, "ptr_gep")
+                    })
                     .map_err(|e| e.to_string())?;
                 let val = builder
                     .build_load(self.ptr_type(), gep, "as_ptr")

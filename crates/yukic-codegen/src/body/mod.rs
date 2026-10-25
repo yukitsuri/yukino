@@ -631,13 +631,17 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             }
 
             if param.is_ref {
+                let unref_sem = match &sem_ty {
+                    Some(Type::Ref { inner, .. }) => Some(*inner.clone()),
+                    other => other.clone(),
+                };
                 let ptr = param_val.into_pointer_value();
-                let inner_ty = if let Some(ref t) = sem_ty {
+                let inner_ty = if let Some(ref t) = unref_sem {
                     self.lower_type(t)?
                 } else {
                     param_val.get_type()
                 };
-                self.add_local_with_ty(param.name.name.clone(), ptr, inner_ty, sem_ty);
+                self.add_local_with_ty(param.name.name.clone(), ptr, inner_ty, unref_sem);
                 continue;
             }
 
@@ -696,13 +700,17 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             }
 
             if param.is_ref {
+                let unref_sem = match &sem_ty {
+                    Some(Type::Ref { inner, .. }) => Some(*inner.clone()),
+                    other => other.clone(),
+                };
                 let ptr = param_val.into_pointer_value();
-                let inner_ty = if let Some(ref t) = sem_ty {
+                let inner_ty = if let Some(ref t) = unref_sem {
                     self.lower_type(t)?
                 } else {
                     param_val.get_type()
                 };
-                self.add_local_with_ty(param.name.name.clone(), ptr, inner_ty, sem_ty);
+                self.add_local_with_ty(param.name.name.clone(), ptr, inner_ty, unref_sem);
                 arg_idx += 1;
                 continue;
             }

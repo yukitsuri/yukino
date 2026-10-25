@@ -220,6 +220,30 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         if let Some(Type::Class(class_name)) = unwrapped.as_ref() {
             return self.compile_class_instance_method_call(class_name, target_val, method, args);
         }
+        let target_val = if let Some(Type::Ref { inner, .. }) = target_ty {
+            if target_val.is_pointer_value() {
+                let pv = target_val.into_pointer_value();
+                match inner.as_ref() {
+                    Type::Array(_) | Type::Bytes => {
+                        let slice_ty = self.intrinsic.slice_type();
+                        self.builder
+                            .build_load(slice_ty, pv, "deref.slice")
+                            .map_err(|e| e.to_string())?
+                    }
+                    Type::String => {
+                        let str_ty = self.intrinsic.string_type();
+                        self.builder
+                            .build_load(str_ty, pv, "deref.str")
+                            .map_err(|e| e.to_string())?
+                    }
+                    _ => target_val,
+                }
+            } else {
+                target_val
+            }
+        } else {
+            target_val
+        };
         match method.name.as_str() {
             "as_ptr" => {
                 let ptr = self.intrinsic.emit_slice_as_ptr(self.builder, target_val)?;

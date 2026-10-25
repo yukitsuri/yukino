@@ -2293,7 +2293,12 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         let target_val = self.compile_expr(target)?;
         if target_val.is_pointer_value() {
             let pv = target_val.into_pointer_value();
-            if let Some(Type::Class(cname)) = self.expr_semantic_ty(target) {
+            let sem_ty = self.expr_semantic_ty(target);
+            let actual_ty = match &sem_ty {
+                Some(Type::Ref { inner, .. }) => Some(inner.as_ref()),
+                other => other.as_ref(),
+            };
+            if let Some(Type::Class(cname)) = actual_ty {
                 let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
                 let lowerer =
                     crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
@@ -2325,7 +2330,10 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 let is_struct_semantic = var
                     .semantic_ty
                     .as_ref()
-                    .map(|t| matches!(t, Type::Struct(_) | Type::Cstruct(_)))
+                    .map(|t| match t {
+                        Type::Ref { inner, .. } => matches!(inner.as_ref(), Type::Struct(_) | Type::Cstruct(_)),
+                        _ => matches!(t, Type::Struct(_) | Type::Cstruct(_)),
+                    })
                     .unwrap_or(true);
                 if !is_struct_semantic {
                     return None;
@@ -3254,15 +3262,36 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         for (i, p) in fun.params.iter().enumerate() {
             let param_val = closure_fn.get_nth_param((first_user_idx + i) as u32).unwrap();
             param_val.set_name(&p.name.name);
+            let sem_ty = p
+                .ty
+                .as_ref()
+                .map(|t| self.registry.canonicalize_type(&ast_type_to_type(t)));
+            if p.is_ref {
+                let unref_sem = match &sem_ty {
+                    Some(Type::Ref { inner, .. }) => Some(*inner.clone()),
+                    other => other.clone(),
+                };
+                let ptr = param_val.into_pointer_value();
+                let inner_ty = if let Some(ref t) = unref_sem {
+                    self.lower_type(t)?
+                } else {
+                    param_val.get_type()
+                };
+                self.scopes.last_mut().unwrap().insert(
+                    p.name.name.clone(),
+                    super::LocalVar {
+                        ptr,
+                        ty: inner_ty,
+                        semantic_ty: unref_sem,
+                    },
+                );
+                continue;
+            }
             let alloca = self
                 .builder
                 .build_alloca(param_val.get_type(), &p.name.name)
                 .map_err(|e| e.to_string())?;
             self.builder.build_store(alloca, param_val).map_err(|e| e.to_string())?;
-            let sem_ty = p
-                .ty
-                .as_ref()
-                .map(|t| self.registry.canonicalize_type(&ast_type_to_type(t)));
             self.scopes.last_mut().unwrap().insert(
                 p.name.name.clone(),
                 super::LocalVar {
