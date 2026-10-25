@@ -6,10 +6,16 @@ public struct ListIndexError {
 public class List<T> {
     items: int64[]
 
+    #[inline_always]
     public fun init() { rewrite this.items = [] }
+
+    #[inline_always]
     public fun push(item: int64) { this.items.push(item) }
+
+    #[inline_always]
     public fun pop() -> int64? { return this.items.pop() }
 
+    #[inline]
     public fun del(index: int64) {
         if index < 0 || index >= this.items.len() {
             panic(ListIndexError {
@@ -20,6 +26,7 @@ public class List<T> {
         this.items.del(index)
     }
 
+    #[inline]
     public fun get(index: int64) -> int64 {
         if index < 0 || index >= this.items.len() {
             panic(ListIndexError {
@@ -30,6 +37,7 @@ public class List<T> {
         return this.items[index]
     }
 
+    #[inline]
     public fun set_at(index: int64, item: int64) {
         if index < 0 || index >= this.items.len() {
             panic(ListIndexError {
@@ -40,14 +48,21 @@ public class List<T> {
         rewrite this.items[index] = item
     }
 
+    #[inline_always]
     public fun len() -> int64 { return this.items.len() }
+
+    #[inline_always]
     public fun is_empty() -> bool { return this.items.is_empty() }
+
+    #[inline_always]
     public fun clear() { this.items.clear() }
 
+    #[inline_always]
     public fun reserve(additional: int64) {
         this.items.reserve(additional)
     }
 
+    #[inline]
     public fun contains(item: int64) -> bool {
         set i: int64 = 0
         while i < this.items.len() {
@@ -57,6 +72,7 @@ public class List<T> {
         return false
     }
 
+    #[inline]
     public fun index_of(item: int64) -> int64 {
         set i: int64 = 0
         while i < this.items.len() {
@@ -86,6 +102,7 @@ public class List<T> {
         }
     }
 
+    #[inline_always]
     public fun to_array() -> int64[] {
         return this.items.cp()
     }

@@ -20,6 +20,7 @@ public fun bytes_to_hex(ref data: bytes) -> string {
     return res
 }
 
+#[inline_always, stable]
 fun hex_char_to_nibble(b: uint8) -> int32 {
     switch b {
         48u8 -> { return 0 }
@@ -80,6 +81,7 @@ public fun hex_to_bytes(hex: string) -> bytes {
     return from_raw_parts(raw.as_ptr(), count, count)
 }
 
+#[inline]
 public fun constant_time_eq(ref a: bytes, ref b: bytes) -> bool {
     if a.len() != b.len() { return false }
     set diff: uint8 = 0u8
@@ -90,6 +92,7 @@ public fun constant_time_eq(ref a: bytes, ref b: bytes) -> bool {
     return diff == 0u8
 }
 
+#[inline]
 public fun constant_time_eq_str(a: string, b: string) -> bool {
     if a.len() != b.len() { return false }
     set diff: uint8 = 0u8
@@ -100,6 +103,7 @@ public fun constant_time_eq_str(a: string, b: string) -> bool {
     return diff == 0u8
 }
 
+#[inline_always]
 public fun equal(a: string, b: string) -> bool {
     return constant_time_eq_str(a, b)
 }

@@ -19,16 +19,19 @@ public struct ZipError {
     code: int32
 }
 
+#[cold, noreturn]
 fun panic_zip_error(msg: string, code: int32) {
     panic(ZipError { message: msg, code: code })
 }
 
+#[inline_always]
 fun read_u16(ref data: bytes, offset: int64) -> uint16 {
     set b0 = cast(data[offset], "uint16")
     set b1 = cast(data[offset + 1], "uint16")
     return b0 | (b1 << 8)
 }
 
+#[inline_always]
 fun read_u32(ref data: bytes, offset: int64) -> uint32 {
     set b0 = cast(data[offset], "uint32")
     set b1 = cast(data[offset + 1], "uint32")

@@ -47,16 +47,20 @@ public interface Stream<T> {
 
 public interface Seekable { fun seek(offset: int64, whence: int32) -> int64 }
 
+#[inline]
 public fun print(msg: string) {
     yukistd_io_write_stdout(msg.as_ptr(), msg.len(), false)
 }
 
+#[inline]
 public fun println(msg: string) { print(msg); print("\n") }
 
+#[inline]
 public fun eprint(msg: string) {
     yukistd_io_write_stderr(msg.as_ptr(), msg.len(), false)
 }
 
+#[inline]
 public fun eprintln(msg: string) { eprint(msg); eprint("\n") }
 
 public fun flush() -> int32 {
@@ -164,9 +168,16 @@ public fun read_exact(buf: ptr<uint8>, n: int64) -> int64 {
     return res
 }
 
+#[inline_always]
 public fun is_stdin_terminal() -> bool { return yukistd_io_is_terminal(0) }
+
+#[inline_always]
 public fun is_stdout_terminal() -> bool { return yukistd_io_is_terminal(1) }
+
+#[inline_always]
 public fun is_stderr_terminal() -> bool { return yukistd_io_is_terminal(2) }
+
+#[inline_always]
 public fun is_terminal() -> bool { return is_stdout_terminal() }
 
 public fun poll_readable(timeout_ms: int64 = 0) -> bool {
@@ -175,11 +186,22 @@ public fun poll_readable(timeout_ms: int64 = 0) -> bool {
     return yukistd_io_bg_poll(0)
 }
 
+#[inline_always]
 public fun enable_background_reader() { yukistd_io_bg_enable() }
+
+#[inline_always]
 public fun read_char_async() -> int32 { return yukistd_io_bg_read_byte() }
+
+#[inline_always]
 public fun lock_stdout() { yukistd_io_lock_stdout() }
+
+#[inline_always]
 public fun unlock_stdout() { yukistd_io_unlock_stdout() }
+
+#[inline_always]
 public fun lock_stdin() { yukistd_io_lock_stdin() }
+
+#[inline_always]
 public fun unlock_stdin() { yukistd_io_unlock_stdin() }
 
 public fun terminal_size() -> (int32, int32) {

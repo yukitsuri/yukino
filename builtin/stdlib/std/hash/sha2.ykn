@@ -1,6 +1,7 @@
 load ..fs.files: file_size, open_read, File
 load .common: HashError, bytes_to_hex
 
+#[inline_always, stable]
 fun k256(i: int64) -> uint32 {
     switch i {
         0 -> { return 0x428a2f98u32 }
@@ -72,36 +73,44 @@ fun k256(i: int64) -> uint32 {
     return 0u32
 }
 
+#[inline_always, stable]
 fun rotr32(x: uint32, n: int64) -> uint32 {
     set nu: uint32 = cast(n, "uint32")
     set diff: uint32 = cast(32 - n, "uint32")
     return (x >> nu) | (x << diff)
 }
 
+#[inline_always, stable]
 fun ch32(x: uint32, y: uint32, z: uint32) -> uint32 {
     return (x & y) ^ ((~x) & z)
 }
 
+#[inline_always, stable]
 fun maj32(x: uint32, y: uint32, z: uint32) -> uint32 {
     return (x & y) ^ (x & z) ^ (y & z)
 }
 
+#[inline_always, stable]
 fun sigma0_256(x: uint32) -> uint32 {
     return rotr32(x, 2) ^ rotr32(x, 13) ^ rotr32(x, 22)
 }
 
+#[inline_always, stable]
 fun sigma1_256(x: uint32) -> uint32 {
     return rotr32(x, 6) ^ rotr32(x, 11) ^ rotr32(x, 25)
 }
 
+#[inline_always, stable]
 fun gamma0_256(x: uint32) -> uint32 {
     return rotr32(x, 7) ^ rotr32(x, 18) ^ (x >> 3u32)
 }
 
+#[inline_always, stable]
 fun gamma1_256(x: uint32) -> uint32 {
     return rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10u32)
 }
 
+#[inline_always]
 fun load32_be(ref data: bytes, offset: int64) -> uint32 {
     return (cast(data[offset], "uint32") << 24u32) |
            (cast(data[offset + 1], "uint32") << 16u32) |
@@ -538,6 +547,7 @@ public fun sha256_file(path: string) -> string {
     return st.finish_hex()
 }
 
+#[inline_always, stable]
 fun k512(i: int64) -> uint64 {
     switch i {
         0 -> { return 0x428a2f98d728ae22u64 }
@@ -625,36 +635,44 @@ fun k512(i: int64) -> uint64 {
     return 0u64
 }
 
+#[inline_always, stable]
 fun rotr64(x: uint64, n: int64) -> uint64 {
     set nu: uint64 = cast(n, "uint64")
     set diff: uint64 = cast(64 - n, "uint64")
     return (x >> nu) | (x << diff)
 }
 
+#[inline_always, stable]
 fun ch64(x: uint64, y: uint64, z: uint64) -> uint64 {
     return (x & y) ^ ((~x) & z)
 }
 
+#[inline_always, stable]
 fun maj64(x: uint64, y: uint64, z: uint64) -> uint64 {
     return (x & y) ^ (x & z) ^ (y & z)
 }
 
+#[inline_always, stable]
 fun sigma0_512(x: uint64) -> uint64 {
     return rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39)
 }
 
+#[inline_always, stable]
 fun sigma1_512(x: uint64) -> uint64 {
     return rotr64(x, 14) ^ rotr64(x, 18) ^ rotr64(x, 41)
 }
 
+#[inline_always, stable]
 fun gamma0_512(x: uint64) -> uint64 {
     return rotr64(x, 1) ^ rotr64(x, 8) ^ (x >> 7u64)
 }
 
+#[inline_always, stable]
 fun gamma1_512(x: uint64) -> uint64 {
     return rotr64(x, 19) ^ rotr64(x, 61) ^ (x >> 6u64)
 }
 
+#[inline_always]
 fun load64_be(ref data: bytes, offset: int64) -> uint64 {
     return (cast(data[offset], "uint64") << 56u64) |
            (cast(data[offset + 1], "uint64") << 48u64) |

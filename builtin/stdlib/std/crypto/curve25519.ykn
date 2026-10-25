@@ -1,3 +1,4 @@
+#[inline]
 public fun gf_new() -> int64[] {
     set o: int64[] = []
     for i in 0..16 {
@@ -6,6 +7,7 @@ public fun gf_new() -> int64[] {
     return o
 }
 
+#[inline]
 public fun car25519(ref ~o: int64[]) {
     for i in 0..16 {
         rewrite o[i] = o[i] + 65536
@@ -19,6 +21,7 @@ public fun car25519(ref ~o: int64[]) {
     }
 }
 
+#[inline]
 public fun gf_cswap(ref ~p: int64[], ref ~q: int64[], b: int64) {
     set mask: int64 = ~(b - 1)
     for i in 0..16 {
@@ -28,6 +31,7 @@ public fun gf_cswap(ref ~p: int64[], ref ~q: int64[], b: int64) {
     }
 }
 
+#[inline]
 public fun gf_add(ref a: int64[], ref b: int64[]) -> int64[] {
     set o: int64[] = []
     for i in 0..16 {
@@ -36,6 +40,7 @@ public fun gf_add(ref a: int64[], ref b: int64[]) -> int64[] {
     return o
 }
 
+#[inline]
 public fun gf_sub(ref a: int64[], ref b: int64[]) -> int64[] {
     set o: int64[] = []
     for i in 0..16 {
@@ -66,6 +71,7 @@ public fun gf_mul(ref a: int64[], ref b: int64[]) -> int64[] {
     return o
 }
 
+#[inline_always]
 public fun gf_sqr(ref a: int64[]) -> int64[] {
     return gf_mul(ref a, ref a)
 }

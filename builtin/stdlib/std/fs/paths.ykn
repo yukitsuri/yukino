@@ -17,6 +17,7 @@ public struct FsError {
     code: int32
 }
 
+#[cold, noreturn]
 fun panic_last_fs_error(default_msg: string, default_code: int32) {
     set code = yukistd_fs_last_error_code()
     set out_len: int64 = 0
@@ -29,14 +30,17 @@ fun panic_last_fs_error(default_msg: string, default_code: int32) {
     panic(FsError { message: msg, code: code })
 }
 
+#[inline_always]
 public fun path_separator() -> string {
     return "/"
 }
 
+#[inline_always, stable]
 public fun path_is_separator(c: char) -> bool {
     return c == '/' || c == '\\'
 }
 
+#[inline]
 public fun path_is_absolute(path: string) -> bool {
     set len = path.len()
     if len == 0 { return false }
@@ -53,6 +57,7 @@ public fun path_is_absolute(path: string) -> bool {
     return false
 }
 
+#[inline_always]
 public fun path_is_relative(path: string) -> bool {
     return !path_is_absolute(path)
 }

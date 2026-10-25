@@ -10,6 +10,7 @@ public struct NumfError {
     code: int32
 }
 
+#[inline_always]
 fun digit_to_char(d: int32, uppercase: bool) -> string {
     if d < 10 {
         return cast(cast(48 + d, "char"), "string")

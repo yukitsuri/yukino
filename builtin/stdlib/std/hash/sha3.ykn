@@ -1,6 +1,7 @@
 load ..fs.files: file_size, open_read, File
 load .common: HashError, bytes_to_hex
 
+#[inline_always, stable]
 fun rotl64(x: uint64, n: int64) -> uint64 {
     if n == 0 { return x }
     set nu: uint64 = cast(n, "uint64")
@@ -8,6 +9,7 @@ fun rotl64(x: uint64, n: int64) -> uint64 {
     return (x << nu) | (x >> diff)
 }
 
+#[inline_always, stable]
 fun keccak_rho(x: int64, y: int64) -> int64 {
     set idx: int64 = x + y * 5
     switch idx {
@@ -41,6 +43,7 @@ fun keccak_rho(x: int64, y: int64) -> int64 {
     return 0
 }
 
+#[inline_always, stable]
 fun keccak_rc(round: int64) -> uint64 {
     switch round {
         0 -> { return 0x0000000000000001u64 }
@@ -72,6 +75,7 @@ fun keccak_rc(round: int64) -> uint64 {
     return 0u64
 }
 
+#[inline]
 fun keccak_f1600(ref ~st: uint64[]) {
     set c: uint64[5]
     set d: uint64[5]

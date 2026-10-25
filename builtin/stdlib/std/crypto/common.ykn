@@ -5,6 +5,7 @@ public struct CryptoError {
     code: int32
 }
 
+#[inline]
 public fun constant_time_eq(ref a: bytes, ref b: bytes) -> bool {
     if a.len() != b.len() { return false }
     set diff: uint8 = 0u8
@@ -46,6 +47,7 @@ public fun random_bytes(len: int64) -> bytes {
     return from_raw_parts(raw.as_ptr(), len, len)
 }
 
+#[inline_always]
 public fun load32_le(ref data: bytes, offset: int64) -> uint32 {
     set b0: uint32 = cast(data[offset], "uint32")
     set b1: uint32 = cast(data[offset + 1], "uint32")
@@ -54,6 +56,7 @@ public fun load32_le(ref data: bytes, offset: int64) -> uint32 {
     return b0 | (b1 << 8u32) | (b2 << 16u32) | (b3 << 24u32)
 }
 
+#[inline_always]
 public fun store32_le(ref ~buf: uint8[], offset: int64, val: uint32) {
     rewrite buf[offset] = cast(val & 255u32, "uint8")
     rewrite buf[offset + 1] = cast((val >> 8u32) & 255u32, "uint8")
@@ -61,17 +64,20 @@ public fun store32_le(ref ~buf: uint8[], offset: int64, val: uint32) {
     rewrite buf[offset + 3] = cast((val >> 24u32) & 255u32, "uint8")
 }
 
+#[inline_always]
 public fun load64_le(ref data: bytes, offset: int64) -> uint64 {
     set lo: uint64 = cast(load32_le(ref data, offset), "uint64")
     set hi: uint64 = cast(load32_le(ref data, offset + 4), "uint64")
     return lo | (hi << 32u64)
 }
 
+#[inline_always]
 public fun store64_le(ref ~buf: uint8[], offset: int64, val: uint64) {
     store32_le(ref ~buf, offset, cast(val & 0xffffffffu64, "uint32"))
     store32_le(ref ~buf, offset + 4, cast((val >> 32u64) & 0xffffffffu64, "uint32"))
 }
 
+#[inline_always]
 public fun load32_be(ref data: bytes, offset: int64) -> uint32 {
     set b0: uint32 = cast(data[offset], "uint32")
     set b1: uint32 = cast(data[offset + 1], "uint32")
@@ -80,6 +86,7 @@ public fun load32_be(ref data: bytes, offset: int64) -> uint32 {
     return (b0 << 24u32) | (b1 << 16u32) | (b2 << 8u32) | b3
 }
 
+#[inline_always]
 public fun store32_be(ref ~buf: uint8[], offset: int64, val: uint32) {
     rewrite buf[offset] = cast((val >> 24u32) & 255u32, "uint8")
     rewrite buf[offset + 1] = cast((val >> 16u32) & 255u32, "uint8")
@@ -87,12 +94,14 @@ public fun store32_be(ref ~buf: uint8[], offset: int64, val: uint32) {
     rewrite buf[offset + 3] = cast(val & 255u32, "uint8")
 }
 
+#[inline_always]
 public fun load64_be(ref data: bytes, offset: int64) -> uint64 {
     set hi: uint64 = cast(load32_be(ref data, offset), "uint64")
     set lo: uint64 = cast(load32_be(ref data, offset + 4), "uint64")
     return (hi << 32u64) | lo
 }
 
+#[inline_always]
 public fun store64_be(ref ~buf: uint8[], offset: int64, val: uint64) {
     store32_be(ref ~buf, offset, cast((val >> 32u64) & 0xffffffffu64, "uint32"))
     store32_be(ref ~buf, offset + 4, cast(val & 0xffffffffu64, "uint32"))

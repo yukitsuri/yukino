@@ -1,11 +1,13 @@
 load .common: CryptoError, load32_le, store32_le
 
+#[inline_always, stable]
 fun rotl32(v: uint32, n: int64) -> uint32 {
     set s: uint32 = cast(n, "uint32")
     set diff: uint32 = cast(32 - n, "uint32")
     return (v << s) | (v >> diff)
 }
 
+#[inline_always]
 fun quarter_round(ref ~st: uint32[], a: int64, b: int64, c: int64, d: int64) {
     rewrite st[a] = st[a] + st[b]
     rewrite st[d] = rotl32(st[d] ^ st[a], 16)

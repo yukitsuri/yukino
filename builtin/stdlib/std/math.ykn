@@ -48,73 +48,123 @@ public static EXP_BIAS: int32 = 1023
 
 // FUNCS
 
+#[inline_always, stable]
 public fun to_bits(x: float64) -> uint64 { return yukistd_math_to_bits_f64(x) }
+
+#[inline_always, stable]
 public fun from_bits(b: uint64) -> float64 { return yukistd_math_from_bits_f64(b) }
+
+#[inline_always, stable]
 public fun to_bits32(x: float32) -> uint32 { return yukistd_math_to_bits_f32(x) }
+
+#[inline_always, stable]
 public fun from_bits32(b: uint32) -> float32 { return yukistd_math_from_bits_f32(b) }
 
+#[inline_always, stable]
 public fun nan() -> float64 { return from_bits(NAN_BITS) }
+
+#[inline_always, stable]
 public fun infinity() -> float64 { return from_bits(INFINITY_BITS) }
+
+#[inline_always, stable]
 public fun neg_infinity() -> float64 { return from_bits(NEG_INFINITY_BITS) }
 
+#[inline_always, stable]
 public fun is_nan(x: float64) -> bool { return yukistd_math_is_nan(x) }
+
+#[inline_always, stable]
 public fun is_infinite(x: float64) -> bool { return yukistd_math_is_infinite(x) }
+
+#[inline_always, stable]
 public fun is_finite(x: float64) -> bool { return yukistd_math_is_finite(x) }
 
+#[inline_always, stable]
 public fun sqrt(x: float64) -> float64 { return yukistd_math_sqrt(x) }
+
+#[inline_always, stable]
 public fun fma(a: float64, b: float64, c: float64) -> float64 { return yukistd_math_fma(a, b, c) }
+
+#[inline_always, stable]
 public fun abs(x: float64) -> float64 { return yukistd_math_abs(x) }
+
+#[inline_always, stable]
 public fun copysign(x: float64, sign: float64) -> float64 { return yukistd_math_copysign(x, sign) }
+
+#[inline_always, stable]
 public fun floor(x: float64) -> float64 { return yukistd_math_floor(x) }
+
+#[inline_always, stable]
 public fun ceil(x: float64) -> float64 { return yukistd_math_ceil(x) }
+
+#[inline_always, stable]
 public fun trunc(x: float64) -> float64 { return yukistd_math_trunc(x) }
+
+#[inline_always, stable]
 public fun round(x: float64) -> float64 { return yukistd_math_round(x) }
 
+#[inline_always, stable]
 public fun abs_int(x: int64) -> int64 {
     if x < 0 { return -x }
     return x
 }
 
+#[inline_always, stable]
 public fun min(a: float64, b: float64) -> float64 {
     if a < b { return a }
     return b
 }
 
+#[inline_always, stable]
 public fun max(a: float64, b: float64) -> float64 {
     if a > b { return a }
     return b
 }
 
+#[inline_always, stable]
 public fun min_int(a: int64, b: int64) -> int64 {
     if a < b { return a }
     return b
 }
 
+#[inline_always, stable]
 public fun max_int(a: int64, b: int64) -> int64 {
     if a > b { return a }
     return b
 }
 
+#[inline_always, stable]
 public fun clz(x: uint64) -> int32 { return yukistd_math_clz_u64(x) }
+
+#[inline_always, stable]
 public fun ctz(x: uint64) -> int32 { return yukistd_math_ctz_u64(x) }
+
+#[inline_always, stable]
 public fun popcount(x: uint64) -> int32 { return yukistd_math_popcount_u64(x) }
 
+#[inline_always, stable]
 public fun clz32(x: uint32) -> int32 { return yukistd_math_clz_u32(x) }
+
+#[inline_always, stable]
 public fun ctz32(x: uint32) -> int32 { return yukistd_math_ctz_u32(x) }
+
+#[inline_always, stable]
 public fun popcount32(x: uint32) -> int32 { return yukistd_math_popcount_u32(x) }
 
+#[inline]
 public fun mul_wide(a: uint64, b: uint64) -> (uint64, uint64) {
     set hi: uint64 = 0
     set lo = yukistd_math_mul_wide_u64(a, b, ptr_of(hi))
     return (hi, lo)
 }
 
+#[inline]
 public fun add_carry(a: uint64, b: uint64, carry_in: uint8 = 0) -> (uint64, uint8) {
     set c_out: uint8 = 0
     set sum = yukistd_math_add_carry_u64(a, b, carry_in, ptr_of(c_out))
     return (sum, c_out)
 }
 
+#[inline]
 public fun sub_borrow(a: uint64, b: uint64, borrow_in: uint8 = 0) -> (uint64, uint8) {
     set b_out: uint8 = 0
     set diff = yukistd_math_sub_borrow_u64(a, b, borrow_in, ptr_of(b_out))
