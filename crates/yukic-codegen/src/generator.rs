@@ -419,12 +419,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let is_thunk = fun.attrs.iter().any(|a| a.is("thunk"));
-        let (fn_type, _) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, is_thunk);
+        let (fn_type, has_dest) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, is_thunk);
         let fn_val = self.module.add_function(
             &sym_name,
             fn_type,
             Some(inkwell::module::Linkage::External),
         );
+        if has_dest {
+            if let Some(p) = fn_val.get_first_param() {
+                p.set_name("_dest_region");
+            }
+        }
         let call_conv = if is_thunk {
             inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32
         } else {
@@ -507,12 +512,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            let (fn_type, _) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, false);
+            let is_init = method.name.name == "init";
+            let (fn_type, has_dest) = if is_init {
+                let mut final_params = Vec::with_capacity(param_types.len() + 1);
+                final_params.push(self.ptr_type().into());
+                for pt in &param_types {
+                    final_params.push((*pt).into());
+                }
+                let fn_ty = match llvm_ret {
+                    Some(ret) => ret.fn_type(&final_params, false),
+                    None => self.context.void_type().fn_type(&final_params, false),
+                };
+                (fn_ty, true)
+            } else {
+                self.transform_function_type(&param_types, &ret_ty, llvm_ret, false)
+            };
             let fn_val = self.module.add_function(
                 &sym_name,
                 fn_type,
                 Some(inkwell::module::Linkage::External),
             );
+            if has_dest {
+                if let Some(p) = fn_val.get_first_param() {
+                    p.set_name("_dest_region");
+                }
+            }
             fn_val.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMFastCallConv as u32);
         }
         self.pre_declare_class_accessors(decl)
@@ -539,12 +563,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 continue;
             }
             let llvm_ret = self.llvm_return_type(&ret_ty)?;
-            let (fn_type, _) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, false);
+            let (fn_type, has_dest) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, false);
             let fn_val = self.module.add_function(
                 &sym_name,
                 fn_type,
                 Some(inkwell::module::Linkage::External),
             );
+            if has_dest {
+                if let Some(p) = fn_val.get_first_param() {
+                    p.set_name("_dest_region");
+                }
+            }
             fn_val.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMFastCallConv as u32);
         }
         Ok(())
@@ -874,8 +903,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        let (fn_type, has_dest) =
-            self.transform_function_type(&param_types, &ret_ty, llvm_ret, false);
+        let is_init = method.name.name == "init";
+        let (fn_type, has_dest) = if is_init {
+            let mut final_params = Vec::with_capacity(param_types.len() + 1);
+            final_params.push(self.ptr_type().into());
+            for pt in &param_types {
+                final_params.push((*pt).into());
+            }
+            let fn_ty = match llvm_ret {
+                Some(ret) => ret.fn_type(&final_params, false),
+                None => self.context.void_type().fn_type(&final_params, false),
+            };
+            (fn_ty, true)
+        } else {
+            self.transform_function_type(&param_types, &ret_ty, llvm_ret, false)
+        };
         let sym_name = crate::mangle::method_symbol_name(
             class_name,
             &method.name.name,

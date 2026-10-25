@@ -1626,8 +1626,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .functions
             .get(name)
             .or_else(|| self.registry.functions.get(sem_name));
+        let is_class_init = (name.starts_with("_Y_") && name.ends_with("_init"))
+            || sem_name.ends_with("::init");
         let needs_dest = !is_cfun
-            && ret_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret));
+            && (is_class_init
+                || ret_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret)));
 
         let mut param_types: Vec<BasicMetadataTypeEnum<'ctx>> =
             Vec::with_capacity(arg_vals.len() + usize::from(needs_dest));
@@ -1654,6 +1657,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             self.context.void_type().fn_type(&param_types, false)
         };
         let f = self.module.add_function(name, fn_type, Some(Linkage::External));
+        if needs_dest {
+            if let Some(p) = f.get_first_param() {
+                p.set_name("_dest_region");
+            }
+        }
         f.set_call_conventions(call_conv);
         f
     }

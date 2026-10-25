@@ -77,6 +77,9 @@ impl<'ctx> VTableManager<'ctx> {
         }
         // ovr
         for method in &decl.methods {
+            if method.name.name == "init" {
+                continue;
+            }
             let m_name = crate::mangle::mangle_method_name(&method.name.name, method.params.len());
             let class_name = &decl.name.name;
             let mangled = crate::mangle::method_symbol_name(class_name, &method.name.name, method.params.len());

@@ -1038,12 +1038,37 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
 
         let orig_ty = orig_fn.get_type();
         let orig_params = orig_ty.get_param_types();
-        let has_dest = orig_params.first().map_or(false, |p| {
-            p.is_pointer_type()
-                && orig_fn
-                    .get_first_param()
-                    .map_or(false, |fp| fp.get_name().to_str().unwrap_or("").starts_with("_dest"))
-        });
+        let ret_sem_ty = self
+            .registry
+            .functions
+            .get(name_str)
+            .or_else(|| {
+                self.registry
+                    .fn_types
+                    .get(name_str)
+                    .and_then(|t| match t {
+                        yukic_types::Type::Fn { ret, .. } => Some(ret.as_ref()),
+                        _ => None,
+                    })
+            })
+            .or_else(|| {
+                self.registry
+                    .fn_candidates
+                    .values()
+                    .flatten()
+                    .find(|sig| sig.mangled_symbol == name_str)
+                    .map(|sig| &sig.ret_type)
+            });
+        let is_class_init = (name_str.starts_with("_Y_") && name_str.ends_with("_init"))
+            || name_str.ends_with("::init");
+        let has_dest = is_class_init
+            || ret_sem_ty.is_some_and(|ret| crate::region::RegionManager::is_regional_type(ret))
+            || orig_params.first().map_or(false, |p| {
+                p.is_pointer_type()
+                    && orig_fn
+                        .get_first_param()
+                        .map_or(false, |fp| fp.get_name().to_str().unwrap_or("").starts_with("_dest"))
+            });
 
         let mut thunk_params: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> =
             Vec::with_capacity(orig_params.len() + 1);

@@ -3355,18 +3355,19 @@ pub(crate) fn deduce_closure_return_type(
     }
 
     for stmt in &fun.body.stmts {
-        match &stmt.kind {
-            yukic_ast::stmt::StmtKind::Return(Some(expr)) => {
-                if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
+        if let yukic_ast::stmt::StmtKind::Return(Some(expr)) = &stmt.kind {
+            if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
+                if ty != Type::Void {
                     return Some(ty);
                 }
             }
-            yukic_ast::stmt::StmtKind::Expr(expr) => {
-                if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
-                    return Some(ty);
-                }
+        }
+    }
+    if let Some(last_stmt) = fun.body.stmts.last() {
+        if let yukic_ast::stmt::StmtKind::Expr(expr) = &last_stmt.kind {
+            if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
+                return Some(ty);
             }
-            _ => {}
         }
     }
     None
@@ -3445,6 +3446,39 @@ pub(crate) fn deduce_closure_expr_type(
                 }
             }
         },
+        ExprKind::Block(block) | ExprKind::RegionBlock(block) => {
+            for stmt in &block.stmts {
+                if let yukic_ast::stmt::StmtKind::Return(Some(e)) = &stmt.kind {
+                    if let Some(ty) = deduce_closure_expr_type(e, locals, bc) {
+                        if ty != Type::Void {
+                            return Some(ty);
+                        }
+                    }
+                }
+            }
+            if let Some(last) = block.stmts.last() {
+                if let yukic_ast::stmt::StmtKind::Expr(e) = &last.kind {
+                    return deduce_closure_expr_type(e, locals, bc);
+                }
+            }
+            None
+        }
+        ExprKind::If { then_branch, elif_branches, else_branch, .. } => {
+            if let Some(ty) = deduce_closure_expr_type(&Expr::new(ExprKind::Block(then_branch.clone()), expr.span), locals, bc) {
+                return Some(ty);
+            }
+            for (_, elif_block) in elif_branches {
+                if let Some(ty) = deduce_closure_expr_type(&Expr::new(ExprKind::Block(elif_block.clone()), expr.span), locals, bc) {
+                    return Some(ty);
+                }
+            }
+            if let Some(eb) = else_branch {
+                if let Some(ty) = deduce_closure_expr_type(&Expr::new(ExprKind::Block(eb.clone()), expr.span), locals, bc) {
+                    return Some(ty);
+                }
+            }
+            None
+        }
         ExprKind::Ternary(_, t, e) => {
             deduce_closure_expr_type(t, locals, bc)
                 .or_else(|| deduce_closure_expr_type(e, locals, bc))
@@ -3548,16 +3582,6 @@ pub(crate) fn deduce_closure_expr_type(
             } else {
                 None
             }
-        }
-        ExprKind::Block(b) | ExprKind::RegionBlock(b) => {
-            for s in &b.stmts {
-                if let yukic_ast::stmt::StmtKind::Return(Some(e)) = &s.kind {
-                    if let Some(t) = deduce_closure_expr_type(e, locals, bc) {
-                        return Some(t);
-                    }
-                }
-            }
-            None
         }
         _ => None,
     }
