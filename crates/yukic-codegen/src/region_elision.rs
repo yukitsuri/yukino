@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use yukic_ast::expr::{BinaryOp, Expr, ExprKind, LiteralValue};
+use yukic_ast::expr::{BinaryOp, Expr, ExprKind, LiteralValue, UnaryOp};
 use yukic_ast::item::{FunDecl, MethodDecl};
 use yukic_ast::stmt::{Block, StmtKind};
 
@@ -53,6 +53,40 @@ fn stmt_requires_region(stmt: &StmtKind, registry: &TypeRegistry) -> bool {
             expr_requires_region(expr, registry)
         }
         StmtKind::Recur(args) => args.iter().any(|arg| expr_requires_region(arg, registry)),
+        _ => false,
+    }
+}
+
+fn is_definitely_numeric(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(lit) => matches!(
+            lit,
+            LiteralValue::Int(_)
+                | LiteralValue::UInt(_)
+                | LiteralValue::Float(_)
+                | LiteralValue::Bool(_)
+                | LiteralValue::Char(_)
+        ),
+        ExprKind::Unary(op, inner) => {
+            matches!(op, UnaryOp::Neg | UnaryOp::BitNot) && is_definitely_numeric(inner)
+        }
+        ExprKind::Binary(op, lhs, rhs) => {
+            matches!(
+                op,
+                BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Rem
+                    | BinaryOp::Pow
+                    | BinaryOp::BitAnd
+                    | BinaryOp::BitOr
+                    | BinaryOp::BitXor
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr
+            ) && is_definitely_numeric(lhs)
+                && is_definitely_numeric(rhs)
+        }
         _ => false,
     }
 }
@@ -131,7 +165,12 @@ fn expr_requires_region(expr: &Expr, registry: &TypeRegistry) -> bool {
         | ExprKind::ClassInit(_, _) => true,
         ExprKind::Unary(_, inner) => expr_requires_region(inner, registry),
         ExprKind::Binary(op, lhs, rhs) => {
-            if *op == BinaryOp::Add && (is_string_expr(lhs) || is_string_expr(rhs)) {
+            if *op == BinaryOp::Add
+                && (is_string_expr(lhs)
+                    || is_string_expr(rhs)
+                    || !is_definitely_numeric(lhs)
+                    || !is_definitely_numeric(rhs))
+            {
                 return true;
             }
             expr_requires_region(lhs, registry) || expr_requires_region(rhs, registry)

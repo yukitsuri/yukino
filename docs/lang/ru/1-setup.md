@@ -94,8 +94,8 @@ export LIBCLANG_PATH=/path/to/libclang/lib
 После настройки окружения установите оба бинарника из тега релиза:
 
 ```sh
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked --package yukino
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked --package yukic-driver
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukino
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
 ```
 
 Cargo установит бинарники в `~/.cargo/bin`:

@@ -3211,6 +3211,18 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             self.dest_region = None;
         }
 
+        let local_reg = if crate::region_elision::fun_needs_local_region(fun, needs_dest, self.registry) {
+            Some(self.region.emit_region_prologue(
+                self.module,
+                self.builder,
+                crate::region::DEFAULT_LOCAL_REGION_CAPACITY,
+                "_local_region",
+            )?)
+        } else {
+            None
+        };
+        self.region_ptr = local_reg;
+
         // Unpack captures from %env_ptr
         if let Some(layout) = &env_layout {
             let env_param = closure_fn
@@ -3267,6 +3279,9 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         // Ensure terminator exists
         if let Some(curr_bb) = self.builder.get_insert_block() {
             if curr_bb.get_terminator().is_none() {
+                if let Some(reg) = self.region_ptr {
+                    self.region.emit_region_epilogue(self.module, self.builder, reg)?;
+                }
                 if is_void {
                     self.builder.build_return(None).map_err(|e| e.to_string())?;
                 } else if let Some(ret) = llvm_ret {
@@ -3377,6 +3392,7 @@ pub(crate) fn deduce_closure_expr_type(
             }
             bc.registry.fn_types.get(&id.name).cloned()
         }
+        ExprKind::This => locals.get("this").cloned(),
         ExprKind::Literal(lit) => match lit {
             LiteralValue::Int(_) => Some(Type::Int64),
             LiteralValue::UInt(_) => Some(Type::Uint64),
@@ -3401,6 +3417,15 @@ pub(crate) fn deduce_closure_expr_type(
             | BinaryOp::GtEq
             | BinaryOp::And
             | BinaryOp::Or => Some(Type::Bool),
+            BinaryOp::Add => {
+                let lt = deduce_closure_expr_type(left, locals, bc);
+                let rt = deduce_closure_expr_type(right, locals, bc);
+                if matches!(lt, Some(Type::String)) || matches!(rt, Some(Type::String)) {
+                    Some(Type::String)
+                } else {
+                    lt.or(rt)
+                }
+            }
             _ => {
                 let lt = deduce_closure_expr_type(left, locals, bc);
                 let rt = deduce_closure_expr_type(right, locals, bc);
@@ -3424,16 +3449,104 @@ pub(crate) fn deduce_closure_expr_type(
             deduce_closure_expr_type(t, locals, bc)
                 .or_else(|| deduce_closure_expr_type(e, locals, bc))
         }
-        ExprKind::Call(callee, _) => {
+        ExprKind::Call(callee, args) => {
             match &callee.kind {
                 ExprKind::Ident(id) => {
                     if let Some(Type::Fn { ret, .. }) = locals.get(&id.name).or_else(|| bc.registry.fn_types.get(&id.name)) {
-                        Some((**ret).clone())
-                    } else {
-                        None
+                        return Some((**ret).clone());
                     }
+                    if let Some(ret) = bc.registry.functions.get(&id.name) {
+                        return Some(ret.clone());
+                    }
+                    if let Some(sym) = bc.registry.resolve_fun_symbol(&id.name, args.len()) {
+                        if let Some(ret) = bc.registry.functions.get(&sym) {
+                            return Some(ret.clone());
+                        }
+                    }
+                    None
                 }
                 _ => None,
+            }
+        }
+        ExprKind::MethodCall(target, method, args) | ExprKind::SafeCall(target, method, args) => {
+            let target_ty = deduce_closure_expr_type(target, locals, bc);
+            let class_name = match &target_ty {
+                Some(Type::Class(name)) | Some(Type::Struct(name)) | Some(Type::Interface(name)) => {
+                    Some(name.as_str())
+                }
+                _ => None,
+            };
+            if let Some(cname) = class_name {
+                let key = format!("{cname}::{}", method.name);
+                let mangled = crate::mangle::mangle_method_name(&method.name, args.len());
+                let mangled_key = format!("{cname}::{mangled}");
+                if let Some(ret) = bc
+                    .registry
+                    .functions
+                    .get(&key)
+                    .or_else(|| bc.registry.functions.get(&mangled_key))
+                {
+                    return Some(ret.clone());
+                }
+                if let Some(Type::Fn { ret, .. }) = bc
+                    .registry
+                    .fn_types
+                    .get(&key)
+                    .or_else(|| bc.registry.fn_types.get(&mangled_key))
+                {
+                    return Some((**ret).clone());
+                }
+            }
+            let suffix = format!("::{}", method.name);
+            for (fn_name, ret_ty) in &bc.registry.functions {
+                if fn_name.ends_with(&suffix) {
+                    return Some(ret_ty.clone());
+                }
+            }
+            None
+        }
+        ExprKind::ClassInit(callee, _) => {
+            if let ExprKind::Ident(id) = &callee.kind {
+                Some(Type::Class(id.name.clone()))
+            } else {
+                None
+            }
+        }
+        ExprKind::StructInit(id, _) => Some(Type::Struct(id.name.clone())),
+        ExprKind::ArrayInit(elements) => {
+            if let Some(first) = elements.first() {
+                let elem_ty = deduce_closure_expr_type(first, locals, bc).unwrap_or(Type::Infer(0));
+                Some(Type::Array(Box::new(elem_ty)))
+            } else {
+                Some(Type::Array(Box::new(Type::Infer(0))))
+            }
+        }
+        ExprKind::FieldAccess(target, field) => {
+            let target_ty = deduce_closure_expr_type(target, locals, bc);
+            match target_ty {
+                Some(Type::Class(ref cname)) => {
+                    if let Some(layout) = bc.registry.classes.get(cname) {
+                        if let Some((_, fty)) = layout.fields.iter().find(|(n, _)| n == &field.name) {
+                            return Some(fty.clone());
+                        }
+                    }
+                }
+                Some(Type::Struct(ref sname)) => {
+                    if let Some(layout) = bc.registry.structs.get(sname) {
+                        if let Some((_, fty)) = layout.fields.iter().find(|(n, _)| n == &field.name) {
+                            return Some(fty.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            None
+        }
+        ExprKind::IndexAccess(target, _) => {
+            if let Some(Type::Array(elem)) = deduce_closure_expr_type(target, locals, bc) {
+                Some(*elem)
+            } else {
+                None
             }
         }
         ExprKind::Block(b) | ExprKind::RegionBlock(b) => {
