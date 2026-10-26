@@ -219,9 +219,22 @@ impl<'a, 'ctx> TypeLowerer<'a, 'ctx> {
             .insert(name.to_string(), st);
 
         if let Some(layout) = self.registry.cstructs.get(name) {
-            let mut field_types = Vec::with_capacity(layout.fields.len());
+            let mut field_types = Vec::with_capacity(layout.fields.len() + 1);
             for (_, field_ty) in &layout.fields {
                 field_types.push(self.lower_type(field_ty)?);
+            }
+            if let Some(align) = layout.align {
+                let align = align as u64;
+                if align > 0 {
+                    let temp_st = self.context.struct_type(&field_types, layout.is_packed);
+                    let raw_size = self.target_data.get_abi_size(&temp_st);
+                    let rem = raw_size % align;
+                    if rem != 0 {
+                        let pad_bytes = align - rem;
+                        let pad_ty = self.context.i8_type().array_type(pad_bytes as u32);
+                        field_types.push(pad_ty.into());
+                    }
+                }
             }
             st.set_body(&field_types, layout.is_packed);
             Ok(st)
@@ -304,12 +317,37 @@ impl<'a, 'ctx> TypeLowerer<'a, 'ctx> {
 
     pub fn abi_size_of(&self, ty: &Type) -> Result<u64, String> {
         let llvm_ty = self.lower_type(ty)?;
-        Ok(self.target_data.get_abi_size(&llvm_ty))
+        let mut size = self.target_data.get_abi_size(&llvm_ty);
+        if let Some(align) = self.custom_align_of(ty) {
+            let a = align as u64;
+            if a > 0 {
+                size = (size + a - 1) & !(a - 1);
+            }
+        }
+        Ok(size)
     }
 
     pub fn abi_align_of(&self, ty: &Type) -> Result<u32, String> {
+        if let Some(align) = self.custom_align_of(ty) {
+            return Ok(align);
+        }
         let llvm_ty = self.lower_type(ty)?;
         Ok(self.target_data.get_abi_alignment(&llvm_ty))
+    }
+
+    fn custom_align_of(&self, ty: &Type) -> Option<u32> {
+        let name = match ty {
+            Type::Cstruct(name) => Some(name.as_str()),
+            Type::Struct(name) => {
+                if self.registry.cstructs.contains_key(name) {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        name.and_then(|n| self.registry.cstructs.get(n)).and_then(|cs| cs.align)
     }
 
     pub fn class_instance_type(&self, name: &str) -> Result<StructType<'ctx>, String> {

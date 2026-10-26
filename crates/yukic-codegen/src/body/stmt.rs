@@ -84,6 +84,16 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .builder
                     .build_alloca(val_ty, &ident.name)
                     .map_err(|e| e.to_string())?;
+                let td = TargetData::create(self.target.spec().data_layout);
+                let lowerer = TypeLowerer::new(self.context, &td, self.target, self.registry);
+                let custom_align = sem_ty.as_ref().and_then(|t| lowerer.abi_align_of(t).ok());
+                if let Some(a) = custom_align {
+                    if a > 1 {
+                        if let Some(inst) = alloca.as_instruction() {
+                            let _ = inst.set_alignment(a);
+                        }
+                    }
+                }
                 let canon_sem_ty = sem_ty.as_ref().map(|t| self.registry.canonicalize_type(t));
                 let coerced = if let Some(Type::Interface(ref iname)) = canon_sem_ty {
                     if init_val.is_pointer_value() {
@@ -94,9 +104,14 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 } else {
                     self.coerce_type(init_val, val_ty)?
                 };
-                self.builder
+                let store = self.builder
                     .build_store(alloca, coerced)
                     .map_err(|e| e.to_string())?;
+                if let Some(a) = custom_align {
+                    if a > 1 {
+                        let _ = store.set_alignment(a);
+                    }
+                }
                 self.add_local_with_ty(ident.name.clone(), alloca, val_ty, sem_ty);
                 Ok(())
             }

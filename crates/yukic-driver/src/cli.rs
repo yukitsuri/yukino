@@ -349,6 +349,14 @@ pub struct Args {
         help = "Register an external procedural macro runner process (<name>=<path>)"
     )]
     pub macro_runner: Vec<String>,
+
+    #[arg(
+        long = "macro-timeout",
+        alias = "macrotimeout",
+        value_name = "SECS",
+        help = "Procedural macro execution timeout in seconds"
+    )]
+    pub macro_timeout: Option<u64>,
 }
 
 impl Args {

@@ -213,7 +213,7 @@ public fun init(name: string, version: string)
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -235,7 +235,7 @@ public fun about(text: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("calc", "1.0.0").about("Простой консольный калькулятор")
@@ -255,7 +255,7 @@ public fun author(text: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", "1.0.0").author("Yukino Team")
@@ -275,8 +275,7 @@ public fun arg(a: Arg) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
-load std.line.arg: Arg
+load std.line: Line, Arg
 
 fun main() {
     set opt_verbose = init Arg("verbose").short("v").long("verbose").flag()
@@ -297,7 +296,7 @@ public fun flag(name: string, short: string, about: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").flag("verbose", "v", "Включить подробный вывод")
@@ -317,7 +316,7 @@ public fun opt(name: string, short: string, about: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("config", "c", "Путь к файлу конфигурации")
@@ -337,7 +336,7 @@ public fun opt_default(name: string, short: string, about: string, default_val: 
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("server", "1.0.0").opt_default("port", "p", "Порт прослушивания", "8080")
@@ -357,7 +356,7 @@ public fun opt_required(name: string, short: string, about: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("db", "1.0.0").opt_required("host", "h", "Адрес сервера базы данных")
@@ -377,7 +376,7 @@ public fun positional(name: string, about: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("cp", "1.0.0").positional("source", "Исходный файл").positional("dest", "Целевой файл")
@@ -397,7 +396,7 @@ public fun positional_required(name: string, about: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("cat", "1.0.0").positional_required("path", "Путь к читаемому файлу")
@@ -417,7 +416,7 @@ public fun subcommand(sub: Line) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set root = init Line("git", "2.40.0")
@@ -439,7 +438,7 @@ public fun disable_help() -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").disable_help()
@@ -459,7 +458,7 @@ public fun disable_version() -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").disable_version()
@@ -479,7 +478,7 @@ public fun override_help(text: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").override_help("Пользовательская справка программы.")
@@ -499,7 +498,7 @@ public fun override_version(text: string) -> Line
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").override_version("v1.0.0-custom-build")
@@ -519,7 +518,7 @@ public fun print_help()
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("demo", "1.0.0").flag("verbose", "v", "Подробный режим")
@@ -540,7 +539,7 @@ public fun print_version()
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("demo", "1.0.0")
@@ -561,7 +560,7 @@ public fun parse() -> Matches
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", yukienv!("bin.version")).flag("dry-run", "d", "Тестовый прогон")
@@ -582,7 +581,7 @@ public fun parse_from(input_args: string[]) -> Matches
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -628,7 +627,7 @@ public fun init(name: string)
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output")
@@ -648,7 +647,7 @@ public fun short(s: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output").short("o")
@@ -668,7 +667,7 @@ public fun long(l: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("out").long("output")
@@ -688,7 +687,7 @@ public fun about(desc: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output").about("Путь к выходному файлу")
@@ -708,7 +707,7 @@ public fun flag() -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("release").short("r").flag()
@@ -728,7 +727,7 @@ public fun required(r: bool) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("token").required(true)
@@ -748,7 +747,7 @@ public fun positional(p: bool) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("input").positional(true)
@@ -768,7 +767,7 @@ public fun multiple(m: bool) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("include").short("I").multiple(true)
@@ -788,7 +787,7 @@ public fun default_value(val: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("format").default_value("json")
@@ -808,7 +807,7 @@ public fun value_hint(hint: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("config").value_hint("FILE")
@@ -828,7 +827,7 @@ public fun conflicts_with(other_name: string) -> Arg
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("quiet").conflicts_with("verbose")
@@ -868,7 +867,7 @@ public fun init()
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.matches: Matches
+load std.line: Matches
 
 fun main() {
     set m = init Matches()
@@ -888,7 +887,7 @@ public fun get_bool(name: string) -> bool
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -913,7 +912,7 @@ public fun has(name: string) -> bool
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("config", "c", "")
@@ -935,7 +934,7 @@ public fun get(name: string) -> string?
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -961,7 +960,7 @@ public fun get_or(name: string, fallback: string) -> string
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -984,7 +983,7 @@ public fun get_int(name: string) -> int64?
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("port", "p", "")
@@ -1006,7 +1005,7 @@ public fun get_int_or(name: string, fallback: int64) -> int64
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1029,7 +1028,7 @@ public fun get_float(name: string) -> float64?
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("rate", "r", "")
@@ -1051,7 +1050,7 @@ public fun get_float_or(name: string, fallback: float64) -> float64
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("scale", "s", "")
@@ -1073,7 +1072,7 @@ public fun get_all(name: string) -> string[]
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("compiler", "1.0.0").opt("include", "I", "")
@@ -1095,7 +1094,7 @@ public fun trailing() -> string[]
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1118,7 +1117,7 @@ public fun raw_positionals() -> string[]
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", "1.0.0")
@@ -1140,7 +1139,7 @@ public fun subcommand_name() -> string?
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1164,7 +1163,7 @@ public fun subcommand_matches() -> Matches?
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1192,7 +1191,7 @@ public fun has_subcommand(name: string) -> bool
 Метод никогда не вызывает панику.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set root = init Line("git", "2.40.0")
@@ -1219,7 +1218,7 @@ public fun levenshtein(a: string, b: string) -> int64
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.line.suggest: levenshtein
+load std.line: levenshtein
 load std.io: println
 
 fun main() {
@@ -1242,7 +1241,7 @@ public fun find_suggestion(target: string, candidates: string[]) -> string?
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.line.suggest: find_suggestion
+load std.line: find_suggestion
 load std.io: println
 
 fun main() {
@@ -1283,8 +1282,7 @@ public fun render_help(
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.line.help: render_help
-load std.line.arg: Arg
+load std.line: render_help, Arg
 load std.io: println
 
 fun main() {

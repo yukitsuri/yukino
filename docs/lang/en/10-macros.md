@@ -468,7 +468,7 @@ Instead, an **isolated host process (IPC Runner)** architecture is enforced:
 
 Architectural Guarantees:
 - **Crash Guard:** If a macro triggers a panic or runtime abort, the compiler remains stable. It captures `stderr` from the macro child process and displays an informative diagnostic pointing to the invocation site.
-- **Timeout Protection:** Macro execution is protected by a strict 10-second timeout. Infinite loops in macro code are cleanly halted with a compile-time timeout error.
+- **Timeout Protection:** Macro execution is protected by a time limit (10 seconds by default). This limit is configurable via the `macrotimeout` setting in `yukino config` (for example, `yukino config set macrotimeout 20`). If a macro enters an infinite loop or execution exceeds the timeout, the process is aborted and the compiler reports a timeout error.
 - **Cross-Compilation Transparency:** When targeting Android, ARM, or WebAssembly, macro packages automatically compile for the host CPU architecture and run transparently.
 
 ### 3.7 External File Tracking (track_file) and Incremental CGU Cache

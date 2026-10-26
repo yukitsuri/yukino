@@ -36,6 +36,7 @@ pub struct BuiltinMacroConfig {
     pub target_triple: String,
     pub is_test: bool,
     pub macro_runners: std::collections::HashMap<String, PathBuf>,
+    pub macro_timeout: Option<std::time::Duration>,
 }
 
 impl BuiltinMacroConfig {

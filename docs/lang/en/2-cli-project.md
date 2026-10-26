@@ -12,8 +12,7 @@ The `yukino` CLI project manager handles the lifecycle of applications and libra
    1.3 [Running: yukino run](#13-running-yukino-run)  
    1.4 [Testing: yukino test](#14-testing-yukino-test)  
    1.5 [Cleaning: yukino clean](#15-cleaning-yukino-clean)  
-   1.6 [Global configuration: yukino config](#16-global-configuration-yukino-config)  
-   1.7 [Runtime management: yukino runtime](#17-runtime-management-yukino-runtime)
+   1.6 [Global configuration: yukino config](#16-global-configuration-yukino-config)
 2. [The yuki.toml manifest](#2-the-yukitoml-manifest)  
    2.1 [The [bin] section (executable)](#21-the-bin-section-executable)  
    2.2 [The [lib] section (library)](#22-the-lib-section-library)  
@@ -270,9 +269,11 @@ yukino config list
 yukino config get cthreads
 yukino config set minibar true
 yukino config set full-lib-log true
+yukino config set macrotimeout 15
 
-# Set the global default number of compilation threads
+# Set global defaults
 yukino config cthreads 8
+yukino config macrotimeout 15
 ```
 
 #### Configuration parameters
@@ -283,6 +284,7 @@ yukino config cthreads 8
 | `minibar` | `bool` | Core panel display mode during compilation. |
 | `noanim` | `bool` | Disable compilation panel disappearance animation (`true` for instant wipe, `false` for animation enabled). |
 | `full-lib-log` | `bool` | Verbose library compilation logs (`true` to show compilation of each file and CGU, `false` to show only library-level build status). |
+| `macrotimeout` | `int` | Procedural macro execution timeout in seconds (hang protection). |
 
 #### Defaults
 
@@ -290,6 +292,7 @@ yukino config cthreads 8
 - `minibar`: `false`
 - `noanim`: `false`
 - `full-lib-log`: `false`
+- `macrotimeout`: `10`
 
 Detailed explanation of `full-lib-log`:
 - With `full-lib-log = false` (default), only `Compiling {library} library` and `Compiled {library} library` are printed to the console log for dependencies and the standard library. Individual files and codegen units (CGU) of libraries do not clutter the log, while the interactive core dashboard continues to reflect their compilation in real time.
@@ -306,27 +309,6 @@ Core panel display modes:
   ```text
   Processing 2/8 busy: [01] codegen cgu_0 · [02] opt cgu_1
   ```
-
-### 1.7 Runtime management: yukino runtime
-
-Manages prebuilt runtime archives used at link time:
-
-```sh
-# Install the runtime for the host target (or a specific target)
-yukino runtime -i
-yukino runtime -i x86_64-unknown-linux-musl
-
-# Install the runtime from a local archive (target is required)
-yukino runtime -i x86_64-unknown-linux-gnu ./libyukino_rt.a
-
-# List, info, removal, and reinstallation of runtimes
-yukino runtime -l
-yukino runtime --info x86_64-unknown-linux-gnu
-yukino runtime -r
-yukino runtime --reinstall
-```
-
-The flags `-i`/`--install`, `-r`/`--remove`, `-l`/`--list`, `--info`, and `--reinstall` are mutually exclusive; invoking the command without a flag results in an error.
 
 ---
 
@@ -510,7 +492,7 @@ When multiple packages across a dependency tree require the same dependency with
 #### Checking Features in Yukino Code:
 Inside source code, features can be queried in several ways:
 
-1. **Unified Configuration Attribute `#[cfg(...)]` (Recommended):**
+1. **Unified Configuration Attribute `#[cfg(...)]` (Standard form):**
    ```yukino
    #[cfg(feature = "network")]
    fun init_sockets() {
@@ -531,8 +513,8 @@ Inside source code, features can be queried in several ways:
    }
    ```
 
-3. **Historical Attributes `#[feature = "..."]` and `#[!feature = "..."]`:**
-   Retained for backward compatibility. The `#[!feature = ...]` attribute acts as negation: the item is compiled when the feature is disabled.
+3. **Shorthand Syntax `#[feature = "..."]` and `#[!feature = "..."]`:**
+   An intentionally concise and readable shorthand without `cfg(...)`. The prefixed attribute `#[!feature = ...]` acts as negation: the item is compiled when the feature is disabled.
 
 ### 2.8 The test section: [test]
 
@@ -635,7 +617,8 @@ The script is compiled for the host target. Inside it, the standard library is a
 - `get_profileconfig!()` — the name of the active build profile (`"release"`, `"debug"`, etc.).
 - `get_features!()` — array of activated build features (`string[]`).
 - `hostenv!("VAR_NAME")` — value of a host environment variable at build time.
-- `yukienv!("key")` — reading manifest settings (for example, `"bin.name"` or `"config.release.opt_level"`).
+- `yukienv!("key", [scope: int32])` — reading manifest settings (for example, `"bin.name"` or `"config.release.opt_level"`).
+- `is_lib_connected!("lib_name", [scope: int32])` — checking whether a library is connected (`true` / `false`).
 
 ### 4.2 stdout directives
 

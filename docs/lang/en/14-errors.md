@@ -120,6 +120,24 @@ Yukino supports three complementary forms of error handling in `catch` blocks:
 3. **Universal catch-all (`catch`)**:
    Catches any exceptions that were not caught by preceding `catch` blocks. No struct variable is placed into scope, but `errkind: string` is available.
 
+> [!IMPORTANT]
+> **Importing error structures for typed catch:**  
+> For an error struct to be accessible in a `catch` block with variable binding (`catch e: JsonError`) and for its fields (`e.line`) to be inspected, the structure definition must be in the current module's scope. If the error struct is defined in an external module or third-party library, it must be explicitly imported via `load`. Otherwise, the compiler cannot resolve the structure's fields and will report a compile-time error:
+>
+> ```yukino
+> load json: parse_data, JsonError
+>
+> sus {
+>     parse_data(raw_payload)
+> } catch e: JsonError {
+>     // Fields e.line and e.message are accessible because JsonError is imported
+>     set x = e.line
+> } catch {
+>     // If the type is not imported, only errkind is available to inspect the error name
+>     println("Error: " + errkind)
+> }
+> ```
+
 ### Example: Comprehensive handling with JsonError
 
 Consider a JSON parser error structure:

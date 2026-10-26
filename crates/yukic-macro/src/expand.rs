@@ -31,6 +31,10 @@ impl<'a> AstExpander<'a> {
         config: BuiltinMacroConfig,
         recursion_limit: usize,
     ) -> Self {
+        let runner_client = match config.macro_timeout {
+            Some(timeout) => MacroRunnerClient::with_timeout(timeout),
+            None => MacroRunnerClient::new(),
+        };
         Self {
             table: MacroTable::new(),
             config,
@@ -38,7 +42,7 @@ impl<'a> AstExpander<'a> {
             recursion_limit,
             diagnostics: Vec::new(),
             tracked_files: Vec::new(),
-            runner_client: MacroRunnerClient::new(),
+            runner_client,
         }
     }
 

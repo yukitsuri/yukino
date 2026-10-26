@@ -214,7 +214,7 @@ fun inspect_point() {
 
 ### 2.2 The packed and align Attributes
 
-For working with network protocols or hardware headers, you can pack a structure without padding using the `packed` attribute:
+For working with network protocols, hardware headers, or structures with non-standard alignment, use the `packed` and `align="N"` (or `align=N`) attributes:
 
 ```yukino
 externc {
@@ -225,13 +225,25 @@ externc {
         src_mac: uint64,
         ethertype: uint16,
     }
+
+    // Buffer aligned to a 16-byte boundary (e.g. for SSE/AVX or DMA)
+    |align="16"|
+    cstruct AlignedBuffer {
+        data: uint32,
+    }
+
+    // Combination of packed layout with explicit alignment
+    |packed, align="4"|
+    cstruct PackedAligned {
+        tag: uint8,
+        payload: uint16,
+    }
 }
 ```
 
 Without `packed`, fields are laid out according to the natural alignment of their types, as in C.
 
-> [!WARNING]
-> The `align="N"` attribute (the value is a string or an integer) is accepted by the parser and stored in the structure registry, but is currently **not applied by the code generator**: the actual alignment is determined by the natural field layout (or by `packed`). Do not rely on `align` when reproducing structures with non-standard alignment.
+The `align="N"` (or `align=N`) attribute sets the explicit machine alignment of the structure in bytes (for example, `|align="16"|` or `|align=8|`). The overall size of the structure is padded with trailing bytes to become a multiple of the alignment, and variables of this structure (including stack alloca allocations) are positioned in memory respecting the specified alignment. It can also be combined with `packed` (for example, `|packed, align="4"|`).
 
 ---
 

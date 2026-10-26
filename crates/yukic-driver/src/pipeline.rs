@@ -810,6 +810,7 @@ fn build_macro_config(
         yukic_version: env!("CARGO_PKG_VERSION").to_string(),
         target_triple: target.as_str().to_string(),
         macro_runners: config.macro_runners.clone(),
+        macro_timeout: config.macro_timeout,
         is_test: config.test_mode,
     }
 }

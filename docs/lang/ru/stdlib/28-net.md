@@ -256,7 +256,7 @@ public class TcpStream {
 - `close() -> bool` — закрывает сокет и освобождает системный дескриптор.
 
 ```yukino
-load std.net.tcp: tcp_connect
+load std.net: tcp_connect
 load std.io: println
 
 set stream = tcp_connect("127.0.0.1:8080", 5000)
@@ -285,7 +285,7 @@ public class TcpListener {
 - `close() -> bool` — прекращает прослушивание и закрывает системный сокет.
 
 ```yukino
-load std.net.tcp: tcp_listen
+load std.net: tcp_listen
 load std.io: println
 
 set listener = tcp_listen("127.0.0.1:8080")
@@ -321,7 +321,7 @@ public class UdpSocket {
 - `close() -> bool` — закрывает UDP сокет.
 
 ```yukino
-load std.net.udp: udp_bind
+load std.net: udp_bind
 load std.io: println
 
 set socket = udp_bind("127.0.0.1:9000")
@@ -352,8 +352,7 @@ public class SocketPoller {
 - `close() -> bool` — уничтожает поллер и освобождает ресурсы ядра ОС.
 
 ```yukino
-load std.net.poll: SocketPoller, POLL_READABLE
-load std.net.tcp: tcp_listen
+load std.net: SocketPoller, POLL_READABLE, tcp_listen
 load std.io: println
 
 set poller = init SocketPoller()
@@ -394,8 +393,7 @@ public class TlsStream {
 - `close() -> bool` — отправляет уведомление `close_notify` и завершает TLS сеанс.
 
 ```yukino
-load std.net.tcp: tcp_connect
-load std.net.tls: tls_connect
+load std.net: tcp_connect, tls_connect
 load std.io: println
 
 set tcp = tcp_connect("example.com:443", 5000)
@@ -429,7 +427,7 @@ public class HttpHeaders {
 - `format() -> string` — сериализует заголовки в формат протокола HTTP (`"Key: Value\r\n"` для каждой записи).
 
 ```yukino
-load std.net.http_types: HttpHeaders
+load std.net: HttpHeaders
 load std.io: println
 
 set h = init HttpHeaders()
@@ -495,8 +493,7 @@ public class HttpServer {
 - `close()` — останавливает сервер и освобождает слушающий сетевой сокет.
 
 ```yukino
-load std.net.server: HttpServer
-load std.net.http_types: response_ok, response_not_found
+load std.net: HttpServer, response_ok, response_not_found
 load std.io: println
 
 set server = init HttpServer("127.0.0.1:8080")
@@ -565,7 +562,7 @@ public fun parse_socket_addr(addr_str: string) -> SocketAddr
 В случае отсутствия разделителя двоеточия или некорректного формата номера порта вызывает панику со структурой `NetError` (код 11).
 
 ```yukino
-load std.net.address: parse_socket_addr
+load std.net: parse_socket_addr
 load std.io: println
 
 set addr = parse_socket_addr("127.0.0.1:8080")
@@ -585,7 +582,7 @@ public fun format_socket_addr(addr: SocketAddr) -> string
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.net.address: format_socket_addr, SocketAddr
+load std.net: format_socket_addr, SocketAddr
 load std.io: println
 
 set formatted = format_socket_addr(SocketAddr { host: "0.0.0.0", port: 3000 })
@@ -605,7 +602,7 @@ public fun resolve(hostname: string) -> string[]
 В случае ошибки DNS-резолвинга вызывает панику со структурой `NetError` (код 1).
 
 ```yukino
-load std.net.address: resolve
+load std.net: resolve
 load std.io: println
 
 set ips = resolve("localhost")
@@ -627,7 +624,7 @@ public fun tcp_connect(addr: string, timeout_ms: int64 = 15000) -> TcpStream
 В случае отказа в подключении, недоступности узла или истечения таймаута вызывает панику со структурой `NetError`.
 
 ```yukino
-load std.net.tcp: tcp_connect
+load std.net: tcp_connect
 load std.io: println
 
 set client = tcp_connect("127.0.0.1:8080", 5000)
@@ -648,7 +645,7 @@ public fun tcp_listen(addr: string) -> TcpListener
 В случае ошибки привязки (например, адрес уже занят) вызывает панику со структурой `NetError` (код 7).
 
 ```yukino
-load std.net.tcp: tcp_listen
+load std.net: tcp_listen
 load std.io: println
 
 set listener = tcp_listen("127.0.0.1:9090")
@@ -669,7 +666,7 @@ public fun udp_bind(addr: string) -> UdpSocket
 В случае ошибки привязки к порту вызывает панику со структурой `NetError`.
 
 ```yukino
-load std.net.udp: udp_bind
+load std.net: udp_bind
 load std.io: println
 
 set sock = udp_bind("127.0.0.1:9091")
@@ -690,8 +687,7 @@ public fun tls_connect(ref tcp: TcpStream, hostname: string, skip_verify: bool =
 В случае сбоя проверки сертификата, недопустимого имени домена или нарушения протокола TLS вызывает панику со структурой `TlsError`.
 
 ```yukino
-load std.net.tcp: tcp_connect
-load std.net.tls: tls_connect
+load std.net: tcp_connect, tls_connect
 load std.io: println
 
 set tcp = tcp_connect("google.com:443", 5000)
@@ -726,7 +722,7 @@ public fun status_reason(code: int32) -> string
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.net.http_types: status_reason
+load std.net: status_reason
 load std.io: println
 
 println("200: " + status_reason(200))
@@ -758,7 +754,7 @@ public fun response_ok(body: string) -> HttpResponse
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.net.http_types: response_ok
+load std.net: response_ok
 load std.io: println
 
 set resp = response_ok("Операция успешно завершена")
@@ -838,7 +834,7 @@ public fun parse_request_str(raw: string) -> HttpRequest
 Функция никогда не вызывает панику.
 
 ```yukino
-load std.net.http_codec: parse_request_str
+load std.net: parse_request_str
 load std.io: println
 
 set req = parse_request_str("GET /api/v1/users?page=2 HTTP/1.1\r\nHost: api.example.com\r\n\r\n")
@@ -943,7 +939,7 @@ public fun http_get(url_str: string) -> HttpResponse
 В случае ошибки соединения, сетевого таймаута или недоступности хоста вызывает панику со структурой `HttpError`.
 
 ```yukino
-load std.net.requests: get
+load std.net: get
 load std.io: println
 
 set resp = get("http://example.com/")
@@ -965,7 +961,7 @@ public fun http_post(url_str: string, body: string) -> HttpResponse
 В случае сетевого сбоя вызывает панику со структурой `HttpError`.
 
 ```yukino
-load std.net.requests: post
+load std.net: post
 load std.io: println
 
 set resp = post("http://httpbin.org/post", "hello from yukino")

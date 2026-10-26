@@ -1732,8 +1732,20 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_type: StructType<'ctx>,
         name: &str,
     ) -> Result<PointerValue<'ctx>, BuilderError> {
-        self.cabi
-            .emit_cstruct_alloca(&self.builder, struct_type, name)
+        let alloca = self
+            .cabi
+            .emit_cstruct_alloca(&self.builder, struct_type, name)?;
+        let struct_name = struct_type.get_name().and_then(|n| n.to_str().ok());
+        if let Some(raw_name) = struct_name.and_then(|n| n.strip_prefix("cstruct.")) {
+            if let Some(layout) = self.registry.cstructs.get(raw_name) {
+                if let Some(align) = layout.align {
+                    if let Some(inst) = alloca.as_instruction() {
+                        let _ = inst.set_alignment(align);
+                    }
+                }
+            }
+        }
+        Ok(alloca)
     }
 
     pub fn emit_cstruct_field_gep(
