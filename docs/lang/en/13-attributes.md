@@ -69,6 +69,10 @@ struct UserAccount {
 }
 ```
 
+> [!TIP]
+> **Example of working with macros and attributes:**  
+> A practical example of implementing and using macros and declarative metaprogramming attributes is available in the [shareui/clarity](https://github.com/shareui/clarity) repository.
+
 ### 1.3 Module inner attributes: #![attr] and !#[attr]
 
 Module inner attributes apply to the entire file or module and are declared at the very top of the file. The compiler supports canonical Rust-like `#![...]` syntax alongside Yukino's historical `!#[...]` prefix:

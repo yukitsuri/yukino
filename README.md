@@ -1,7 +1,7 @@
 # Yukino language
 
 > [!WARNING]
-> Unfinished
+> Open Beta: the project is currently in open beta and may be unstable. Features and APIs are subject to change.
 
 Yukino is a statically typed compiled language for native applications. It aims to be maximally simple and concise while remaining native, fast to compile, and practical to use.
 
@@ -14,11 +14,13 @@ The compiler uses LLVM IR through Inkwell. The toolchain consists of two command
 
 ## About project
 
-This is just an experimental project; I don't position it as a professional programming language.
+This is an experimental project; I don't position it as a professional programming language.
+
+The current community milestone and goal is to reach **200 GitHub repositories** with Yukino code.
 
 See the [syntax example](#example) for a small complete program.
 
-The language is still under active development. Some parts of the toolchain and standard library are incomplete, so the documentation describes the currently implemented behavior and available workflows.
+The language is in open beta and under active development. Some parts of the toolchain and standard library are still being refined, so the documentation describes the currently implemented behavior and available workflows.
 
 [Discord community](https://discord.gg/f2tePA6H8S)
 
@@ -27,8 +29,8 @@ The language is still under active development. Some parts of the toolchain and 
 The compiler can produce:
 
 - native executables;
-- static libraries;
-- dynamic libraries.
+- static C ABI & Yukino libraries;
+- dynamic C ABI libraries.
 
 It also provides C ABI and C FFI support for exporting Yukino functions and using native C-compatible functions and libraries.
 
