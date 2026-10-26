@@ -256,7 +256,7 @@ public class TcpStream {
 - `close() -> bool` - closes the socket descriptor.
 
 ```yukino
-load std.net.tcp: tcp_connect
+load std.net: tcp_connect
 load std.io: println
 
 set stream = tcp_connect("127.0.0.1:8080", 5000)
@@ -285,7 +285,7 @@ public class TcpListener {
 - `close() -> bool` - closes the listener socket.
 
 ```yukino
-load std.net.tcp: tcp_listen
+load std.net: tcp_listen
 load std.io: println
 
 set listener = tcp_listen("127.0.0.1:8080")
@@ -321,7 +321,7 @@ public class UdpSocket {
 - `close() -> bool` - closes the socket.
 
 ```yukino
-load std.net.udp: udp_bind
+load std.net: udp_bind
 load std.io: println
 
 set socket = udp_bind("127.0.0.1:9000")
@@ -352,8 +352,7 @@ public class SocketPoller {
 - `close() -> bool` - destroys poller instance.
 
 ```yukino
-load std.net.poll: SocketPoller, POLL_READABLE
-load std.net.tcp: tcp_listen
+load std.net: SocketPoller, POLL_READABLE, tcp_listen
 load std.io: println
 
 set poller = init SocketPoller()
@@ -394,8 +393,7 @@ public class TlsStream {
 - `close() -> bool` - emits `close_notify` and shuts down session.
 
 ```yukino
-load std.net.tcp: tcp_connect
-load std.net.tls: tls_connect
+load std.net: tcp_connect, tls_connect
 load std.io: println
 
 set tcp = tcp_connect("example.com:443", 5000)
@@ -429,7 +427,7 @@ public class HttpHeaders {
 - `format() -> string` - serializes headers into wire HTTP format (`"Key: Value\r\n"` for each line).
 
 ```yukino
-load std.net.http_types: HttpHeaders
+load std.net: HttpHeaders
 load std.io: println
 
 set h = init HttpHeaders()
@@ -495,8 +493,7 @@ public class HttpServer {
 - `close()` - stops the server and releases listening socket.
 
 ```yukino
-load std.net.server: HttpServer
-load std.net.http_types: response_ok, response_not_found
+load std.net: HttpServer, response_ok, response_not_found
 load std.io: println
 
 set server = init HttpServer("127.0.0.1:8080")
@@ -565,7 +562,7 @@ Returns a parsed `SocketAddr`.
 Panics with `NetError` (code 11) if the address string is missing the colon separator or has an invalid port number.
 
 ```yukino
-load std.net.address: parse_socket_addr
+load std.net: parse_socket_addr
 load std.io: println
 
 set addr = parse_socket_addr("127.0.0.1:8080")
@@ -585,7 +582,7 @@ Returns a string of type `string`.
 This function never panics.
 
 ```yukino
-load std.net.address: format_socket_addr, SocketAddr
+load std.net: format_socket_addr, SocketAddr
 load std.io: println
 
 set formatted = format_socket_addr(SocketAddr { host: "0.0.0.0", port: 3000 })
@@ -605,7 +602,7 @@ Returns an array of `string[]`.
 Panics with `NetError` (code 1) if name resolution fails.
 
 ```yukino
-load std.net.address: resolve
+load std.net: resolve
 load std.io: println
 
 set ips = resolve("localhost")
@@ -627,7 +624,7 @@ Returns a connected `TcpStream`.
 Panics with `NetError` if the host is unreachable, connection is refused, or timeout expires.
 
 ```yukino
-load std.net.tcp: tcp_connect
+load std.net: tcp_connect
 load std.io: println
 
 set client = tcp_connect("127.0.0.1:8080", 5000)
@@ -648,7 +645,7 @@ Returns a listening `TcpListener`.
 Panics with `NetError` (code 7) if the port is already in use.
 
 ```yukino
-load std.net.tcp: tcp_listen
+load std.net: tcp_listen
 load std.io: println
 
 set listener = tcp_listen("127.0.0.1:9090")
@@ -669,7 +666,7 @@ Returns a bound `UdpSocket`.
 Panics with `NetError` on failure.
 
 ```yukino
-load std.net.udp: udp_bind
+load std.net: udp_bind
 load std.io: println
 
 set sock = udp_bind("127.0.0.1:9091")
@@ -690,8 +687,7 @@ Returns an encrypted `TlsStream`.
 Panics with `TlsError` on certificate validation error, SNI error, or handshake protocol failure.
 
 ```yukino
-load std.net.tcp: tcp_connect
-load std.net.tls: tls_connect
+load std.net: tcp_connect, tls_connect
 load std.io: println
 
 set tcp = tcp_connect("google.com:443", 5000)
@@ -726,7 +722,7 @@ Returns a reason string of type `string`.
 This function never panics.
 
 ```yukino
-load std.net.http_types: status_reason
+load std.net: status_reason
 load std.io: println
 
 println("200: " + status_reason(200))
@@ -758,7 +754,7 @@ Returns an `HttpResponse`.
 This function never panics.
 
 ```yukino
-load std.net.http_types: response_ok
+load std.net: response_ok
 load std.io: println
 
 set resp = response_ok("Success")
@@ -838,7 +834,7 @@ Returns an `HttpRequest`.
 This function never panics.
 
 ```yukino
-load std.net.http_codec: parse_request_str
+load std.net: parse_request_str
 load std.io: println
 
 set req = parse_request_str("GET /api/v1/users?page=2 HTTP/1.1\r\nHost: api.example.com\r\n\r\n")
@@ -943,7 +939,7 @@ Returns server `HttpResponse`.
 Panics with `HttpError` on connection failure, timeout, or host error.
 
 ```yukino
-load std.net.requests: get
+load std.net: get
 load std.io: println
 
 set resp = get("http://example.com/")
@@ -965,7 +961,7 @@ Returns server `HttpResponse`.
 Panics with `HttpError` on failure.
 
 ```yukino
-load std.net.requests: post
+load std.net: post
 load std.io: println
 
 set resp = post("http://httpbin.org/post", "hello from yukino")

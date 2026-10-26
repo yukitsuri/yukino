@@ -2,8 +2,6 @@
 
 use inkwell::context::Context;
 use inkwell::values::{FunctionValue, PointerValue};
-use std::fs;
-use std::path::Path;
 use yukic_ast::Ident;
 use yukic_ast::attr::CAttributeNode;
 use yukic_codegen::CodeGenerator;
@@ -36,12 +34,48 @@ fn build_cstruct_types_and_ops<'ctx>(codegen: &mut CodeGenerator<'ctx>, context:
         true,
         None,
     );
+    codegen.registry.add_cstruct(
+        "AlignedBuffer",
+        vec![("id".to_string(), Type::Int32)],
+        false,
+        Some(16),
+    );
+    codegen.registry.add_cstruct(
+        "PackedAligned",
+        vec![
+            ("tag".to_string(), Type::Uint8),
+            ("len".to_string(), Type::Uint16),
+        ],
+        true,
+        Some(4),
+    );
 
     let hw_ty = codegen.lower_named_cstruct("HardwareInfo").expect("hw");
     let rgb_ty = codegen.lower_named_cstruct("PackedRgb").expect("rgb");
+    let buf_ty = codegen.lower_named_cstruct("AlignedBuffer").expect("buf");
+    let pa_ty = codegen.lower_named_cstruct("PackedAligned").expect("pa");
 
     let hw_alloca = codegen.emit_cstruct_alloca(hw_ty, "hw").expect("alloca");
     let _rgb_alloca = codegen.emit_cstruct_alloca(rgb_ty, "rgb").expect("alloca");
+    let _buf_alloca = codegen.emit_cstruct_alloca(buf_ty, "buf").expect("alloca");
+    let _pa_alloca = codegen.emit_cstruct_alloca(pa_ty, "pa").expect("alloca");
+
+    assert_eq!(
+        codegen.abi_size_of(&Type::Cstruct("AlignedBuffer".into())).unwrap(),
+        16
+    );
+    assert_eq!(
+        codegen.abi_align_of(&Type::Cstruct("AlignedBuffer".into())).unwrap(),
+        16
+    );
+    assert_eq!(
+        codegen.abi_size_of(&Type::Cstruct("PackedAligned".into())).unwrap(),
+        4
+    );
+    assert_eq!(
+        codegen.abi_align_of(&Type::Cstruct("PackedAligned".into())).unwrap(),
+        4
+    );
 
     let id_val = context.i32_type().const_int(101, false).into();
     let mem_val = context
@@ -219,9 +253,13 @@ fn verify_emitted_ir(ir: &str) {
     assert!(ir.contains("{ cold noreturn }"));
     assert!(ir.contains("{ alwaysinline }"));
 
-    // 2. Struct layouts (natural vs packed)
+    // 2. Struct layouts (natural vs packed vs aligned)
     assert!(ir.contains("%cstruct.HardwareInfo = type { i32, i64 }"));
     assert!(ir.contains("%cstruct.PackedRgb = type <{ i8, i8, i8 }>"));
+    assert!(ir.contains("%cstruct.AlignedBuffer = type { i32, [12 x i8] }"));
+    assert!(ir.contains("%cstruct.PackedAligned = type <{ i8, i16, [1 x i8] }>"));
+    assert!(ir.contains("alloca %cstruct.AlignedBuffer, align 16"));
+    assert!(ir.contains("alloca %cstruct.PackedAligned, align 4"));
 
     // 3. Raw pointer operations
     assert!(ir.contains("store i64 777, ptr %raw_cell"));

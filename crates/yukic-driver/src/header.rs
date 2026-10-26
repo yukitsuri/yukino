@@ -68,15 +68,30 @@ fn has_packed_attribute(attrs: &[CAttributeNode]) -> bool {
     attrs.iter().any(|a| a.name.name == "packed")
 }
 
+fn get_align_attribute(attrs: &[CAttributeNode]) -> Option<u32> {
+    attrs
+        .iter()
+        .find(|a| a.name.name == "align")
+        .and_then(|a| a.arg.as_ref())
+        .and_then(|s| s.parse::<u32>().ok())
+}
+
 pub fn format_cstruct(cstruct: &CstructDecl) -> String {
     let mut out = String::new();
     let is_packed = has_packed_attribute(&cstruct.c_attrs);
+    let align = get_align_attribute(&cstruct.c_attrs);
 
     if is_packed {
         out.push_str("#pragma pack(push, 1)\n");
     }
 
-    let _ = writeln!(out, "typedef struct {} {{", cstruct.name.name);
+    let align_str = if let Some(a) = align {
+        format!(" __attribute__((aligned({a})))")
+    } else {
+        String::new()
+    };
+
+    let _ = writeln!(out, "typedef struct{} {} {{", align_str, cstruct.name.name);
     for field in &cstruct.fields {
         let _ = writeln!(out, "{}", format_c_field(&field.name.name, &field.ty));
     }
@@ -351,8 +366,14 @@ mod tests {
             arg: None,
             span: Span::DUMMY,
         });
+        packed_cs.c_attrs.push(CAttributeNode {
+            name: make_ident("align"),
+            arg: Some("16".to_string()),
+            span: Span::DUMMY,
+        });
         let packed_formatted = format_cstruct(&packed_cs);
         assert!(packed_formatted.contains("#pragma pack(push, 1)"));
+        assert!(packed_formatted.contains("typedef struct __attribute__((aligned(16))) Point {"));
         assert!(packed_formatted.contains("#pragma pack(pop)"));
     }
 

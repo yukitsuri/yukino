@@ -137,6 +137,26 @@ pub fn load_global_full_lib_log() -> bool {
     parse_full_lib_log_from_json(&content).unwrap_or(false)
 }
 
+pub fn parse_macrotimeout_from_json(json: &str) -> Option<u64> {
+    let val: serde_json::Value = serde_json::from_str(json).ok()?;
+    let item = val.get("macrotimeout")?;
+    if let Some(n) = item.as_u64() {
+        Some(n)
+    } else if let Some(s) = item.as_str() {
+        s.parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
+pub fn load_global_macrotimeout() -> u64 {
+    let path = global_config_path();
+    let Ok(content) = fs::read_to_string(path) else {
+        return 10;
+    };
+    parse_macrotimeout_from_json(&content).unwrap_or(10)
+}
+
 pub fn num_cpus() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
 }
@@ -225,6 +245,10 @@ pub fn set_cthreads(count: usize) -> Result<(), std::io::Error> {
     set_global_config_value("cthreads", &count.to_string())
 }
 
+pub fn set_macrotimeout(secs: u64) -> Result<(), std::io::Error> {
+    set_global_config_value("macrotimeout", &secs.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +295,14 @@ mod tests {
         assert_eq!(parse_full_lib_log_from_json(r#"{"full-lib-log": "false"}"#), Some(false));
         assert_eq!(parse_full_lib_log_from_json(r#"{"full_lib_log": true}"#), Some(true));
         assert_eq!(parse_full_lib_log_from_json(r#"{"other": 1}"#), None);
+    }
+
+    #[test]
+    fn test_parse_macrotimeout_json() {
+        assert_eq!(parse_macrotimeout_from_json(r#"{"macrotimeout": 20}"#), Some(20));
+        assert_eq!(parse_macrotimeout_from_json(r#"{"macrotimeout": "15"}"#), Some(15));
+        assert_eq!(parse_macrotimeout_from_json(r#"{"macrotimeout": 0}"#), Some(0));
+        assert_eq!(parse_macrotimeout_from_json(r#"{"other": 1}"#), None);
     }
 
     #[test]

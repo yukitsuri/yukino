@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::io::IsTerminal;
 use std::str::FromStr;
+use std::time::Duration;
 
 pub use archive::{create_static_archive, list_archive_members};
 pub use cgu_cache::{CguCacheEntry, CguCacheManifest, MANIFEST_FILENAME};
@@ -232,6 +233,7 @@ pub struct DriverConfig {
     pub panic_strategy: String,
     pub function_sections: bool,
     pub macro_runners: HashMap<String, PathBuf>,
+    pub macro_timeout: Option<Duration>,
 }
 
 impl DriverConfig {
@@ -274,6 +276,7 @@ impl DriverConfig {
             panic_strategy: "unwind".to_string(),
             function_sections: false,
             macro_runners: HashMap::new(),
+            macro_timeout: None,
         }
     }
 
@@ -283,6 +286,10 @@ impl DriverConfig {
         let codegen_units = args.resolve_codegen_units();
         let function_sections = args.resolve_function_sections().unwrap_or(false);
         let macro_runners = args.parse_macro_runners();
+        let macro_timeout = args
+            .macro_timeout
+            .map(Duration::from_secs)
+            .or_else(resolve_global_macro_timeout);
         let runtime = args.runtime;
         let no_runtime = args.no_runtime;
         let mut link_archives = args.link_archive;
@@ -328,6 +335,7 @@ impl DriverConfig {
             panic_strategy: args.panic_strategy,
             function_sections,
             macro_runners,
+            macro_timeout,
         })
     }
 
@@ -481,6 +489,43 @@ impl DriverConfig {
         link_executable(&out_path, objects, target, self)?;
         Ok(out_path)
     }
+}
+
+fn resolve_global_macro_timeout() -> Option<Duration> {
+    let config_path = if let Some(custom) = std::env::var_os("YUKINO_CONFIG_PATH") {
+        PathBuf::from(custom)
+    } else {
+        #[cfg(target_os = "windows")]
+        let p = std::env::var_os("APPDATA")
+            .map(|a| PathBuf::from(a).join("yukino-lang").join("config.json"));
+        #[cfg(target_os = "macos")]
+        let p = std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support").join("yukino-lang").join("config.json"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let p = std::env::var_os("XDG_CONFIG_HOME")
+            .map(|x| PathBuf::from(x).join("yukino-lang").join("config.json"))
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| {
+                    PathBuf::from(h)
+                        .join(".config")
+                        .join("yukino-lang")
+                        .join("config.json")
+                })
+            });
+        p?
+    };
+
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let item = val.get("macrotimeout")?;
+    let secs = if let Some(n) = item.as_u64() {
+        Some(n)
+    } else if let Some(s) = item.as_str() {
+        s.parse::<u64>().ok()
+    } else {
+        None
+    }?;
+    Some(Duration::from_secs(secs))
 }
 
 #[cfg(test)]

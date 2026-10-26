@@ -21,7 +21,8 @@ pub use dashboard::BuildDashboard;
 
 pub use config::{
     default_pool_threads, global_config_path, load_global_cthreads, load_global_full_lib_log,
-    num_cpus, parse_cthreads_from_json, resolve_pool_threads,
+    load_global_macrotimeout, num_cpus, parse_cthreads_from_json, resolve_pool_threads,
+    set_macrotimeout,
 };
 pub use pool::CompilationThreadPool;
 pub use project::{

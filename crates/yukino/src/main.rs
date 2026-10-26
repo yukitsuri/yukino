@@ -253,6 +253,7 @@ pub struct ConfigArgs {
 #[derive(Subcommand, Debug, PartialEq, Eq)]
 pub enum ConfigCommands {
     Cthreads(CthreadsArgs),
+    Macrotimeout(MacrotimeoutArgs),
     Get(KeyArgs),
     Set(KeyValueArgs),
     List,
@@ -262,6 +263,11 @@ pub enum ConfigCommands {
 #[derive(Args, Debug, PartialEq, Eq)]
 pub struct CthreadsArgs {
     pub count: usize,
+}
+
+#[derive(Args, Debug, PartialEq, Eq)]
+pub struct MacrotimeoutArgs {
+    pub timeout: u64,
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -498,6 +504,10 @@ fn execute_config(args: ConfigArgs) -> Result<(), ProjectError> {
             config::set_cthreads(sub.count).map_err(|e| ProjectError::Io(e.to_string()))?;
             println!("cthreads set to {}", sub.count);
         }
+        Some(ConfigCommands::Macrotimeout(sub)) => {
+            config::set_macrotimeout(sub.timeout).map_err(|e| ProjectError::Io(e.to_string()))?;
+            println!("macrotimeout set to {}", sub.timeout);
+        }
         Some(ConfigCommands::Get(sub)) => {
             if let Some(val) = config::get_global_config_value(&sub.key) {
                 println!("{val}");
@@ -509,6 +519,8 @@ fn execute_config(args: ConfigArgs) -> Result<(), ProjectError> {
                 println!("8");
             } else if sub.key == "full-lib-log" {
                 println!("false");
+            } else if sub.key == "macrotimeout" {
+                println!("{}", config::load_global_macrotimeout());
             } else {
                 eprintln!("key '{}' not found", sub.key);
                 std::process::exit(1);
@@ -796,6 +808,16 @@ mod tests {
             Some(Commands::Config(args)) => match args.command {
                 Some(ConfigCommands::Cthreads(sub)) => assert_eq!(sub.count, 6),
                 _ => panic!("expected Cthreads"),
+            },
+            _ => panic!("expected Config"),
+        }
+
+        let cli_macrotimeout = Cli::try_parse_from(["yukino", "config", "macrotimeout", "15"])
+            .expect("parse config macrotimeout");
+        match cli_macrotimeout.command {
+            Some(Commands::Config(args)) => match args.command {
+                Some(ConfigCommands::Macrotimeout(sub)) => assert_eq!(sub.timeout, 15),
+                _ => panic!("expected Macrotimeout"),
             },
             _ => panic!("expected Config"),
         }

@@ -247,6 +247,8 @@ fn invoke_yukic_for_dep(
     if let Some(strategy) = &cfg.panic_strategy {
         cmd.arg("--panic-strategy").arg(strategy);
     }
+    let macro_timeout = crate::config::load_global_macrotimeout();
+    cmd.arg("--macro-timeout").arg(macro_timeout.to_string());
 
     let status = if no_lib_log {
         let output = cmd
@@ -1128,6 +1130,8 @@ fn build_yukic_command(p: &YukicCommandParams) -> Command {
     if p.extra_info {
         cmd.arg("--extra-info");
     }
+    let macro_timeout = crate::config::load_global_macrotimeout();
+    cmd.arg("--macro-timeout").arg(macro_timeout.to_string());
     cmd.arg("--linker").arg("lld");
     cmd
 }

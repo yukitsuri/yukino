@@ -18,7 +18,7 @@ Compiler attributes in Yukino are declarative metadata attached to program eleme
 2. [Conditional compilation](#2-conditional-compilation)  
    2.1 [Unified configuration attribute: #[cfg(...)]](#21-unified-configuration-attribute-cfg)  
    2.2 [Conditional attribute application: #[cfg_attr(...)]](#22-conditional-attribute-application-cfg_attr)  
-   2.3 [Historical attributes target, arch, feature, and #[!attr]](#23-historical-attributes-target-arch-feature-and-attr)
+   2.3 [Shorthand syntax target, arch, feature, and #[!attr]](#23-shorthand-syntax-target-arch-feature-and-attr)
 3. [Optimization and function code generation](#3-optimization-and-function-code-generation)  
    3.1 [Pure functions: #[stable]](#31-pure-functions-stable)  
    3.2 [Inlining control: #[inline], #[inline_always], #[no_inline]](#32-inlining-control-inline-inline_always-no_inline)  
@@ -187,9 +187,9 @@ struct ConfigPayload {
 
 If the predicate evaluates to true, the compiler dynamically decorates the item with the target attribute prior to subsequent compiler stages.
 
-### 2.3 Historical attributes target, arch, feature, and #[!attr]
+### 2.3 Shorthand syntax target, arch, feature, and #[!attr]
 
-For backward compatibility, single-condition attributes and prefix negation remain supported:
+While `#[cfg(...)]` is the standard (normal) form for conditional compilation, attributes without `cfg` provide an intentionally concise and readable shorthand for frequent single checks:
 
 - `#[target = "x86_64-unknown-linux-gnu"]` or target list `#[target = ["...", "..."]]`
 - `#[arch = "x86_64"]` (accepts `"x86_64"`, `"arm64"`, `"arm"`)

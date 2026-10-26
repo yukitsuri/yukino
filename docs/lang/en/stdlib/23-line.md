@@ -213,7 +213,7 @@ Returns an initialized `Line` object.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -235,7 +235,7 @@ Returns the modified `Line` instance for method chaining.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("calc", "1.0.0").about("A simple calculator utility")
@@ -255,7 +255,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", "1.0.0").author("Yukino Team")
@@ -275,8 +275,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
-load std.line.arg: Arg
+load std.line: Line, Arg
 
 fun main() {
     set opt_verbose = init Arg("verbose").short("v").long("verbose").flag()
@@ -297,7 +296,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").flag("verbose", "v", "Enable verbose output")
@@ -317,7 +316,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("config", "c", "Path to configuration file")
@@ -337,7 +336,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("server", "1.0.0").opt_default("port", "p", "Server port", "8080")
@@ -357,7 +356,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("db", "1.0.0").opt_required("host", "h", "Database host address")
@@ -377,7 +376,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("cp", "1.0.0").positional("source", "Source file").positional("dest", "Destination file")
@@ -397,7 +396,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("cat", "1.0.0").positional_required("path", "File path to read")
@@ -417,7 +416,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set root = init Line("git", "2.40.0")
@@ -439,7 +438,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").disable_help()
@@ -459,7 +458,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").disable_version()
@@ -479,7 +478,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").override_help("Custom application help text.")
@@ -499,7 +498,7 @@ Returns the current `Line` instance.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").override_version("v1.0.0-custom-build")
@@ -519,7 +518,7 @@ This function does not return a value.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("demo", "1.0.0").flag("verbose", "v", "Verbose mode")
@@ -540,7 +539,7 @@ This function does not return a value.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("demo", "1.0.0")
@@ -561,7 +560,7 @@ Returns a `Matches` object containing parsing results.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", yukienv!("bin.version")).flag("dry-run", "d", "Dry run")
@@ -582,7 +581,7 @@ Returns a `Matches` object containing parsing results.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -628,7 +627,7 @@ Returns an initialized `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output")
@@ -648,7 +647,7 @@ Returns the modified `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output").short("o")
@@ -668,7 +667,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("out").long("output")
@@ -688,7 +687,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("output").about("Path to output file")
@@ -708,7 +707,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("release").short("r").flag()
@@ -728,7 +727,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("token").required(true)
@@ -748,7 +747,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("input").positional(true)
@@ -768,7 +767,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("include").short("I").multiple(true)
@@ -788,7 +787,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("format").default_value("json")
@@ -808,7 +807,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("config").value_hint("FILE")
@@ -828,7 +827,7 @@ Returns the current `Arg` instance.
 This method never panics.
 
 ```yukino
-load std.line.arg: Arg
+load std.line: Arg
 
 fun main() {
     set a = init Arg("quiet").conflicts_with("verbose")
@@ -868,7 +867,7 @@ Returns an empty `Matches` instance.
 This method never panics.
 
 ```yukino
-load std.line.matches: Matches
+load std.line: Matches
 
 fun main() {
     set m = init Matches()
@@ -888,7 +887,7 @@ Returns `true` if the flag was specified, otherwise `false`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -913,7 +912,7 @@ Returns `true` if present, otherwise `false`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("config", "c", "")
@@ -935,7 +934,7 @@ Returns the string value or `null` if not specified. Nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -961,7 +960,7 @@ Returns the string value or `fallback`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -984,7 +983,7 @@ Returns `int64` or `null` if the argument is omitted or not a valid integer. Nul
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("port", "p", "")
@@ -1006,7 +1005,7 @@ Returns `int64`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1029,7 +1028,7 @@ Returns `float64` or `null` if omitted or not a valid float. Nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("rate", "r", "")
@@ -1051,7 +1050,7 @@ Returns `float64`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("app", "1.0.0").opt("scale", "s", "")
@@ -1073,7 +1072,7 @@ Returns an array of strings `string[]`. Empty if never passed. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("compiler", "1.0.0").opt("include", "I", "")
@@ -1095,7 +1094,7 @@ Returns an array of strings `string[]`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1118,7 +1117,7 @@ Returns an array of strings `string[]`. Not nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set cli = init Line("tool", "1.0.0")
@@ -1140,7 +1139,7 @@ Returns the subcommand name string or `null` if no subcommand was invoked. Nulla
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1164,7 +1163,7 @@ Returns a `Matches` object or `null` if no subcommand was invoked. Nullable.
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 load std.io: println
 
 fun main() {
@@ -1192,7 +1191,7 @@ Returns `true` if the named subcommand was invoked, otherwise `false`. Not nulla
 This method never panics.
 
 ```yukino
-load std.line.line: Line
+load std.line: Line
 
 fun main() {
     set root = init Line("git", "2.40.0")
@@ -1219,7 +1218,7 @@ Returns a non-negative integer `int64`. Not nullable.
 This function never panics.
 
 ```yukino
-load std.line.suggest: levenshtein
+load std.line: levenshtein
 load std.io: println
 
 fun main() {
@@ -1242,7 +1241,7 @@ Returns the closest candidate string or `null` if no close match is found. Nulla
 This function never panics.
 
 ```yukino
-load std.line.suggest: find_suggestion
+load std.line: find_suggestion
 load std.io: println
 
 fun main() {
@@ -1283,8 +1282,7 @@ Returns the formatted help string `string`. Not nullable.
 This function never panics.
 
 ```yukino
-load std.line.help: render_help
-load std.line.arg: Arg
+load std.line: render_help, Arg
 load std.io: println
 
 fun main() {
