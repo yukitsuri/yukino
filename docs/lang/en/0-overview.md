@@ -5,7 +5,7 @@ This documentation is intended for developers who are already familiar with func
 For learning from the beginning, read the documents in numeric order: start with this overview, then `1-setup.md`, followed by later sections in ascending order.
 
 > [!WARNING]
-> **Documentation and compiler are under active development:** specifications, language semantics, and tooling may evolve. If you encounter any documentation discrepancies, unexpected behaviors, or compiler bugs, please do not hesitate to open an [Issue](https://github.com/yukitsuri/yukino/issues) or submit a [Pull Request](https://github.com/yukitsuri/yukino/pulls).
+> **Documentation and compiler are under active development:** The documentation was written by AI and then fully reviewed and edited by the lead developer, but there may be some inaccuracies. If you encounter any documentation discrepancies, unexpected behaviors, or compiler bugs, please do not hesitate to open an [Issue](https://github.com/yukitsuri/yukino/issues) or submit a [Pull Request](https://github.com/yukitsuri/yukino/pulls).
 
 ---
 
