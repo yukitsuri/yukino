@@ -130,6 +130,76 @@ fn path_matches_pattern(path_str: &str, pattern: &str) -> bool {
     }
 }
 
+// Assign items to codegen units grouped by source file via LPT.
+pub fn partition_module_by_sources(
+    ast: &AstModule,
+    num_units: usize,
+    sources: &HashMap<ItemId, PathBuf>,
+) -> Vec<CodegenUnit> {
+    let num_units = num_units.max(1);
+    if ast.items.is_empty() {
+        return vec![CodegenUnit::new("cgu_0".to_string())];
+    }
+
+    let mut file_order: Vec<PathBuf> = Vec::new();
+    let mut file_items: HashMap<PathBuf, Vec<ItemId>> = HashMap::new();
+    let mut file_weights: HashMap<PathBuf, usize> = HashMap::new();
+    let mut fallback_items: Vec<ItemId> = Vec::new();
+
+    for item in &ast.items {
+        let weight = estimate_item_weight(item);
+        if let Some(src) = sources.get(&item.id) {
+            let entry = file_items.entry(src.clone()).or_insert_with(|| {
+                file_order.push(src.clone());
+                Vec::new()
+            });
+            entry.push(item.id);
+            *file_weights.entry(src.clone()).or_insert(0) += weight;
+        } else {
+            fallback_items.push(item.id);
+        }
+    }
+
+    if file_order.is_empty() {
+        return partition_module(ast, num_units);
+    }
+
+    file_order.sort_by(|a, b| {
+        let wa = file_weights.get(a).copied().unwrap_or(0);
+        let wb = file_weights.get(b).copied().unwrap_or(0);
+        wb.cmp(&wa).then_with(|| a.cmp(b))
+    });
+
+    let actual_units = num_units.min(file_order.len()).max(1);
+    let mut units: Vec<CodegenUnit> = (0..actual_units)
+        .map(|i| CodegenUnit::new(format!("cgu_{i}")))
+        .collect();
+
+    for file_path in file_order {
+        let items = file_items.remove(&file_path).unwrap_or_default();
+        let weight = file_weights.get(&file_path).copied().unwrap_or(0);
+
+        let min_idx = units
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, u)| u.estimated_weight)
+            .map_or(0, |(idx, _)| idx);
+
+        units[min_idx].item_ids.extend(items);
+        units[min_idx].estimated_weight += weight;
+    }
+
+    if !fallback_items.is_empty() {
+        units[0].item_ids.extend(fallback_items);
+    }
+
+    units.retain(|u| !u.item_ids.is_empty());
+    if units.is_empty() {
+        units.push(CodegenUnit::new("cgu_0".to_string()));
+    }
+    units
+}
+
 pub fn partition_module_with_custom(
     ast: &AstModule,
     num_units: usize,
@@ -137,6 +207,9 @@ pub fn partition_module_with_custom(
     item_sources: Option<&HashMap<ItemId, PathBuf>>,
 ) -> Vec<CodegenUnit> {
     let Some(custom_map) = custom_cgus.filter(|m| !m.is_empty()) else {
+        if let Some(sources) = item_sources.filter(|s| !s.is_empty()) {
+            return partition_module_by_sources(ast, num_units, sources);
+        }
         return partition_module(ast, num_units);
     };
 

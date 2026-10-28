@@ -125,6 +125,11 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
         self.panic_strategy == "abort"
     }
 
+    pub fn is_windows_gnu_target(&self) -> bool {
+        self.target.spec().os == yukic_target::OperatingSystem::Windows
+            && self.target.spec().env == yukic_target::Environment::Gnu
+    }
+
     pub fn lower_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
         let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
         let lowerer =
@@ -154,31 +159,69 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
         f
     }
 
+    // String results use an sret out pointer for Win64 ABI compatibility.
     pub fn get_or_declare_get_message(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("yukino_exception_get_message") {
             return f;
         }
-        let str_ty = self.context.struct_type(
-            &[self.ptr_type().into(), self.context.i64_type().into()],
-            false,
-        );
-        let fn_ty = str_ty.fn_type(&[self.ptr_type().into()], false);
-        let f = self.module.add_function("yukino_exception_get_message", fn_ty, None);
-        f.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32);
-        f
+        self.declare_exception_str_getter("yukino_exception_get_message")
     }
 
     pub fn get_or_declare_get_kind(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("yukino_exception_get_kind") {
             return f;
         }
+        self.declare_exception_str_getter("yukino_exception_get_kind")
+    }
+
+    fn declare_exception_str_getter(&self, name: &str) -> FunctionValue<'ctx> {
+        use inkwell::attributes::{Attribute, AttributeLoc};
         let str_ty = self.context.struct_type(
             &[self.ptr_type().into(), self.context.i64_type().into()],
             false,
         );
-        let fn_ty = str_ty.fn_type(&[self.ptr_type().into()], false);
-        let f = self.module.add_function("yukino_exception_get_kind", fn_ty, None);
+        let fn_ty = self.context.void_type().fn_type(
+            &[self.ptr_type().into(), self.ptr_type().into()],
+            false,
+        );
+        let f = self.module.add_function(name, fn_ty, None);
         f.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32);
+        let sret_kind = Attribute::get_named_enum_kind_id("sret");
+        let sret_attr = self.context.create_type_attribute(sret_kind, str_ty.into());
+        f.add_attribute(AttributeLoc::Param(0), sret_attr);
+        f
+    }
+
+    pub fn get_or_declare_kind_equals(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("yukino_exception_kind_equals") {
+            return f;
+        }
+        let fn_ty = self.context.i32_type().fn_type(
+            &[
+                self.ptr_type().into(),
+                self.ptr_type().into(),
+                self.context.i64_type().into(),
+            ],
+            false,
+        );
+        let f = self.module.add_function("yukino_exception_kind_equals", fn_ty, None);
+        f.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32);
+        f
+    }
+
+    pub fn get_or_declare_reraise(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("yukino_reraise_exception") {
+            return f;
+        }
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[self.ptr_type().into()], false);
+        let f = self.module.add_function("yukino_reraise_exception", fn_ty, None);
+        f.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32);
+        let noreturn_kind = inkwell::attributes::Attribute::get_named_enum_kind_id("noreturn");
+        let noreturn_attr = self.context.create_enum_attribute(noreturn_kind, 0);
+        f.add_attribute(inkwell::attributes::AttributeLoc::Function, noreturn_attr);
         f
     }
 

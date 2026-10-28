@@ -475,7 +475,11 @@ impl TypeChecker {
                 .insert_var(param.name.name.clone(), param_ty, param.is_mut, param.span);
         }
 
-        let _ = self.check_block(&decl.body, Some(&ret));
+        let _ = self.check_block_impl(
+            &decl.body,
+            Some(&ret),
+            Some(("function", decl.name.name.as_str(), decl.name.span)),
+        );
         self.env.pop_scope();
         self.current_return_type = None;
     }
@@ -494,7 +498,11 @@ impl TypeChecker {
                 .insert_var(param.name.name.clone(), param_ty, false, param.span);
         }
 
-        let _ = self.check_block(body, Some(&ret));
+        let _ = self.check_block_impl(
+            body,
+            Some(&ret),
+            Some(("function", decl.name.name.as_str(), decl.name.span)),
+        );
         self.env.pop_scope();
         self.current_return_type = None;
     }
@@ -530,7 +538,11 @@ impl TypeChecker {
             self.env.insert_var(param.name.clone(), ty, false, param.span);
         }
 
-        let _ = self.check_block(&accessor.body, Some(&ret_ty));
+        let _ = self.check_block_impl(
+            &accessor.body,
+            Some(&ret_ty),
+            Some(("accessor", accessor.name.name.as_str(), accessor.name.span)),
+        );
         self.env.pop_scope();
         self.current_return_type = None;
     }
@@ -590,7 +602,11 @@ impl TypeChecker {
                 .insert_var(param.name.name.clone(), param_ty, param.is_mut, param.span);
         }
 
-        let _ = self.check_block(&method.body, Some(&ret));
+        let _ = self.check_block_impl(
+            &method.body,
+            Some(&ret),
+            Some(("method", method.name.name.as_str(), method.name.span)),
+        );
         self.env.pop_scope();
         self.current_return_type = None;
     }
@@ -600,8 +616,19 @@ impl TypeChecker {
         block: &Block,
         expected: Option<&Type>,
     ) -> Result<Type, Diagnostic> {
+        self.check_block_impl(block, expected, None)
+    }
+
+    // Checks block statements and reports E0410 if expected return value is missing.
+    fn check_block_impl(
+        &mut self,
+        block: &Block,
+        expected: Option<&Type>,
+        ret_ctx: Option<(&'static str, &str, Span)>,
+    ) -> Result<Type, Diagnostic> {
         self.env.push_scope();
         let mut last_type = Type::Void;
+        let mut missing_return_reported = false;
 
         for (i, stmt) in block.stmts.iter().enumerate() {
             let is_last = i == block.stmts.len() - 1;
@@ -612,20 +639,57 @@ impl TypeChecker {
                         last_type = Type::Void;
                         continue;
                     }
+                    if let Some(ctx) = ret_ctx {
+                        if !matches!(expected_ty, Type::Never | Type::Error) {
+                            let inferred = self.infer_expr(expr)?;
+                            if inferred == Type::Void {
+                                self.report_missing_return(ctx, expected_ty);
+                                missing_return_reported = true;
+                                last_type = Type::Void;
+                                continue;
+                            }
+                        }
+                    }
                     last_type = self.check_expr(expr, expected_ty)?;
                     continue;
                 }
             }
             self.check_stmt(stmt)?;
             if is_last {
-                if let StmtKind::Expr(expr) = &stmt.kind {
-                    last_type = self.infer_expr(expr)?;
+                match &stmt.kind {
+                    StmtKind::Expr(expr) => last_type = self.infer_expr(expr)?,
+                    StmtKind::Return(_) | StmtKind::Recur(_) => last_type = Type::Never,
+                    _ => {}
                 }
+            }
+        }
+
+        if let (Some(ctx), Some(expected_ty)) = (ret_ctx, expected) {
+            if !missing_return_reported
+                && last_type == Type::Void
+                && !matches!(expected_ty, Type::Void | Type::Never | Type::Error)
+            {
+                self.report_missing_return(ctx, expected_ty);
             }
         }
 
         self.env.pop_scope();
         Ok(last_type)
+    }
+
+    fn report_missing_return(&mut self, ctx: (&'static str, &str, Span), ret_ty: &Type) {
+        let (kind, name, span) = ctx;
+        let diag = Diagnostic::error(
+            ErrorCode::E0410,
+            format!(
+                "missing return: {kind} `{name}` declares return type `{ret_ty}` but its body does not end with a return value"
+            ),
+            span,
+        )
+        .with_note(format!(
+            "add a trailing `return` with a value of type `{ret_ty}` (or end the body with an expression of that type) on every code path"
+        ));
+        self.diagnostics.push(diag);
     }
 
     pub fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), Diagnostic> {
@@ -1026,7 +1090,14 @@ impl TypeChecker {
                 else_branch.as_ref(),
                 expr.span,
             ),
-            ExprKind::InterpolatedString(_) => Ok(Type::String),
+            ExprKind::InterpolatedString(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.infer_expr(e)?;
+                    }
+                }
+                Ok(Type::String)
+            }
             ExprKind::Ref { mutable, expr } => {
                 let inner_ty = self.infer_expr(expr)?;
                 Ok(Type::Ref {
@@ -1131,7 +1202,15 @@ impl TypeChecker {
         let old_return_type = self.current_return_type.take();
         self.current_return_type = expected_block_ret.cloned();
 
-        let block_res = self.check_block(&fun.body, expected_block_ret);
+        let block_res = if explicit_ret.is_some() {
+            self.check_block_impl(
+                &fun.body,
+                expected_block_ret,
+                Some(("anonymous function", "<anonymous>", fun.span)),
+            )
+        } else {
+            self.check_block(&fun.body, expected_block_ret)
+        };
         let inferred_ret = self.current_return_type.clone();
         self.current_return_type = old_return_type;
 
@@ -2529,6 +2608,38 @@ impl TypeChecker {
         None
     }
 
+    fn validate_catch_error_type(
+        &mut self,
+        tn: &TypeNode,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let name = match &tn.kind {
+            TypeNodeKind::Ident(id) => id.name.as_str(),
+            TypeNodeKind::Path(segments) => segments.last().map(|id| id.name.as_str()).unwrap_or(""),
+            _ => "",
+        };
+        if name.is_empty() {
+            let diag = Diagnostic::error(
+                ErrorCode::E0401,
+                "catch type must name an error struct",
+                tn.span,
+            );
+            self.diagnostics.push(diag.clone());
+            return Err(diag);
+        }
+        if self.env.lookup_struct(name).is_none() {
+            let diag = Diagnostic::error(
+                ErrorCode::E0402,
+                format!("error struct `{name}` is not defined in any loaded module"),
+                span,
+            )
+            .with_note("check the spelling; error structs of loaded modules are available in `catch` without an explicit import");
+            self.diagnostics.push(diag.clone());
+            return Err(diag);
+        }
+        Ok(())
+    }
+
     fn infer_sus(
         &mut self,
         body: &Block,
@@ -2541,10 +2652,13 @@ impl TypeChecker {
         for catch in catches {
             self.env.push_scope();
             self.env.insert_var("errkind".to_string(), Type::String, false, catch.span);
-            if let (Some(err_var), Some(type_node)) = (&catch.error_var, &catch.error_type) {
-                let err_ty = self.resolve_type_node(type_node);
-                self.env
-                    .insert_var(err_var.name.clone(), err_ty, false, err_var.span);
+            if let Some(type_node) = &catch.error_type {
+                self.validate_catch_error_type(type_node, catch.span)?;
+                if let Some(err_var) = &catch.error_var {
+                    let err_ty = self.resolve_type_node(type_node);
+                    self.env
+                        .insert_var(err_var.name.clone(), err_ty, false, err_var.span);
+                }
             }
             let catch_ty = self.check_block(&catch.body, None)?;
             self.env.pop_scope();

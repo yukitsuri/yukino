@@ -72,14 +72,16 @@ mod tests {
             assert_eq!(raw_str.ptr, dummy_ptr);
             assert_eq!(raw_str.len, 10);
 
-            let raw_slice = yukino_rt_slice_from_raw_parts(dummy_ptr as *mut u8, 5, 20);
+            let mut raw_slice = YukinoSlice { ptr: std::ptr::null_mut(), len: 0, cap: 0 };
+            yukino_rt_slice_from_raw_parts(&mut raw_slice, dummy_ptr as *mut u8, 5, 20);
             assert_eq!(raw_slice.ptr, dummy_ptr as *mut u8);
             assert_eq!(raw_slice.len, 5);
             assert_eq!(raw_slice.cap, 20);
 
             // 6. string_to_chars and chars_to_string
             let greeting = "Hello, мир!";
-            let chars_slice = yukino_rt_string_to_chars(reg_ptr, greeting.as_ptr(), greeting.len());
+            let mut chars_slice = YukinoSlice { ptr: std::ptr::null_mut(), len: 0, cap: 0 };
+            yukino_rt_string_to_chars(&mut chars_slice, reg_ptr, greeting.as_ptr(), greeting.len());
             assert_eq!(chars_slice.len, 11);
             let mut back_str = YukinoString { ptr: std::ptr::null(), len: 0 };
             yukino_rt_chars_to_string(&mut back_str, reg_ptr, chars_slice.ptr.cast(), chars_slice.len);
@@ -111,7 +113,8 @@ mod tests {
             let argv = [arg0, arg1, arg2];
 
             // args()
-            let slice = yukino_rt_get_args(reg_ptr, 3, argv.as_ptr());
+            let mut slice = YukinoSlice { ptr: std::ptr::null_mut(), len: 0, cap: 0 };
+            yukino_rt_get_args(&mut slice, reg_ptr, 3, argv.as_ptr());
             assert_eq!(slice.len, 3);
             let items = std::slice::from_raw_parts(slice.ptr.cast::<YukinoString>(), 3);
             assert_eq!(items[0].len, 4);

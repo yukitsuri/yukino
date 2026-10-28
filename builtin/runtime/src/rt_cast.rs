@@ -217,55 +217,62 @@ pub unsafe extern "C" fn yukino_rt_string_from_raw_parts(
     unsafe { out.write(YukinoString { ptr, len }) };
 }
 
+// Out pointer: 24-byte struct return diverges between Win64 and SysV.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yukino_rt_slice_from_raw_parts(
+    out: *mut YukinoSlice,
     ptr: *mut u8,
     len: usize,
     cap: usize,
-) -> YukinoSlice {
-    YukinoSlice { ptr, len, cap }
+) {
+    unsafe { out.write(YukinoSlice { ptr, len, cap }) };
 }
 
+// Out pointer: 24-byte struct return diverges between Win64 and SysV.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yukino_rt_string_to_chars(
+    out: *mut YukinoSlice,
     region: *mut YukinoRegion,
     ptr: *const u8,
     len: usize,
-) -> YukinoSlice {
+) {
     if region.is_null() || ptr.is_null() || len == 0 {
-        return YukinoSlice {
+        unsafe { out.write(YukinoSlice {
             ptr: std::ptr::null_mut(),
             len: 0,
             cap: 0,
-        };
+        }) };
+        return;
     }
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     let Ok(s) = std::str::from_utf8(slice) else {
-        return YukinoSlice {
+        unsafe { out.write(YukinoSlice {
             ptr: std::ptr::null_mut(),
             len: 0,
             cap: 0,
-        };
+        }) };
+        return;
     };
     let count = s.chars().count();
     let bytes_needed = count.saturating_mul(std::mem::size_of::<u32>());
     let dest = unsafe { yukino_region_alloc(region, bytes_needed, std::mem::align_of::<u32>()) };
     if dest.is_null() {
-        return YukinoSlice {
+        unsafe { out.write(YukinoSlice {
             ptr: std::ptr::null_mut(),
             len: 0,
             cap: 0,
-        };
+        }) };
+        return;
     }
     let u32_buf = dest.cast::<u32>();
     for (i, ch) in s.chars().enumerate() {
         unsafe { *u32_buf.add(i) = ch as u32 };
     }
-    YukinoSlice {
+    unsafe { out.write(YukinoSlice {
         ptr: dest,
         len: count,
         cap: count,
-    }
+    }) };
 }
 
 #[unsafe(no_mangle)]

@@ -575,3 +575,54 @@ fun consume(s: string) -> string {
     assert!(checker.check_module(&module).is_ok());
 }
 
+#[test]
+fn test_interpolation_use_after_move() {
+    let code = r#"
+fun test_fn() {
+    set s = [1, 2, 3]
+    set t = s
+    set msg = "items: ${s}"
+}
+"#;
+    let module = parse_code(code, FileId(0));
+    let mut checker = BorrowChecker::new();
+    let res = checker.check_module(&module);
+    assert!(res.is_err());
+    let errs = res.unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0501.as_str()));
+}
+
+#[test]
+fn test_interpolation_reads_without_moving() {
+    let code = r#"
+fun test_fn() {
+    set s = [1, 2, 3]
+    set msg = "len: ${s.len()}"
+    set t = s
+}
+"#;
+    let module = parse_code(code, FileId(0));
+    let mut checker = BorrowChecker::new();
+    assert!(checker.check_module(&module).is_ok());
+}
+
+
+#[test]
+fn test_field_access_type_inference() {
+    let code = r#"
+class Matches {
+    public sub_matches: Matches?
+    public sub_name: string
+}
+
+fun test_fn() {
+    set m = init Matches()
+    set subm = m.sub_matches
+    set name = m.sub_name
+}
+"#;
+    let module = parse_code(code, FileId(0));
+    let mut checker = BorrowChecker::new();
+    let res = checker.check_module(&module);
+    assert!(res.is_ok(), "inferred field access should succeed, got: {:?}", res);
+}

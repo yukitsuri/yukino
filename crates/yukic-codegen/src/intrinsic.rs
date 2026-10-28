@@ -150,10 +150,12 @@ impl<'ctx> IntrinsicManager<'ctx> {
             "yukino_rt_string_to_bool",
             i1_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false),
         );
-        Self::declare_helper(
+        Self::declare_sret_helper(
+            self.context,
             module,
+            slice_ty,
             "yukino_rt_string_to_chars",
-            slice_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into()],
         );
         Self::declare_sret_helper(
             self.context,
@@ -237,10 +239,12 @@ impl<'ctx> IntrinsicManager<'ctx> {
             "yukino_rt_string_from_raw_parts",
             &[ptr_ty.into(), i64_ty.into()],
         );
-        Self::declare_helper(
+        Self::declare_sret_helper(
+            self.context,
             module,
+            slice_ty,
             "yukino_rt_slice_from_raw_parts",
-            slice_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false),
+            &[ptr_ty.into(), i64_ty.into(), i64_ty.into()],
         );
     }
 
@@ -1217,17 +1221,20 @@ impl<'ctx> IntrinsicManager<'ctx> {
         let helper_fn = module
             .get_function("yukino_rt_string_to_chars")
             .ok_or_else(|| "yukino_rt_string_to_chars not found".to_string())?;
-        let call = builder
+        let slice_ty = self.slice_type();
+        let out_slot = builder
+            .build_alloca(slice_ty, "sret_slot")
+            .map_err(|e| e.to_string())?;
+        builder
             .build_call(
                 helper_fn,
-                &[region_ptr.into(), buf_ptr.into(), len_val.into()],
-                "chars_slice",
+                &[out_slot.into(), region_ptr.into(), buf_ptr.into(), len_val.into()],
+                "",
             )
             .map_err(|e| e.to_string())?;
-
-        call.try_as_basic_value()
-            .basic()
-            .ok_or_else(|| "yukino_rt_string_to_chars returned void".to_string())
+        builder
+            .build_load(slice_ty, out_slot, "chars_slice")
+            .map_err(|e| e.to_string())
     }
 
     fn cast_chars_to_string(

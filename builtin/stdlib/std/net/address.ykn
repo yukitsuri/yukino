@@ -19,7 +19,7 @@ public fun format_socket_addr(addr: SocketAddr) -> string {
 
 public fun parse_socket_addr(addr: string) -> SocketAddr {
     set clean_addr = trim(addr)
-    set sep_idx = last_index_of(clean_addr, ":")
+    set sep_idx = last_index_of(clean_addr, ":") ?? -1
     if sep_idx < 0 {
         panic(NetError {
             message: "missing port separator ':' in address: " + addr,

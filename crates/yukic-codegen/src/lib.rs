@@ -23,7 +23,7 @@ pub use cabi::*;
 pub use cgu::{
     CodegenUnit, CompiledCgu, compile_modules_parallel, compile_units_parallel,
     compile_units_parallel_with_overrides, estimate_item_weight, partition_module,
-    partition_module_with_custom,
+    partition_module_by_sources, partition_module_with_custom,
 };
 pub use closure::*;
 pub use context::init_llvm_targets;
@@ -566,6 +566,29 @@ mod tests {
         assert_eq!(units[1].item_ids, vec![ItemId(1)]);
         assert_eq!(units[2].name, "cgu_misc_0");
         assert_eq!(units[2].item_ids, vec![ItemId(3)]);
+    }
+
+    #[test]
+    fn test_partition_module_by_sources_keeps_file_cohesion() {
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        let mut ast = AstModule::default();
+        ast.items.push(make_test_fun(1, 5));
+        ast.items.push(make_test_fun(2, 5));
+        ast.items.push(make_test_fun(3, 5));
+        ast.items.push(make_test_fun(4, 5));
+
+        let mut sources = HashMap::new();
+        sources.insert(ItemId(1), PathBuf::from("src/main.ykn"));
+        sources.insert(ItemId(2), PathBuf::from("src/main.ykn"));
+        sources.insert(ItemId(3), PathBuf::from("src/helper.ykn"));
+        sources.insert(ItemId(4), PathBuf::from("src/helper.ykn"));
+
+        let units = partition_module_with_custom(&ast, 4, None, Some(&sources));
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[0].item_ids.len(), 2);
+        assert_eq!(units[1].item_ids.len(), 2);
     }
 
     #[test]
@@ -1930,7 +1953,7 @@ mod tests {
         assert!(ir.contains("icmp ne i32 %bool_to_int, 0"));
         assert!(ir.contains("call void @yukino_rt_bool_to_string"));
         assert!(ir.contains("call i1 @yukino_rt_string_to_bool"));
-        assert!(ir.contains("call { ptr, i64, i64 } @yukino_rt_string_to_chars"));
+        assert!(ir.contains("call void @yukino_rt_string_to_chars"));
         assert!(ir.contains("call void @yukino_rt_chars_to_string"));
     }
 

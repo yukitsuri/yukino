@@ -14,18 +14,21 @@ unsafe fn c_str_len(ptr: *const u8) -> usize {
 
 
 // yuki reg or argv to an array of argc cstr ptrs
+// Out pointer: 24-byte struct return diverges between Win64 and SysV.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yukino_rt_get_args(
+    out: *mut YukinoSlice,
     region: *mut YukinoRegion,
     argc: i32,
     argv: *const *const u8,
-) -> YukinoSlice {
+) {
     if argc <= 0 || argv.is_null() || region.is_null() {
-        return YukinoSlice {
+        unsafe { out.write(YukinoSlice {
             ptr: std::ptr::null_mut(),
             len: 0,
             cap: 0,
-        };
+        }) };
+        return;
     }
 
     let count = argc as usize;
@@ -35,11 +38,12 @@ pub unsafe extern "C" fn yukino_rt_get_args(
 
     let raw_buf = unsafe { yukino_region_alloc(region, total_bytes, elem_align) };
     if raw_buf.is_null() {
-        return YukinoSlice {
+        unsafe { out.write(YukinoSlice {
             ptr: std::ptr::null_mut(),
             len: 0,
             cap: 0,
-        };
+        }) };
+        return;
     }
 
     let slice_ptr = raw_buf.cast::<YukinoString>();
@@ -51,11 +55,11 @@ pub unsafe extern "C" fn yukino_rt_get_args(
         unsafe { slice_ptr.add(i).write(YukinoString { ptr: arg_ptr, len }); }
     }
 
-    YukinoSlice {
+    unsafe { out.write(YukinoSlice {
         ptr: raw_buf,
         len: count,
         cap: count,
-    }
+    }) };
 }
 
 // out pointer result: 16-byte struct return diverges between Win64 and codegen

@@ -30,10 +30,10 @@ public fun calc_expr(raw_input: string) {
     set op: char = ' '
     set op_idx: int64 = -1
 
-    set p_idx = input.index_of_from("+", 1)
-    set m_idx = input.index_of_from("-", 1)
-    set mul_idx = input.index_of_from("*", 1)
-    set d_idx = input.index_of_from("/", 1)
+    set p_idx = input.index_of_from("+", 1) ?? -1
+    set m_idx = input.index_of_from("-", 1) ?? -1
+    set mul_idx = input.index_of_from("*", 1) ?? -1
+    set d_idx = input.index_of_from("/", 1) ?? -1
 
     if p_idx > 0 {
         rewrite op = '+'

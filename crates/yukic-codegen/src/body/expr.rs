@@ -16,8 +16,19 @@ use yukic_types::Type;
 use yukic_types::convert::ast_type_to_type;
 
 use super::{BodyCompiler, LoopContext};
-use crate::exception::{CleanupAction, ScopeKind};
+use crate::exception::ScopeKind;
 use crate::registry::EnumVariantLayout;
+
+// Catch clause name matched against runtime panic kind string.
+fn catch_clause_type_name(tn: &TypeNode) -> &str {
+    match &tn.kind {
+        yukic_ast::types::TypeNodeKind::Ident(id) => id.name.as_str(),
+        yukic_ast::types::TypeNodeKind::Path(segments) => {
+            segments.last().map(|s| s.name.as_str()).unwrap_or("Error")
+        }
+        _ => "Error",
+    }
+}
 
 impl<'ctx> BodyCompiler<'_, 'ctx> {
     pub fn compile_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
@@ -2157,11 +2168,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         let mut clauses: Vec<BasicValueEnum<'ctx>> = Vec::new();
         for c in catches {
             if let Some(tn) = &c.error_type {
-                let name = match &tn.kind {
-                    yukic_ast::TypeNodeKind::Ident(id) => id.name.as_str(),
-                    _ => "Error",
-                };
-                let ti = self.get_or_create_typeinfo(name);
+                let ti = self.get_or_create_typeinfo(catch_clause_type_name(tn));
                 clauses.push(ti.as_pointer_value().into());
             }
         }
@@ -2185,13 +2192,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .build_extract_value(pad_val.into_struct_value(), 0, "exc_ptr")
             .map_err(|e| e.to_string())?
             .into_pointer_value();
-        let selector = self
-            .builder
-            .build_extract_value(pad_val.into_struct_value(), 1, "selector")
-            .map_err(|e| e.to_string())?
-            .into_int_value();
 
-        let typeid_fn = self.get_or_declare_eh_typeid();
         let mut resume_bb = None;
 
         for (i, c) in catches.iter().enumerate() {
@@ -2204,14 +2205,27 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             };
 
             if let Some(tn) = &c.error_type {
-                let name = match &tn.kind {
-                    yukic_ast::TypeNodeKind::Ident(id) => id.name.as_str(),
-                    _ => "Error",
-                };
-                let ti = self.get_or_create_typeinfo(name);
-                let tid = self
+                // Compare exception kind string against clause type name.
+                let name = catch_clause_type_name(tn);
+                let kind_eq = self.get_or_declare_kind_equals();
+                let name_val = self.rodata.emit_string(self.module, name);
+                let name_ptr = self
                     .builder
-                    .build_call(typeid_fn, &[ti.as_pointer_value().into()], "tid")
+                    .build_extract_value(name_val, 0, "")
+                    .map_err(|e| e.to_string())?
+                    .into_pointer_value();
+                let name_len = self
+                    .builder
+                    .build_extract_value(name_val, 1, "")
+                    .map_err(|e| e.to_string())?
+                    .into_int_value();
+                let matched = self
+                    .builder
+                    .build_call(
+                        kind_eq,
+                        &[exc_ptr.into(), name_ptr.into(), name_len.into()],
+                        "kind_match",
+                    )
                     .map_err(|e| e.to_string())?
                     .try_as_basic_value()
                     .basic()
@@ -2219,7 +2233,12 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .into_int_value();
                 let is_match = self
                     .builder
-                    .build_int_compare(IntPredicate::EQ, selector, tid, "is_match")
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        matched,
+                        self.context.i32_type().const_zero(),
+                        "is_match",
+                    )
                     .map_err(|e| e.to_string())?;
                 let fallback = next_chk.unwrap_or_else(|| {
                     let bb = self.context.append_basic_block(self.fn_val, "sus_resume");
@@ -2258,26 +2277,20 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
 
         if !self.is_terminated() {
-            let outer_cleanups = self.cleanups_stack.collect_return_cleanups();
-            let old_in_cleanup = self.in_cleanup;
-            self.in_cleanup = true;
-            for c in &outer_cleanups {
-                let already_ran = sus_cleanups.iter().any(|sc| matches!((sc, c),
-                    (CleanupAction::Defer(b1), CleanupAction::Defer(b2)) if b1.span == b2.span
-                        || matches!((sc, c), (CleanupAction::RegionRestoreMark { mark: m1, .. }, CleanupAction::RegionRestoreMark { mark: m2, .. }) if m1 == m2)
-                ));
-                if !already_ran {
-                    self.execute_cleanup(c)?;
-                }
+            if self.is_windows_gnu_target() {
+                // Re-raise on windows-gnu so unwinder continues to outer handler.
+                let reraise = self.get_or_declare_reraise();
+                self.builder
+                    .build_call(reraise, &[exc_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_unreachable()
+                    .map_err(|e| e.to_string())?;
+            } else {
+                self.builder
+                    .build_resume(pad_val)
+                    .map_err(|e| e.to_string())?;
             }
-            if let Some(reg) = self.region_ptr {
-                self.region.emit_region_epilogue(self.module, self.builder, reg)?;
-            }
-            self.in_cleanup = old_in_cleanup;
-
-            self.builder
-                .build_resume(pad_val)
-                .map_err(|e| e.to_string())?;
         }
 
         self.cleanups_stack.pop_scope();
@@ -2301,13 +2314,21 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .map_err(|e| e.to_string())?;
 
         let gk = self.get_or_declare_get_kind();
+        let str_ty = self.context.struct_type(
+            &[self.ptr_type().into(), self.context.i64_type().into()],
+            false,
+        );
+        let kind_slot = self
+            .builder
+            .build_alloca(str_ty, "kind_slot")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_call(gk, &[kind_slot.into(), exc_ptr.into()], "")
+            .map_err(|e| e.to_string())?;
         let kind_val = self
             .builder
-            .build_call(gk, &[exc_ptr.into()], "kind")
-            .map_err(|e| e.to_string())?
-            .try_as_basic_value()
-            .basic()
-            .unwrap();
+            .build_load(str_ty, kind_slot, "kind")
+            .map_err(|e| e.to_string())?;
 
         self.push_scope();
 
@@ -2331,10 +2352,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         var: &Ident,
         error_type: &yukic_ast::TypeNode,
     ) -> Result<(), String> {
-        let type_name = match &error_type.kind {
-            yukic_ast::TypeNodeKind::Ident(id) => id.name.clone(),
-            _ => "Error".to_string(),
-        };
+        let type_name = catch_clause_type_name(error_type).to_string();
 
         let get_payload = self.get_or_declare_get_payload();
         let payload_ptr = self

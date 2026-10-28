@@ -4,7 +4,7 @@ cfun yukistd_locale_current_locale(out_len: ptr<int64>) -> ptr<uint8>
 cfun yukistd_locale_system_timezone(out_len: ptr<int64>) -> ptr<uint8>
 cfun yukistd_locale_preferred_languages(out_count: ptr<int64>) -> ptr<string>
 
-load .strings: to_lowercase, to_uppercase, slice, index_of
+load .strings: lower, upper, slice, index_of
 
 public fun current_locale() -> string {
     set out_len: int64 = 0
@@ -15,36 +15,36 @@ public fun current_locale() -> string {
 
 public fun current_language() -> string {
     set loc = current_locale()
-    set sep_idx = index_of(loc, "_")
+    set sep_idx = index_of(loc, "_") ?? -1
     if sep_idx < 0 {
-        rewrite sep_idx = index_of(loc, "-")
+        rewrite sep_idx = index_of(loc, "-") ?? -1
     }
     if sep_idx > 0 {
         set lang = slice(loc, 0, sep_idx)
-        return to_lowercase(lang)
+        return lower(lang)
     }
-    if loc.len() > 0 { return to_lowercase(loc) }
+    if loc.len() > 0 { return lower(loc) }
     return "en"
 }
 
 public fun current_country() -> string? {
     set loc = current_locale()
-    set sep_idx = index_of(loc, "_")
+    set sep_idx = index_of(loc, "_") ?? -1
     if sep_idx < 0 {
-        rewrite sep_idx = index_of(loc, "-")
+        rewrite sep_idx = index_of(loc, "-") ?? -1
     }
     if sep_idx >= 0 && sep_idx + 1 < loc.len() {
         set country_code = slice(loc, sep_idx + 1, loc.len())
-        set dot_idx = index_of(country_code, ".")
+        set dot_idx = index_of(country_code, ".") ?? -1
         if dot_idx >= 0 {
             rewrite country_code = slice(country_code, 0, dot_idx)
         }
-        set at_idx = index_of(country_code, "@")
+        set at_idx = index_of(country_code, "@") ?? -1
         if at_idx >= 0 {
             rewrite country_code = slice(country_code, 0, at_idx)
         }
         if country_code.len() > 0 {
-            return to_uppercase(country_code)
+            return upper(country_code)
         }
     }
     return null

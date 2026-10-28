@@ -1501,6 +1501,7 @@ fn populate_borrow_signatures(
         );
     }
     for (name, class_def) in &sigs.classes {
+        checker.type_fields.insert(name.clone(), class_def.fields.clone());
         checker
             .fn_returns
             .insert(name.clone(), yukic_types::Type::Class(name.clone()));
@@ -1508,6 +1509,9 @@ fn populate_borrow_signatures(
             checker.fn_returns.insert(format!("{name}::{mname}"), msig.ret.clone());
             checker.fn_returns.insert(mname.clone(), msig.ret.clone());
         }
+    }
+    for (name, struct_def) in &sigs.structs {
+        checker.type_fields.insert(name.clone(), struct_def.fields.clone());
     }
     for (mod_idx, _) in loaded_modules.iter().enumerate().filter(|(_, m)| !m.is_external) {
         let mod_id = ModuleId(u32::try_from(mod_idx).unwrap_or(0));

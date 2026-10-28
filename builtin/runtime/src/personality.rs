@@ -1,3 +1,4 @@
+#[cfg(not(all(windows, target_env = "msvc")))]
 use crate::panic::UnwindException;
 
 pub const _URC_NO_REASON: i32 = 0;
@@ -241,10 +242,9 @@ pub unsafe fn resolve_action(lsda: &ParsedLsda, action_offset: u64) -> ActionDec
     ActionDecision::Cleanup
 }
 
-// invoked by system unwinder with valid exception object and unwind context
+// DWARF-style personality logic shared by unwinder backends.
 #[cfg(not(all(windows, target_env = "msvc")))]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn yukino_personality(
+unsafe extern "C" fn yukino_dwarf_personality(
     version: i32,
     actions: i32,
     _exception_class: u64,
@@ -288,6 +288,52 @@ pub unsafe extern "C" fn yukino_personality(
 
         _URC_INSTALL_CONTEXT
     } else { _URC_CONTINUE_UNWIND }
+}
+
+// invoked by system unwinder with valid exception object and unwind context
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yukino_personality(
+    version: i32,
+    actions: i32,
+    exception_class: u64,
+    exception_object: *mut UnwindException,
+    context: *mut UnwindContext,
+) -> i32 {
+    unsafe {
+        yukino_dwarf_personality(version, actions, exception_class, exception_object, context)
+    }
+}
+
+// Windows-gnu SEH personality routed through libgcc specific handler.
+#[cfg(all(windows, not(target_env = "msvc")))]
+unsafe extern "C" {
+    fn _GCC_specific_handler(
+        exception_record: *mut u8,
+        establisher_frame: *mut u8,
+        context_record: *mut u8,
+        dispatcher_context: *mut u8,
+        personality: unsafe extern "C" fn(i32, i32, u64, *mut UnwindException, *mut UnwindContext) -> i32,
+    ) -> i32;
+}
+
+#[cfg(all(windows, not(target_env = "msvc")))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yukino_personality(
+    exception_record: *mut u8,
+    establisher_frame: *mut u8,
+    context_record: *mut u8,
+    dispatcher_context: *mut u8,
+) -> i32 {
+    unsafe {
+        _GCC_specific_handler(
+            exception_record,
+            establisher_frame,
+            context_record,
+            dispatcher_context,
+            yukino_dwarf_personality,
+        )
+    }
 }
 
 // invoked by Windows SEH dispatcher

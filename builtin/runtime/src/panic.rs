@@ -3,12 +3,17 @@ use crate::rt_cast::YukinoString;
 pub type UnwindReasonCode = i32;
 pub type UnwindAction = i32;
 
+// SEH unwinder uses 6 private words on windows-gnu; Itanium uses 2.
+#[cfg(all(windows, not(target_env = "msvc")))]
+pub const UNWIND_PRIVATE_WORDS: usize = 6;
+#[cfg(not(all(windows, not(target_env = "msvc"))))]
+pub const UNWIND_PRIVATE_WORDS: usize = 2;
+
 #[repr(C)]
 pub struct UnwindException {
     pub exception_class: u64,
     pub exception_cleanup: Option<unsafe extern "C" fn(UnwindReasonCode, *mut UnwindException)>,
-    pub private_1: usize,
-    pub private_2: usize,
+    pub private_: [usize; UNWIND_PRIVATE_WORDS],
 }
 
 pub const YUKINO_EXCEPTION_CLASS: u64 = u64::from_ne_bytes(*b"YUKINO\0\0");
@@ -50,55 +55,109 @@ unsafe extern "C" fn yukino_exception_cleanup(
     }
 }
 
+// Out pointer: 16-byte struct return diverges on Win64 (hidden sret).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn yukino_exception_get_message(
+    out: *mut YukinoString,
     exc: *const UnwindException,
-) -> YukinoString {
-    if exc.is_null() {
-        return YukinoString {
+) {
+    if out.is_null() {
+        return;
+    }
+    let result = if exc.is_null() {
+        YukinoString {
             ptr: std::ptr::null(),
             len: 0,
-        };
-    }
-    unsafe {
-        if (*exc).exception_class == YUKINO_EXCEPTION_CLASS {
-            let yukino_exc = exc.cast::<YukinoException>();
-            YukinoString {
-                ptr: (*yukino_exc).message_ptr,
-                len: (*yukino_exc).message_len,
-            }
-        } else {
-            YukinoString {
-                ptr: std::ptr::null(),
-                len: 0,
+        }
+    } else {
+        unsafe {
+            if (*exc).exception_class == YUKINO_EXCEPTION_CLASS {
+                let yukino_exc = exc.cast::<YukinoException>();
+                YukinoString {
+                    ptr: (*yukino_exc).message_ptr,
+                    len: (*yukino_exc).message_len,
+                }
+            } else {
+                YukinoString {
+                    ptr: std::ptr::null(),
+                    len: 0,
+                }
             }
         }
+    };
+    unsafe { out.write(result) };
+}
+
+// Out pointer: 16-byte struct return diverges on Win64 (hidden sret).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yukino_exception_get_kind(
+    out: *mut YukinoString,
+    exc: *const UnwindException,
+) {
+    if out.is_null() {
+        return;
+    }
+    let result = if exc.is_null() {
+        YukinoString {
+            ptr: std::ptr::null(),
+            len: 0,
+        }
+    } else {
+        unsafe {
+            if (*exc).exception_class == YUKINO_EXCEPTION_CLASS {
+                let yukino_exc = exc.cast::<YukinoException>();
+                YukinoString {
+                    ptr: (*yukino_exc).kind_ptr,
+                    len: (*yukino_exc).kind_len,
+                }
+            } else {
+                YukinoString {
+                    ptr: std::ptr::null(),
+                    len: 0,
+                }
+            }
+        }
+    };
+    unsafe { out.write(result) };
+}
+
+// Compare exception kind string against compile-time type name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn yukino_exception_kind_equals(
+    exc: *const UnwindException,
+    name_ptr: *const u8,
+    name_len: usize,
+) -> i32 {
+    if exc.is_null() || name_ptr.is_null() {
+        return 0;
+    }
+    unsafe {
+        if (*exc).exception_class != YUKINO_EXCEPTION_CLASS {
+            return 0;
+        }
+        let yukino_exc = exc.cast::<YukinoException>();
+        let kind_ptr = (*yukino_exc).kind_ptr;
+        let kind_len = (*yukino_exc).kind_len;
+        if kind_ptr.is_null() || kind_len != name_len {
+            return 0;
+        }
+        for i in 0..kind_len {
+            if *kind_ptr.add(i) != *name_ptr.add(i) {
+                return 0;
+            }
+        }
+        1
     }
 }
 
+// Re-raise exception to skip current landing pad on windows-gnu.
+#[cfg(all(windows, not(target_env = "msvc")))]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn yukino_exception_get_kind(
-    exc: *const UnwindException,
-) -> YukinoString {
-    if exc.is_null() {
-        return YukinoString {
-            ptr: std::ptr::null(),
-            len: 0,
-        };
-    }
+pub unsafe extern "C" fn yukino_reraise_exception(exc: *mut UnwindException) -> ! {
     unsafe {
-        if (*exc).exception_class == YUKINO_EXCEPTION_CLASS {
-            let yukino_exc = exc.cast::<YukinoException>();
-            YukinoString {
-                ptr: (*yukino_exc).kind_ptr,
-                len: (*yukino_exc).kind_len,
-            }
-        } else {
-            YukinoString {
-                ptr: std::ptr::null(),
-                len: 0,
-            }
-        }
+        let reason = _Unwind_RaiseException(exc);
+        eprintln!("fatal: unhandled panic during re-raise (reason code {reason})");
+        std::process::abort();
     }
 }
 
@@ -229,8 +288,7 @@ pub unsafe extern "C" fn yukino_raise_typed_panic(
             unwind_header: UnwindException {
                 exception_class: YUKINO_EXCEPTION_CLASS,
                 exception_cleanup: Some(yukino_exception_cleanup),
-                private_1: 0,
-                private_2: 0,
+                private_: [0; UNWIND_PRIVATE_WORDS],
             },
             message_ptr: msg_ptr,
             message_len: msg_len,
@@ -307,8 +365,7 @@ mod tests {
             unwind_header: UnwindException {
                 exception_class: YUKINO_EXCEPTION_CLASS,
                 exception_cleanup: Some(yukino_exception_cleanup),
-                private_1: 0,
-                private_2: 0,
+                private_: [0; UNWIND_PRIVATE_WORDS],
             },
             message_ptr: msg.as_ptr(),
             message_len: msg.len(),
@@ -321,10 +378,12 @@ mod tests {
         });
         let raw = Box::into_raw(boxed);
         unsafe {
-            let s = yukino_exception_get_message(&raw const (*raw).unwind_header);
+            let mut s = YukinoString { ptr: std::ptr::null(), len: 0 };
+            yukino_exception_get_message(&mut s, &raw const (*raw).unwind_header);
             assert_eq!(s.len, msg.len());
             assert_eq!(s.ptr, msg.as_ptr());
-            let k = yukino_exception_get_kind(&raw const (*raw).unwind_header);
+            let mut k = YukinoString { ptr: std::ptr::null(), len: 0 };
+            yukino_exception_get_kind(&mut k, &raw const (*raw).unwind_header);
             assert_eq!(k.len, kind.len());
             assert_eq!(k.ptr, kind.as_ptr());
             assert_eq!(yukino_exception_has_code(&raw const (*raw).unwind_header), 1);
@@ -340,14 +399,15 @@ mod tests {
         let mut foreign = UnwindException {
             exception_class: 0x12345678,
             exception_cleanup: None,
-            private_1: 0,
-            private_2: 0,
+            private_: [0; UNWIND_PRIVATE_WORDS],
         };
         unsafe {
-            let s = yukino_exception_get_message(&raw mut foreign);
+            let mut s = YukinoString { ptr: std::ptr::null(), len: 0 };
+            yukino_exception_get_message(&mut s, &raw mut foreign);
             assert!(s.ptr.is_null());
             assert_eq!(s.len, 0);
-            let k = yukino_exception_get_kind(&raw mut foreign);
+            let mut k = YukinoString { ptr: std::ptr::null(), len: 0 };
+            yukino_exception_get_kind(&mut k, &raw mut foreign);
             assert!(k.ptr.is_null());
             assert_eq!(k.len, 0);
             assert_eq!(yukino_exception_has_code(&raw mut foreign), 0);

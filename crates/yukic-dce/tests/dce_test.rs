@@ -316,3 +316,40 @@ fun main() {}
     assert!(report.contains("removed=2"));
     assert!(report.contains("fn: 2"));
 }
+
+#[test]
+fn test_catch_auto_imports_structs() {
+    // Universal catch keeps structs from defining file of callee
+    let code_all = r"
+fun callee() {}
+struct CalleeError { message: string }
+fun main() {
+    sus {
+        callee()
+    } catch {
+        println(errkind)
+    }
+}
+";
+    let mut module_all = parse_code(code_all);
+    let dce = DeadCodeEliminator::new(DceConfig::app().with_strip_unused(true));
+    dce.eliminate(&mut module_all);
+    assert!(has_struct(&module_all, "CalleeError"));
+
+    // Typed catch keeps only targeted struct
+    let code_typed = r"
+fun callee() {}
+struct TargetError { message: string }
+struct UnusedError { code: int32 }
+fun main() {
+    sus {
+        callee()
+    } catch e: TargetError {
+    }
+}
+";
+    let mut module_typed = parse_code(code_typed);
+    dce.eliminate(&mut module_typed);
+    assert!(has_struct(&module_typed, "TargetError"));
+    assert!(!has_struct(&module_typed, "UnusedError"));
+}

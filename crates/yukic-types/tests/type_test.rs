@@ -2010,7 +2010,7 @@ fn test_operator_overload_typing() {
                     span: dspan,
                 }],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![], dspan),
+                body: Block::new(vec![return_this_stmt(dspan)], dspan),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2021,7 +2021,7 @@ fn test_operator_overload_typing() {
                 this_param: item::ThisParam::Value,
                 params: vec![],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![], dspan),
+                body: Block::new(vec![return_this_stmt(dspan)], dspan),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2720,4 +2720,229 @@ fn test_thunk_function_attribute() {
         dspan,
     );
     assert_eq!(checker.infer_expr(&cast_to_ptr).unwrap(), Type::Ptr(Box::new(Type::Void)));
+}
+
+#[test]
+fn test_interpolated_string_parts_are_type_checked() {
+    let mut checker = TypeChecker::new();
+
+    // Defined variable inside string interpolation.
+    checker
+        .env
+        .insert_var("count".to_string(), Type::Int64, false, dummy_span());
+    let ok_interp = Expr::new(
+        ExprKind::InterpolatedString(vec![
+            StringPart::Lit("total: ".to_string()),
+            StringPart::Expr(Expr::new(ExprKind::Ident(ident("count")), dummy_span())),
+        ]),
+        dummy_span(),
+    );
+    assert_eq!(checker.infer_expr(&ok_interp).unwrap(), Type::String);
+
+    // Undefined variable inside string interpolation reports E0402.
+    let bad_interp = Expr::new(
+        ExprKind::InterpolatedString(vec![
+            StringPart::Lit("total: ".to_string()),
+            StringPart::Expr(Expr::new(ExprKind::Ident(ident("missing")), dummy_span())),
+        ]),
+        dummy_span(),
+    );
+    let err = checker.infer_expr(&bad_interp).unwrap_err();
+    assert_eq!(err.code.as_str(), ErrorCode::E0402.as_str());
+    assert!(err.message.contains("missing"));
+}
+
+fn check_fun_module(ret: Option<&str>, body: Vec<Stmt>) -> Result<(), Vec<yukic_diagnostics::Diagnostic>> {
+    let return_type = ret.map(|t| TypeNode::new(TypeNodeKind::Ident(ident(t)), dummy_span()));
+    let decl = FunDecl {
+        name: ident("compute"),
+        attrs: vec![],
+        generics: vec![],
+        params: vec![],
+        return_type,
+        body: Block::new(body, dummy_span()),
+        span: dummy_span(),
+    };
+    let mut module = Module::new(FileId(0));
+    module.items.push(Item::new(
+        ItemId(0),
+        Visibility::Local,
+        ItemKind::Fun(decl),
+        dummy_span(),
+    ));
+    let mut checker = TypeChecker::new();
+    checker.check_module(&module)
+}
+
+fn int_lit_stmt(v: i64) -> Stmt {
+    Stmt {
+        kind: StmtKind::Return(Some(Expr::new(
+            ExprKind::Literal(LiteralValue::Int(v)),
+            dummy_span(),
+        ))),
+        span: dummy_span(),
+    }
+}
+
+fn return_this_stmt(span: Span) -> Stmt {
+    Stmt {
+        kind: StmtKind::Return(Some(Expr::new(ExprKind::Ident(ident("this")), span))),
+        span,
+    }
+}
+
+#[test]
+fn test_catch_error_type_validation() {
+    // Unknown struct in typed catch reports E0402.
+    let mut checker = TypeChecker::new();
+    let sus_unknown = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: Some(ident("e")),
+                error_type: Some(TypeNode::new(
+                    TypeNodeKind::Ident(ident("NoSuchError")),
+                    dummy_span(),
+                )),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    let err = checker.infer_expr(&sus_unknown).unwrap_err();
+    assert_eq!(err.code.as_str(), ErrorCode::E0402.as_str());
+    assert!(err.message.contains("NoSuchError"));
+
+    // Structs registered from loaded modules validate without explicit import.
+    let mut def = StructDef::default();
+    def.fields.insert("message".to_string(), Type::String);
+    checker.env.register_struct("MyError".to_string(), def);
+    let sus_ok = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: Some(ident("e")),
+                error_type: Some(TypeNode::new(
+                    TypeNodeKind::Ident(ident("MyError")),
+                    dummy_span(),
+                )),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&sus_ok).is_ok());
+
+    // Builtin Error struct is always available.
+    let sus_error = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: None,
+                error_type: Some(TypeNode::new(TypeNodeKind::Ident(ident("Error")), dummy_span())),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&sus_error).is_ok());
+}
+
+#[test]
+fn test_missing_return_empty_body() {
+    // Missing return reports dedicated E0410.
+    let errs = check_fun_module(Some("int64"), vec![]).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+    assert!(errs.iter().all(|d| d.code.as_str() != ErrorCode::E0401.as_str()));
+}
+
+#[test]
+fn test_missing_return_after_non_expr_stmt() {
+    // Non-expression statement ending reports E0410.
+    let body = vec![Stmt {
+        kind: StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: None,
+            init: Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+        },
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+}
+
+#[test]
+fn test_missing_return_trailing_void_call() {
+    // Trailing void expression reports E0410.
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Call(
+                Box::new(Expr::new(ExprKind::Ident(ident("assert_eq")), dummy_span())),
+                vec![
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+                ],
+            ),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+    assert!(errs.iter().all(|d| d.code.as_str() != ErrorCode::E0401.as_str()));
+}
+
+#[test]
+fn test_trailing_if_with_returns_in_all_branches_is_ok() {
+    // Divergent if branches satisfy return requirement.
+    let ret_one = int_lit_stmt(1);
+    let ret_two = int_lit_stmt(2);
+    let if_expr = Expr::new(
+        ExprKind::If {
+            cond: Box::new(Expr::new(
+                ExprKind::Literal(LiteralValue::Bool(true)),
+                dummy_span(),
+            )),
+            then_branch: Block::new(vec![ret_one], dummy_span()),
+            elif_branches: vec![],
+            else_branch: Some(Block::new(vec![ret_two], dummy_span())),
+        },
+        dummy_span(),
+    );
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(if_expr),
+        span: dummy_span(),
+    }];
+    assert!(check_fun_module(Some("int64"), body).is_ok());
+}
+
+#[test]
+fn test_trailing_wrong_type_is_still_type_mismatch() {
+    // Type mismatch remains E0401.
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Literal(LiteralValue::String("text".to_string())),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0401.as_str()));
+
+    // Tail expression matching return type is valid.
+    let ok_body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Literal(LiteralValue::Int(5)),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    assert!(check_fun_module(Some("int64"), ok_body).is_ok());
+    assert!(check_fun_module(None, vec![]).is_ok());
 }

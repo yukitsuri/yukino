@@ -1,5 +1,5 @@
 load ..outf: style
-load ..io: println
+load ..io: println, flush
 
 fun min3(a: int64, b: int64, c: int64) -> int64 {
     set m = a
@@ -74,6 +74,7 @@ public fun print_error_unexpected_arg(arg_str: string, candidates: string[]) {
     }
     println("")
     println("For more information, try '--help'.")
+    flush()
     exit(2)
 }
 
@@ -86,6 +87,7 @@ public fun print_error_unknown_subcommand(sub_str: string, candidates: string[])
     }
     println("")
     println("For more information, try '--help'.")
+    flush()
     exit(2)
 }
 
@@ -93,6 +95,7 @@ public fun print_error_missing_required(name: string) {
     println(format_error_prefix() + " the following required argument was not provided: <" + name + ">")
     println("")
     println("For more information, try '--help'.")
+    flush()
     exit(2)
 }
 
@@ -100,6 +103,7 @@ public fun print_error_missing_value(opt_name: string) {
     println(format_error_prefix() + " option '" + opt_name + "' requires a value")
     println("")
     println("For more information, try '--help'.")
+    flush()
     exit(2)
 }
 
@@ -107,5 +111,6 @@ public fun print_error_conflict(a: string, b: string) {
     println(format_error_prefix() + " the argument '" + a + "' cannot be used with '" + b + "'")
     println("")
     println("For more information, try '--help'.")
+    flush()
     exit(2)
 }
