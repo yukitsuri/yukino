@@ -363,7 +363,7 @@ fn verify_intrinsics_ir(ir: &str) {
 
     // 8. Raw parts declarations and construction
     assert!(ir.contains("declare void @yukino_rt_string_from_raw_parts"));
-    assert!(ir.contains("declare { ptr, i64, i64 } @yukino_rt_slice_from_raw_parts"));
+    assert!(ir.contains("declare void @yukino_rt_slice_from_raw_parts"));
     assert!(ir.contains("insertvalue { ptr, i64 } zeroinitializer, ptr %raw_bytes, 0"));
     assert!(ir.contains("insertvalue { ptr, i64, i64 } zeroinitializer, ptr %raw_bytes, 0"));
 }

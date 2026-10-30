@@ -235,7 +235,7 @@ public fun pretty_float(val: float64, precision: int32 = 2, separator: string = 
         })
     }
     set s = to_fixed(val, precision)
-    set dot_idx = index_of(s, ".")
+    set dot_idx = index_of(s, ".") ?? -1
     if dot_idx < 0 { return s }
     set int_part = slice(s, 0, dot_idx)
     set frac_part = slice(s, dot_idx, s.len())

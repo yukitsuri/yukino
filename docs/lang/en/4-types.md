@@ -67,9 +67,15 @@ Arrays come in dynamic `T[]` and fixed `T[N]` forms:
 ```yukino
 // Dynamic array
 set list: int32[] = [10, 20, 30]
+// Creating an empty dynamic array without literal:
+set empty_list: int32[]
 
-// Fixed array with an explicit list of values
+// Fixed array with an explicit list of values (number of elements must match N exactly)
 set buffer: uint8[4] = [0, 0, 0, 0]
+
+// Global static arrays (supports all primitive numeric types, strings, and bool)
+static GLOBAL_BUF: uint8[4] = [1, 2, 3, 4]
+static GLOBAL_INTS: int32[] = [10, 20, 30]
 
 // Allocating an array of a given length without a literal (memory is automatically zeroed):
 set ints: int32[100]

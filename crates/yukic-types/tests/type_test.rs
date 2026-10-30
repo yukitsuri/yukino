@@ -2010,7 +2010,7 @@ fn test_operator_overload_typing() {
                     span: dspan,
                 }],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![], dspan),
+                body: Block::new(vec![return_this_stmt(dspan)], dspan),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2021,7 +2021,7 @@ fn test_operator_overload_typing() {
                 this_param: item::ThisParam::Value,
                 params: vec![],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![], dspan),
+                body: Block::new(vec![return_this_stmt(dspan)], dspan),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2720,4 +2720,681 @@ fn test_thunk_function_attribute() {
         dspan,
     );
     assert_eq!(checker.infer_expr(&cast_to_ptr).unwrap(), Type::Ptr(Box::new(Type::Void)));
+}
+
+#[test]
+fn test_interpolated_string_parts_are_type_checked() {
+    let mut checker = TypeChecker::new();
+
+    // Defined variable inside string interpolation.
+    checker
+        .env
+        .insert_var("count".to_string(), Type::Int64, false, dummy_span());
+    let ok_interp = Expr::new(
+        ExprKind::InterpolatedString(vec![
+            StringPart::Lit("total: ".to_string()),
+            StringPart::Expr(Expr::new(ExprKind::Ident(ident("count")), dummy_span())),
+        ]),
+        dummy_span(),
+    );
+    assert_eq!(checker.infer_expr(&ok_interp).unwrap(), Type::String);
+
+    // Undefined variable inside string interpolation reports E0402.
+    let bad_interp = Expr::new(
+        ExprKind::InterpolatedString(vec![
+            StringPart::Lit("total: ".to_string()),
+            StringPart::Expr(Expr::new(ExprKind::Ident(ident("missing")), dummy_span())),
+        ]),
+        dummy_span(),
+    );
+    let err = checker.infer_expr(&bad_interp).unwrap_err();
+    assert_eq!(err.code.as_str(), ErrorCode::E0402.as_str());
+    assert!(err.message.contains("missing"));
+}
+
+fn check_fun_module(ret: Option<&str>, body: Vec<Stmt>) -> Result<(), Vec<yukic_diagnostics::Diagnostic>> {
+    let return_type = ret.map(|t| TypeNode::new(TypeNodeKind::Ident(ident(t)), dummy_span()));
+    let decl = FunDecl {
+        name: ident("compute"),
+        attrs: vec![],
+        generics: vec![],
+        params: vec![],
+        return_type,
+        body: Block::new(body, dummy_span()),
+        span: dummy_span(),
+    };
+    let mut module = Module::new(FileId(0));
+    module.items.push(Item::new(
+        ItemId(0),
+        Visibility::Local,
+        ItemKind::Fun(decl),
+        dummy_span(),
+    ));
+    let mut checker = TypeChecker::new();
+    checker.check_module(&module)
+}
+
+fn int_lit_stmt(v: i64) -> Stmt {
+    Stmt {
+        kind: StmtKind::Return(Some(Expr::new(
+            ExprKind::Literal(LiteralValue::Int(v)),
+            dummy_span(),
+        ))),
+        span: dummy_span(),
+    }
+}
+
+fn return_this_stmt(span: Span) -> Stmt {
+    Stmt {
+        kind: StmtKind::Return(Some(Expr::new(ExprKind::Ident(ident("this")), span))),
+        span,
+    }
+}
+
+#[test]
+fn test_catch_error_type_validation() {
+    // Unknown struct in typed catch reports E0402.
+    let mut checker = TypeChecker::new();
+    let sus_unknown = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: Some(ident("e")),
+                error_type: Some(TypeNode::new(
+                    TypeNodeKind::Ident(ident("NoSuchError")),
+                    dummy_span(),
+                )),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    let err = checker.infer_expr(&sus_unknown).unwrap_err();
+    assert_eq!(err.code.as_str(), ErrorCode::E0402.as_str());
+    assert!(err.message.contains("NoSuchError"));
+
+    // Structs registered from loaded modules validate without explicit import.
+    let mut def = StructDef::default();
+    def.fields.insert("message".to_string(), Type::String);
+    checker.env.register_struct("MyError".to_string(), def);
+    let sus_ok = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: Some(ident("e")),
+                error_type: Some(TypeNode::new(
+                    TypeNodeKind::Ident(ident("MyError")),
+                    dummy_span(),
+                )),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&sus_ok).is_ok());
+
+    // Builtin Error struct is always available.
+    let sus_error = Expr::new(
+        ExprKind::Sus {
+            body: Block::new(vec![], dummy_span()),
+            catches: vec![CatchClause {
+                error_var: None,
+                error_type: Some(TypeNode::new(TypeNodeKind::Ident(ident("Error")), dummy_span())),
+                body: Block::new(vec![], dummy_span()),
+                span: dummy_span(),
+            }],
+            finally_branch: None,
+        },
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&sus_error).is_ok());
+}
+
+#[test]
+fn test_missing_return_empty_body() {
+    // Missing return reports dedicated E0410.
+    let errs = check_fun_module(Some("int64"), vec![]).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+    assert!(errs.iter().all(|d| d.code.as_str() != ErrorCode::E0401.as_str()));
+}
+
+#[test]
+fn test_missing_return_after_non_expr_stmt() {
+    // Non-expression statement ending reports E0410.
+    let body = vec![Stmt {
+        kind: StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: None,
+            init: Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+        },
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+}
+
+#[test]
+fn test_missing_return_trailing_void_call() {
+    // Trailing void expression reports E0410.
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Call(
+                Box::new(Expr::new(ExprKind::Ident(ident("assert_eq")), dummy_span())),
+                vec![
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+                ],
+            ),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0410.as_str()));
+    assert!(errs.iter().all(|d| d.code.as_str() != ErrorCode::E0401.as_str()));
+}
+
+#[test]
+fn test_trailing_if_with_returns_in_all_branches_is_ok() {
+    // Divergent if branches satisfy return requirement.
+    let ret_one = int_lit_stmt(1);
+    let ret_two = int_lit_stmt(2);
+    let if_expr = Expr::new(
+        ExprKind::If {
+            cond: Box::new(Expr::new(
+                ExprKind::Literal(LiteralValue::Bool(true)),
+                dummy_span(),
+            )),
+            then_branch: Block::new(vec![ret_one], dummy_span()),
+            elif_branches: vec![],
+            else_branch: Some(Block::new(vec![ret_two], dummy_span())),
+        },
+        dummy_span(),
+    );
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(if_expr),
+        span: dummy_span(),
+    }];
+    assert!(check_fun_module(Some("int64"), body).is_ok());
+}
+
+#[test]
+fn test_trailing_wrong_type_is_still_type_mismatch() {
+    // Type mismatch remains E0401.
+    let body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Literal(LiteralValue::String("text".to_string())),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    let errs = check_fun_module(Some("int64"), body).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == ErrorCode::E0401.as_str()));
+
+    // Tail expression matching return type is valid.
+    let ok_body = vec![Stmt {
+        kind: StmtKind::Expr(Expr::new(
+            ExprKind::Literal(LiteralValue::Int(5)),
+            dummy_span(),
+        )),
+        span: dummy_span(),
+    }];
+    assert!(check_fun_module(Some("int64"), ok_body).is_ok());
+    assert!(check_fun_module(None, vec![]).is_ok());
+}
+
+#[test]
+fn test_struct_declaration_duplicate_field() {
+    let mut checker = TypeChecker::new();
+    let struct_item = Item::new(
+        ItemId(0),
+        Visibility::Public,
+        ItemKind::Struct(StructDecl {
+            name: ident("Point"),
+            fields: vec![
+                FieldDef {
+                    attrs: vec![],
+                    name: ident("x"),
+                    ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dummy_span()),
+                    default_val: None,
+                    span: dummy_span(),
+                },
+                FieldDef {
+                    attrs: vec![],
+                    name: ident("x"),
+                    ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dummy_span()),
+                    default_val: None,
+                    span: dummy_span(),
+                },
+            ],
+            methods: vec![],
+            static_methods: vec![],
+            span: dummy_span(),
+        }),
+        dummy_span(),
+    );
+    let mut module = Module::new(FileId(0));
+    module.items.push(struct_item);
+    let errs = checker.check_module(&module).unwrap_err();
+    assert!(errs.iter().any(|d| d.code.as_str() == "E0304" && d.message.contains("declared multiple times")));
+}
+
+#[test]
+fn test_struct_init_unknown_struct() {
+    let mut checker = TypeChecker::new();
+    let init_expr = Expr::new(
+        ExprKind::StructInit(
+            ident("Ghost"),
+            vec![FieldInit {
+                name: ident("x"),
+                value: Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dummy_span()),
+                span: dummy_span(),
+            }],
+        ),
+        dummy_span(),
+    );
+    let res = checker.infer_expr(&init_expr);
+    assert!(res.is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0305" && d.message.contains("cannot find struct 'Ghost'")));
+}
+
+#[test]
+fn test_struct_init_valid_and_errors() {
+    let mut checker = TypeChecker::new();
+    let struct_item = Item::new(
+        ItemId(0),
+        Visibility::Public,
+        ItemKind::Struct(StructDecl {
+            name: ident("Point"),
+            fields: vec![
+                FieldDef {
+                    attrs: vec![],
+                    name: ident("x"),
+                    ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dummy_span()),
+                    default_val: None,
+                    span: dummy_span(),
+                },
+                FieldDef {
+                    attrs: vec![],
+                    name: ident("y"),
+                    ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dummy_span()),
+                    default_val: None,
+                    span: dummy_span(),
+                },
+            ],
+            methods: vec![],
+            static_methods: vec![],
+            span: dummy_span(),
+        }),
+        dummy_span(),
+    );
+    let mut module = Module::new(FileId(0));
+    module.items.push(struct_item);
+    assert!(checker.check_module(&module).is_ok());
+
+    // 1. Valid initialization
+    let valid_init = Expr::new(
+        ExprKind::StructInit(
+            ident("Point"),
+            vec![
+                FieldInit {
+                    name: ident("x"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(10)), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("y"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(20)), dummy_span()),
+                    span: dummy_span(),
+                },
+            ],
+        ),
+        dummy_span(),
+    );
+    assert_eq!(checker.infer_expr(&valid_init).unwrap(), Type::Struct("Point".to_string()));
+
+    // 2. Missing field
+    checker.diagnostics.clear();
+    let missing_init = Expr::new(
+        ExprKind::StructInit(
+            ident("Point"),
+            vec![FieldInit {
+                name: ident("x"),
+                value: Expr::new(ExprKind::Literal(LiteralValue::Int(10)), dummy_span()),
+                span: dummy_span(),
+            }],
+        ),
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&missing_init).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401" && d.message.contains("missing field(s) in struct 'Point': y")));
+
+    // 3. Unknown field
+    checker.diagnostics.clear();
+    let unknown_init = Expr::new(
+        ExprKind::StructInit(
+            ident("Point"),
+            vec![
+                FieldInit {
+                    name: ident("x"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(10)), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("y"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(20)), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("z"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(30)), dummy_span()),
+                    span: dummy_span(),
+                },
+            ],
+        ),
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&unknown_init).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401" && d.message.contains("has no field named 'z'")));
+
+    // 4. Duplicate field in literal
+    checker.diagnostics.clear();
+    let dup_init = Expr::new(
+        ExprKind::StructInit(
+            ident("Point"),
+            vec![
+                FieldInit {
+                    name: ident("x"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(10)), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("x"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(99)), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("y"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(20)), dummy_span()),
+                    span: dummy_span(),
+                },
+            ],
+        ),
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&dup_init).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401" && d.message.contains("specified more than once")));
+
+    // 5. Field type mismatch
+    checker.diagnostics.clear();
+    let mismatch_init = Expr::new(
+        ExprKind::StructInit(
+            ident("Point"),
+            vec![
+                FieldInit {
+                    name: ident("x"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::String("bad".to_string())), dummy_span()),
+                    span: dummy_span(),
+                },
+                FieldInit {
+                    name: ident("y"),
+                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(20)), dummy_span()),
+                    span: dummy_span(),
+                },
+            ],
+        ),
+        dummy_span(),
+    );
+    assert!(checker.infer_expr(&mismatch_init).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401"));
+}
+
+#[test]
+fn test_float_binary_expression_coercion() {
+    let mut checker = TypeChecker::new();
+    let div_expr = Expr::new(
+        ExprKind::Binary(
+            BinaryOp::Div,
+            Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(5)), dummy_span())),
+            Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(2)), dummy_span())),
+        ),
+        dummy_span(),
+    );
+    let checked = checker.check_expr(&div_expr, &Type::Float32);
+    assert_eq!(checked.unwrap(), Type::Float32);
+
+    let set_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: Some(TypeNode::new(TypeNodeKind::Ident(ident("float32")), dummy_span())),
+            init: div_expr,
+        },
+        dummy_span(),
+    );
+    assert!(checker.check_stmt(&set_stmt).is_ok());
+}
+
+
+#[test]
+fn test_while_loop_typechecking() {
+    let mut checker = TypeChecker::new();
+    let span = dummy_span();
+
+    // 1. Condition not bool
+    let bad_cond_while = Expr::new(
+        ExprKind::While {
+            label: None,
+            cond: Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(123)), span)),
+            body: Block::new(vec![], span),
+        },
+        span,
+    );
+    assert!(checker.infer_expr(&bad_cond_while).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401"));
+
+    // 2. Error inside while body
+    checker.diagnostics.clear();
+    let bad_body_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), span)),
+            init: Expr::new(ExprKind::Literal(LiteralValue::String("bad".to_string())), span),
+        },
+        span,
+    );
+    let bad_body_while = Expr::new(
+        ExprKind::While {
+            label: None,
+            cond: Box::new(Expr::new(ExprKind::Literal(LiteralValue::Bool(true)), span)),
+            body: Block::new(vec![bad_body_stmt], span),
+        },
+        span,
+    );
+    assert!(checker.infer_expr(&bad_body_while).is_err());
+    assert!(checker.diagnostics.iter().any(|d| d.code.as_str() == "E0401"));
+
+    // 3. Valid while loop
+    checker.diagnostics.clear();
+    let valid_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), span)),
+            init: Expr::new(ExprKind::Literal(LiteralValue::Int(42)), span),
+        },
+        span,
+    );
+    let valid_while = Expr::new(
+        ExprKind::While {
+            label: None,
+            cond: Box::new(Expr::new(ExprKind::Literal(LiteralValue::Bool(true)), span)),
+            body: Block::new(vec![valid_stmt], span),
+        },
+        span,
+    );
+    assert!(checker.infer_expr(&valid_while).is_ok());
+}
+
+#[test]
+fn test_method_call_on_function_notes() {
+    let mut checker = TypeChecker::new();
+    let span = dummy_span();
+
+    // Register dotanim function
+    checker.env.register_fn(
+        "dotanim".to_string(),
+        FnSig {
+            params: vec![],
+            ret: Type::Void,
+            is_cfun: false,
+        },
+    );
+    checker.current_fn_name = Some("dotanim".to_string());
+
+    // Call dotanim.next()
+    let dotanim_target = Expr::new(ExprKind::Ident(ident("dotanim")), span);
+    let method_call = Expr::new(
+        ExprKind::MethodCall(Box::new(dotanim_target), ident("next"), vec![]),
+        span,
+    );
+
+    let res = checker.infer_expr(&method_call);
+    assert!(res.is_err());
+    let diag = checker.diagnostics.iter().find(|d| d.code.as_str() == "E0403").expect("expected E0403");
+    assert!(diag.notes.iter().any(|n| n.contains("is a function, not an object instance")));
+    assert!(diag.notes.iter().any(|n| n.contains("refers to the enclosing function")));
+}
+
+#[test]
+fn test_loop_and_for_typechecking() {
+    let mut checker = TypeChecker::new();
+    let span = dummy_span();
+
+    // 1. Loop with type mismatch in body
+    let bad_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("x")),
+            ty: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), span)),
+            init: Expr::new(ExprKind::Literal(LiteralValue::String("bad".to_string())), span),
+        },
+        span,
+    );
+    let bad_loop = Expr::new(
+        ExprKind::Loop {
+            label: None,
+            body: Block::new(vec![bad_stmt.clone()], span),
+        },
+        span,
+    );
+    assert!(checker.infer_expr(&bad_loop).is_err());
+
+    // 2. For loop with range
+    checker.diagnostics.clear();
+    let range_expr = Expr::new(
+        ExprKind::Binary(
+            BinaryOp::Range,
+            Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(0)), span)),
+            Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(10)), span)),
+        ),
+        span,
+    );
+    let valid_for = Expr::new(
+        ExprKind::For {
+            label: None,
+            index_var: None,
+            item_var: ident("i"),
+            iter: Box::new(range_expr),
+            body: Block::new(vec![], span),
+        },
+        span,
+    );
+    assert!(checker.infer_expr(&valid_for).is_ok());
+}
+
+#[test]
+fn test_fixed_array_size_validation() {
+    let mut checker = TypeChecker::new();
+    let span = dummy_span();
+
+    // 1. Matching size: uint8[4] = [1, 2, 3, 4] -> OK
+    let ok_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("buf")),
+            ty: Some(TypeNode::new(
+                TypeNodeKind::Array(
+                    Box::new(TypeNode::new(TypeNodeKind::Ident(ident("uint8")), span)),
+                    Some(4),
+                ),
+                span,
+            )),
+            init: Expr::new(
+                ExprKind::ArrayInit(vec![
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(2)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(3)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(4)), span),
+                ]),
+                span,
+            ),
+        },
+        span,
+    );
+    assert!(checker.check_stmt(&ok_stmt).is_ok());
+
+    // 2. Mismatched size: uint8[4] = [1, 2, 3] -> Error E0401
+    checker.diagnostics.clear();
+    let bad_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("buf2")),
+            ty: Some(TypeNode::new(
+                TypeNodeKind::Array(
+                    Box::new(TypeNode::new(TypeNodeKind::Ident(ident("uint8")), span)),
+                    Some(4),
+                ),
+                span,
+            )),
+            init: Expr::new(
+                ExprKind::ArrayInit(vec![
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(2)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(3)), span),
+                ]),
+                span,
+            ),
+        },
+        span,
+    );
+    let res = checker.check_stmt(&bad_stmt);
+    assert!(res.is_err());
+    let diag = checker.diagnostics.iter().find(|d| d.code.as_str() == "E0401");
+    assert!(diag.is_some());
+    assert!(diag.unwrap().message.contains("fixed-size array size mismatch: expected 4 elements, found 3"));
+
+    // 3. Dynamic array (no size): uint8[] = [1, 2, 3] -> OK
+    checker.diagnostics.clear();
+    let dyn_stmt = Stmt::new(
+        StmtKind::Set {
+            target: BindingTarget::Ident(ident("dyn_buf")),
+            ty: Some(TypeNode::new(
+                TypeNodeKind::Array(
+                    Box::new(TypeNode::new(TypeNodeKind::Ident(ident("uint8")), span)),
+                    None,
+                ),
+                span,
+            )),
+            init: Expr::new(
+                ExprKind::ArrayInit(vec![
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(1)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(2)), span),
+                    Expr::new(ExprKind::Literal(LiteralValue::Int(3)), span),
+                ]),
+                span,
+            ),
+        },
+        span,
+    );
+    assert!(checker.check_stmt(&dyn_stmt).is_ok());
 }

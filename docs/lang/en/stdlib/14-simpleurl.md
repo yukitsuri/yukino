@@ -1,6 +1,6 @@
 # Module std.simpleurl
 
-The `std.simpleurl` module (also available via the alias `std.url`) provides a high-level suite for parsing, validating, building, modifying, and encoding Uniform Resource Locators (URLs) in compliance with RFC 3986. The module includes a full URL parser, percent-encoding utilities, query parameter inspection and mutation, path normalization and joining, and a fluent `UrlBuilder`.
+The `std.simpleurl` module provides a high-level suite for parsing, validating, building, modifying, and encoding Uniform Resource Locators (URLs) in compliance with RFC 3986. The module includes a full URL parser, percent-encoding utilities, query parameter inspection and mutation, path normalization and joining, and a fluent `UrlBuilder`.
 
 ---
 
@@ -11,7 +11,7 @@ Importing the entire package:
 ```yukino
 load std.simpleurl
 // or via alias:
-load std.url
+load std.simpleurl
 ```
 
 When imported, the following entities become available:

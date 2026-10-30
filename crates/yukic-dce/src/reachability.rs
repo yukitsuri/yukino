@@ -7,21 +7,43 @@ use yukic_ast::*;
 pub struct ReachabilityAnalysis<'a> {
     by_id: HashMap<ItemId, &'a Item>,
     by_name: HashMap<String, Vec<ItemId>>,
+    file_structs: HashMap<yukic_span::FileId, Vec<ItemId>>,
+    name_file: HashMap<String, yukic_span::FileId>,
 }
 
 impl<'a> ReachabilityAnalysis<'a> {
     pub fn new(module: &'a Module) -> Self {
         let mut by_id = HashMap::new();
         let mut by_name: HashMap<String, Vec<ItemId>> = HashMap::new();
+        let mut file_structs: HashMap<yukic_span::FileId, Vec<ItemId>> = HashMap::new();
+        let mut name_file: HashMap<String, yukic_span::FileId> = HashMap::new();
 
         for item in &module.items {
             by_id.insert(item.id, item);
+            let fid = item.span.file_id;
+            let is_import = matches!(item.kind, ItemKind::Import(_));
             for name in item_exported_names(item) {
-                by_name.entry(name).or_default().push(item.id);
+                by_name.entry(name.clone()).or_default().push(item.id);
+                if !is_import {
+                    name_file.insert(name, fid);
+                }
+            }
+            if let ItemKind::Class(c) = &item.kind {
+                for m in &c.methods {
+                    name_file.insert(m.name.as_str().to_string(), fid);
+                }
+            }
+            if matches!(item.kind, ItemKind::Struct(_) | ItemKind::Cstruct(_)) {
+                file_structs.entry(fid).or_default().push(item.id);
             }
         }
 
-        Self { by_id, by_name }
+        Self {
+            by_id,
+            by_name,
+            file_structs,
+            name_file,
+        }
     }
 
     pub fn compute_live_items(&self, roots: &HashSet<ItemId>) -> HashSet<ItemId> {
@@ -34,7 +56,17 @@ impl<'a> ReachabilityAnalysis<'a> {
             if let Some(item) = self.by_id.get(&item_id) {
                 let refs = Self::collect_item_references(item);
                 for ref_name in refs {
-                    if let Some(target_ids) = self.by_name.get(&ref_name) {
+                    if let Some(callee) = ref_name.strip_prefix("@catchall:") {
+                        if let Some(&fid) = self.name_file.get(callee) {
+                            if let Some(struct_ids) = self.file_structs.get(&fid) {
+                                for &sid in struct_ids {
+                                    if !live.contains(&sid) {
+                                        worklist.push(sid);
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(target_ids) = self.by_name.get(&ref_name) {
                         for &target_id in target_ids {
                             if !live.contains(&target_id) {
                                 worklist.push(target_id);
@@ -489,7 +521,14 @@ pub fn collect_expr_refs(expr: &Expr, refs: &mut Vec<String>) {
             catches,
             finally_branch,
         } => {
-            collect_block_refs(body, refs);
+            let mut sus_body_refs = Vec::new();
+            collect_block_refs(body, &mut sus_body_refs);
+            refs.extend(sus_body_refs.clone());
+            if catches.iter().any(|c| c.error_type.is_none()) {
+                for r in sus_body_refs {
+                    refs.push(format!("@catchall:{r}"));
+                }
+            }
             for c in catches {
                 if let Some(ty) = &c.error_type {
                     collect_type_refs(ty, refs);

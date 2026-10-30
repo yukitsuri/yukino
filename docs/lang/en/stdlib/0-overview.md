@@ -100,7 +100,7 @@ This brings all public components into the current scope:
 - **`std.os`** - system syscalls and libc bindings for POSIX/Unix (`fork`, `execve`, `waitpid`, `kill`, `chmod`, `chown`, `signals`), Linux (`epoll`, `eventfd`, `timerfd`, `memfd`, `prctl`, `gettid`), Windows (`terminate_process`, `wait_for_single_object`, `handles`), and Android (`android_log_print`).
 - **`std.sysinfo`** - hardware and system information: platform, host, kernel, uptime, physical and logical CPU cores, CPU brand and frequency, load average, RAM and swap, disk drives and partitions, battery status.
 - **`std.env`** - reading, writing, typed access (`get_int`, `get_bool`, `get_float`), removal and validation of process environment variables, retrieving all variables as an array or `HashMap<string, string>`, and loading and parsing `.env` (dotenv) configuration files.
-- **`std.simpleurl`** (also available as **`std.url`**) - RFC 3986 URL parsing, `Url` class, `UrlBuilder`, percent-encoding and decoding, query parameter manipulation, and path joining.
+- **`std.simpleurl`** - RFC 3986 URL parsing, `Url` class, `UrlBuilder`, percent-encoding and decoding, query parameter manipulation, and path joining.
 - **`std.compress`** - compression and decompression of buffers and files with streaming codecs (`gzip`, `zstd`, `xz`, `deflate`, `zlib`, `bzip2`, `lz4`) and `crc32` checksum calculation.
 - **`std.fs.archives`** - TAR and ZIP archive creation, unpacking, and listing with compression and password-based encryption (ZipCrypto, AES, WinZip AES).
 - **`std.locale`** - operating system language and regional settings: primary language (ISO 639-1), full locale tag (POSIX / BCP 47), user preferred languages, country code (ISO 3166-1), and system timezone (IANA).
@@ -137,7 +137,7 @@ This brings all public components into the current scope:
 | `std.os` | System level and libc: POSIX/Unix (fork, exec, signals), Linux (epoll, eventfd, timerfd, prctl), Windows, Android. | [11-os.md](11-os.md) |
 | `std.sysinfo` | Hardware and system diagnostics: host, OS, kernel, uptime, CPU (cores, brand, frequency), load average, RAM/Swap, disks, and battery. | [12-sysinfo.md](12-sysinfo.md) |
 | `std.env` | Environment variable inspection, typed getters, bulk retrieval, and .env configuration file loading. | [13-env.md](13-env.md) |
-| `std.simpleurl` (`std.url`) | RFC 3986 URL parsing and building, Url class, UrlBuilder, percent-encoding/decoding, query parameter helpers. | [14-simpleurl.md](14-simpleurl.md) |
+| `std.simpleurl` | RFC 3986 URL parsing and building, Url class, UrlBuilder, percent-encoding/decoding, query parameter helpers. | [14-simpleurl.md](14-simpleurl.md) |
 | `std.compress` | Compression and decompression of data and files: Gzip, Zstandard, XZ, Deflate, Zlib, Bzip2, LZ4, CRC-32 checksums. | [15-compress.md](15-compress.md) |
 | `std.fs.archives` | TAR and ZIP archives: pack, unpack, list entries, transparent compression, and encryption (ZipCrypto, AES, WinZip AES). | [16-archives.md](16-archives.md) |
 | `std.locale` | Operating system locale settings: interface language (ISO 639-1), locale tag (POSIX/BCP 47), country (ISO 3166-1), preferred languages, timezone. | [17-locale.md](17-locale.md) |

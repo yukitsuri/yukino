@@ -73,14 +73,6 @@ public fun slice(s: string, start: int64, end: int64) -> string {
 }
 
 #[inline]
-public fun substring(s: string, start: int64, end: int64) -> string {
-    set out_len: int64 = 0
-    set p = yukistd_str_slice(s.as_ptr(), s.len(), start, end, ptr_of(out_len))
-    if out_len <= 0 { return "" }
-    return from_raw_parts(p, out_len)
-}
-
-#[inline]
 public fun eq(a: string, b: string) -> bool {
     return yukistd_str_eq(a.as_ptr(), a.len(), b.as_ptr(), b.len())
 }
@@ -95,13 +87,17 @@ public fun compare(a: string, b: string) -> int32 {
     return yukistd_str_cmp(a.as_ptr(), a.len(), b.as_ptr(), b.len())
 }
 
+// Empty prefix returns null
 #[inline]
-public fun starts_with(s: string, prefix: string) -> bool {
+public fun starts_with(s: string, prefix: string) -> bool? {
+    if prefix.len() == 0 { return null }
     return yukistd_str_starts_with(s.as_ptr(), s.len(), prefix.as_ptr(), prefix.len())
 }
 
+// Empty suffix returns null
 #[inline]
-public fun ends_with(s: string, suffix: string) -> bool {
+public fun ends_with(s: string, suffix: string) -> bool? {
+    if suffix.len() == 0 { return null }
     return yukistd_str_ends_with(s.as_ptr(), s.len(), suffix.as_ptr(), suffix.len())
 }
 
@@ -110,19 +106,28 @@ public fun contains(s: string, sub: string) -> bool {
     return yukistd_str_contains(s.as_ptr(), s.len(), sub.as_ptr(), sub.len())
 }
 
+// Returns null when substring is not found
 #[inline]
-public fun index_of(s: string, sub: string) -> int64 {
-    return yukistd_str_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len(), 0)
+public fun index_of(s: string, sub: string) -> int64? {
+    set idx = yukistd_str_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len(), 0)
+    if idx < 0 { return null }
+    return idx
 }
 
+// Returns null when substring is not found at or after from_idx
 #[inline]
-public fun index_of_from(s: string, sub: string, from_idx: int64) -> int64 {
-    return yukistd_str_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len(), from_idx)
+public fun index_of_from(s: string, sub: string, from_idx: int64) -> int64? {
+    set idx = yukistd_str_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len(), from_idx)
+    if idx < 0 { return null }
+    return idx
 }
 
+// Returns null when substring is not found
 #[inline]
-public fun last_index_of(s: string, sub: string) -> int64 {
-    return yukistd_str_last_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len())
+public fun last_index_of(s: string, sub: string) -> int64? {
+    set idx = yukistd_str_last_index_of(s.as_ptr(), s.len(), sub.as_ptr(), sub.len())
+    if idx < 0 { return null }
+    return idx
 }
 
 #[inline]
@@ -162,24 +167,8 @@ public fun upper(s: string) -> string {
     return from_raw_parts(p, out_len)
 }
 
-#[inline_always]
-public fun to_uppercase(s: string) -> string {
-    set out_len: int64 = 0
-    set p = yukistd_str_upper(s.as_ptr(), s.len(), ptr_of(out_len))
-    if out_len <= 0 { return "" }
-    return from_raw_parts(p, out_len)
-}
-
 #[inline]
 public fun lower(s: string) -> string {
-    set out_len: int64 = 0
-    set p = yukistd_str_lower(s.as_ptr(), s.len(), ptr_of(out_len))
-    if out_len <= 0 { return "" }
-    return from_raw_parts(p, out_len)
-}
-
-#[inline_always]
-public fun to_lowercase(s: string) -> string {
     set out_len: int64 = 0
     set p = yukistd_str_lower(s.as_ptr(), s.len(), ptr_of(out_len))
     if out_len <= 0 { return "" }

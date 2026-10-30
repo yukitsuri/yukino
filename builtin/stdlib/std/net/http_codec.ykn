@@ -61,7 +61,7 @@ fun parse_headers_and_body(raw_headers: string) -> HttpHeaders {
     for i in 1..lines.len() {
         set line = trim(lines[i])
         if line.len() == 0 { continue }
-        set sep = index_of(line, ":")
+        set sep = index_of(line, ":") ?? -1
         if sep > 0 {
             set k = trim(slice(line, 0, sep))
             set v = trim(slice(line, sep + 1, line.len()))
@@ -72,13 +72,13 @@ fun parse_headers_and_body(raw_headers: string) -> HttpHeaders {
 }
 
 public fun parse_request_str(raw: string) -> HttpRequest {
-    set header_end = index_of(raw, "\r\n\r\n")
+    set header_end = index_of(raw, "\r\n\r\n") ?? -1
     if header_end < 0 {
         panic(HttpError { message: "incomplete http request header", code: 400 })
     }
     set head_part = slice(raw, 0, header_end)
     set body_part = slice(raw, header_end + 4, raw.len())
-    set first_line_end = index_of(head_part, "\r\n")
+    set first_line_end = index_of(head_part, "\r\n") ?? -1
     set first_line: string = if first_line_end > 0 { slice(head_part, 0, first_line_end) } else { head_part }
     set parts = split(first_line, " ")
     if parts.len() < 2 {
@@ -86,7 +86,7 @@ public fun parse_request_str(raw: string) -> HttpRequest {
     }
     set method = trim(parts[0])
     set raw_path = trim(parts[1])
-    set q_mark = index_of(raw_path, "?")
+    set q_mark = index_of(raw_path, "?") ?? -1
     set path: string = if q_mark >= 0 { slice(raw_path, 0, q_mark) } else { raw_path }
     set query_params: QueryParam[] = []
     if q_mark >= 0 {
@@ -97,13 +97,13 @@ public fun parse_request_str(raw: string) -> HttpRequest {
 }
 
 public fun parse_response_str(raw: string) -> HttpResponse {
-    set header_end = index_of(raw, "\r\n\r\n")
+    set header_end = index_of(raw, "\r\n\r\n") ?? -1
     if header_end < 0 {
         panic(HttpError { message: "incomplete http response header", code: 502 })
     }
     set head_part = slice(raw, 0, header_end)
     set body_part = slice(raw, header_end + 4, raw.len())
-    set first_line_end = index_of(head_part, "\r\n")
+    set first_line_end = index_of(head_part, "\r\n") ?? -1
     set first_line: string = if first_line_end > 0 { slice(head_part, 0, first_line_end) } else { head_part }
     set parts = split(first_line, " ")
     if parts.len() < 2 {
@@ -152,7 +152,7 @@ fun read_content_length_body_tls(ref stream: TlsStream, headers: HttpHeaders, in
 
 public fun parse_request(ref stream: TcpStream) -> HttpRequest? {
     set buf = ""
-    while index_of(buf, "\r\n\r\n") < 0 {
+    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -168,7 +168,7 @@ public fun parse_request(ref stream: TcpStream) -> HttpRequest? {
 
 public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest? {
     set buf = ""
-    while index_of(buf, "\r\n\r\n") < 0 {
+    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -184,7 +184,7 @@ public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest? {
 
 public fun parse_response(ref stream: TcpStream) -> HttpResponse? {
     set buf = ""
-    while index_of(buf, "\r\n\r\n") < 0 {
+    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -200,7 +200,7 @@ public fun parse_response(ref stream: TcpStream) -> HttpResponse? {
 
 public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse? {
     set buf = ""
-    while index_of(buf, "\r\n\r\n") < 0 {
+    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }

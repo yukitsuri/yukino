@@ -9,7 +9,7 @@ use inkwell::module::Module as LlvmModule;
 use inkwell::targets::{TargetData, TargetTriple as InkwellTargetTriple};
 use inkwell::types::{BasicType, BasicTypeEnum, FunctionType, PointerType, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FunctionValue, GlobalValue,
+    ArrayValue, BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FloatValue, FunctionValue, GlobalValue,
     InstructionValue, IntValue, PointerValue, StructValue,
 };
 use std::collections::HashSet;
@@ -419,7 +419,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let is_thunk = fun.attrs.iter().any(|a| a.is("thunk"));
-        let (fn_type, has_dest) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, is_thunk);
+        let has_regional_ref = fun.params.iter().any(|p| {
+            if p.is_ref {
+                let pty = p.ty.as_ref().map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                RegionManager::is_regional_type(&pty)
+            } else {
+                false
+            }
+        });
+        let (fn_type, has_dest) = self.transform_function_type_with_dest(&param_types, &ret_ty, llvm_ret, is_thunk, has_regional_ref);
         let fn_val = self.module.add_function(
             &sym_name,
             fn_type,
@@ -525,7 +533,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 (fn_ty, true)
             } else {
-                self.transform_function_type(&param_types, &ret_ty, llvm_ret, false)
+                let has_regional_ref = method.params.iter().any(|p| {
+                    if p.is_ref {
+                        let pty = p.ty.as_ref().map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                        RegionManager::is_regional_type(&pty)
+                    } else {
+                        false
+                    }
+                });
+                self.transform_function_type_with_dest(&param_types, &ret_ty, llvm_ret, false, has_regional_ref)
             };
             let fn_val = self.module.add_function(
                 &sym_name,
@@ -733,6 +749,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             .transform_function_type(param_types, return_type, llvm_ret, is_cfun)
     }
 
+    pub fn transform_function_type_with_dest(
+        &self,
+        param_types: &[BasicTypeEnum<'ctx>],
+        return_type: &Type,
+        llvm_ret: Option<BasicTypeEnum<'ctx>>,
+        is_cfun: bool,
+        has_regional_ref: bool,
+    ) -> (FunctionType<'ctx>, bool) {
+        self.region
+            .transform_function_type_with_dest(param_types, return_type, llvm_ret, is_cfun, has_regional_ref)
+    }
+
     pub fn emit_region_prologue(
         &self,
         initial_capacity: u64,
@@ -916,7 +944,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             (fn_ty, true)
         } else {
-            self.transform_function_type(&param_types, &ret_ty, llvm_ret, false)
+            let has_regional_ref = method.params.iter().any(|p| {
+                if p.is_ref {
+                    let pty = p.ty.as_ref().map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                    RegionManager::is_regional_type(&pty)
+                } else {
+                    false
+                }
+            });
+            self.transform_function_type_with_dest(&param_types, &ret_ty, llvm_ret, false, has_regional_ref)
         };
         let sym_name = crate::mangle::method_symbol_name(
             class_name,
@@ -1008,18 +1044,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let zero = i64_ty.const_zero();
                 slice_ty.const_named_struct(&[null_ptr.into(), zero.into(), zero.into()])
             } else {
-                let mut string_structs = Vec::with_capacity(elements.len());
-                for elem in elements {
-                    if let Some(LiteralValue::String(s)) = eval_const_literal(elem) {
-                        let sv = self.emit_string_literal(&s);
-                        string_structs.push(sv);
-                    } else {
-                        return Err("static array currently only supports string literals".to_string());
+                let elem_target_ty = decl.ty.as_ref().and_then(|t| {
+                    let canon = self.ast_type_to_canonical_type(t);
+                    match canon {
+                        Type::Array(elem) => Some(*elem),
+                        _ => None,
                     }
+                });
+
+                let mut vals = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    let lit = eval_const_literal(elem)
+                        .ok_or_else(|| "elements of static array must be constant literals".to_string())?;
+                    let val = if let Some(ref elem_ty) = elem_target_ty {
+                        self.emit_typed_const_literal(&lit, elem_ty)?
+                    } else {
+                        self.emit_literal(&lit)?
+                    };
+                    vals.push(val);
                 }
-                let elem_ty = string_structs[0].get_type();
+
+                let elem_ty = vals[0].get_type();
                 let arr_ty = elem_ty.array_type(elements.len() as u32);
-                let arr_val = elem_ty.const_array(&string_structs);
+                let arr_val = make_const_array(elem_ty, &vals)?;
                 let arr_name = format!(".arr.{}", decl.name.name);
                 let arr_global = self.module.add_global(arr_ty, Some(AddressSpace::default()), &arr_name);
                 arr_global.set_initializer(&arr_val);
@@ -1084,6 +1131,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             (LiteralValue::Float(v), BasicTypeEnum::FloatType(ft)) => {
                 Ok(ft.const_float(*v).into())
             }
+            (LiteralValue::Int(v), BasicTypeEnum::FloatType(ft)) => {
+                Ok(ft.const_float(*v as f64).into())
+            }
+            (LiteralValue::UInt(v), BasicTypeEnum::FloatType(ft)) => {
+                Ok(ft.const_float(*v as f64).into())
+            }
             _ => self.emit_literal(lit),
         }
     }
@@ -1116,8 +1169,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let is_thunk = fun.attrs.iter().any(|a| a.is("thunk"));
+        let has_regional_ref = fun.params.iter().any(|p| {
+            if p.is_ref {
+                let pty = p.ty.as_ref().map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                RegionManager::is_regional_type(&pty)
+            } else {
+                false
+            }
+        });
         let (fn_type, has_dest) =
-            self.transform_function_type(&param_types, &ret_ty, llvm_ret, is_thunk);
+            self.transform_function_type_with_dest(&param_types, &ret_ty, llvm_ret, is_thunk, has_regional_ref);
         let sym_name = self.symbol_for_fun(fun);
         let fn_val = self
             .module
@@ -2110,5 +2171,34 @@ fn eval_const_literal(expr: &Expr) -> Option<LiteralValue> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn make_const_array<'ctx>(
+    elem_ty: BasicTypeEnum<'ctx>,
+    vals: &[BasicValueEnum<'ctx>],
+) -> Result<ArrayValue<'ctx>, String> {
+    match elem_ty {
+        BasicTypeEnum::IntType(it) => {
+            let ivs: Vec<IntValue<'ctx>> = vals.iter().map(|v| v.into_int_value()).collect();
+            Ok(it.const_array(&ivs))
+        }
+        BasicTypeEnum::FloatType(ft) => {
+            let fvs: Vec<FloatValue<'ctx>> = vals.iter().map(|v| v.into_float_value()).collect();
+            Ok(ft.const_array(&fvs))
+        }
+        BasicTypeEnum::StructType(st) => {
+            let svs: Vec<StructValue<'ctx>> = vals.iter().map(|v| v.into_struct_value()).collect();
+            Ok(st.const_array(&svs))
+        }
+        BasicTypeEnum::PointerType(pt) => {
+            let pvs: Vec<PointerValue<'ctx>> = vals.iter().map(|v| v.into_pointer_value()).collect();
+            Ok(pt.const_array(&pvs))
+        }
+        BasicTypeEnum::ArrayType(at) => {
+            let avs: Vec<ArrayValue<'ctx>> = vals.iter().map(|v| v.into_array_value()).collect();
+            Ok(at.const_array(&avs))
+        }
+        _ => Err("unsupported element type for static const array".to_string()),
     }
 }

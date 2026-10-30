@@ -1,4 +1,4 @@
-load ..strings: to_lowercase, trim
+load ..strings: lower, trim
 load ..simpleurl: QueryParam, parse_query
 load ..json: json_try_parse, json_stringify
 load ..json_parser.value: JsonValue
@@ -67,9 +67,9 @@ public class HttpHeaders {
     }
 
     fun set(key: string, value: string) -> HttpHeaders {
-        set lower = to_lowercase(trim(key))
+        set lk = lower(trim(key))
         for i in 0..this.entries.len() {
-            if to_lowercase(this.entries[i].key) == lower {
+            if lower(this.entries[i].key) == lk {
                 rewrite this.entries[i] = HeaderEntry { key: key, value: value }
                 return this
             }
@@ -84,9 +84,9 @@ public class HttpHeaders {
     }
 
     fun get(key: string) -> string? {
-        set lower = to_lowercase(trim(key))
+        set lk = lower(trim(key))
         for i in 0..this.entries.len() {
-            if to_lowercase(this.entries[i].key) == lower {
+            if lower(this.entries[i].key) == lk {
                 return this.entries[i].value
             }
         }
@@ -98,10 +98,10 @@ public class HttpHeaders {
     }
 
     fun remove(key: string) -> HttpHeaders {
-        set lower = to_lowercase(trim(key))
+        set lk = lower(trim(key))
         set filtered: HeaderEntry[] = []
         for i in 0..this.entries.len() {
-            if to_lowercase(this.entries[i].key) != lower {
+            if lower(this.entries[i].key) != lk {
                 filtered.push(this.entries[i])
             }
         }

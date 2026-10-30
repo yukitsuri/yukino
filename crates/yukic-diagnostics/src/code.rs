@@ -59,6 +59,7 @@ pub enum ErrorCode {
     E0407, // recursive_type_alias
     E0408, // interface_not_implemented
     E0409, // subclass_of_locked_class
+    E0410, // missing_return
     E0416, // invalid_super_call
     E0417, // stable_calls_impure
     E0428, // invalid_operator_overload
@@ -138,6 +139,7 @@ impl ErrorCode {
             Self::E0407 => "E0407",
             Self::E0408 => "E0408",
             Self::E0409 => "E0409",
+            Self::E0410 => "E0410",
             Self::E0416 => "E0416",
             Self::E0417 => "E0417",
             Self::E0428 => "E0428",
@@ -211,6 +213,7 @@ impl ErrorCode {
             Self::E0407 => "recursive_type_alias",
             Self::E0408 => "interface_not_implemented",
             Self::E0409 => "subclass_of_locked_class",
+            Self::E0410 => "missing_return",
             Self::E0416 => "invalid_super_call",
             Self::E0417 => "stable_calls_impure",
             Self::E0428 => "invalid_operator_overload",
@@ -491,6 +494,7 @@ impl FromStr for DiagnosticCode {
             "E0407" => Self::Error(ErrorCode::E0407),
             "E0408" => Self::Error(ErrorCode::E0408),
             "E0409" => Self::Error(ErrorCode::E0409),
+            "E0410" => Self::Error(ErrorCode::E0410),
             "E0416" => Self::Error(ErrorCode::E0416),
             "E0417" => Self::Error(ErrorCode::E0417),
             "E0429" => Self::Error(ErrorCode::E0429),

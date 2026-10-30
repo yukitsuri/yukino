@@ -20,11 +20,11 @@ All public elements of the `std.strings` module are imported into the current sc
 - **String functions:**
   - *Length and empty checks:* `utflen`, `is_empty`
   - *Index access:* `byte_at`, `char_at`
-  - *Slices and substrings:* `slice`, `substring`
+  - *Slices and substrings:* `slice`
   - *Comparison:* `eq`, `ne`, `compare`
   - *Search and containment:* `starts_with`, `ends_with`, `contains`, `index_of`, `index_of_from`, `last_index_of`, `count`
   - *Trimming and padding:* `trim`, `trim_start`, `trim_end`, `pad_start`, `pad_end`
-  - *Casing and reversal:* `upper`, `to_uppercase`, `lower`, `to_lowercase`, `reverse`
+  - *Casing and reversal:* `upper`, `lower`, `reverse`
   - *Replacement, repetition, and joining:* `replace`, `repeat`, `split`, `lines`, `str_join`
   - *Safe parsing (returns nullable):* `parse_int`, `parse_float`
   - *Strict parsing (panics on invalid format):* `to_int64`, `to_float64`, `to_bool`, `to_string`
@@ -183,28 +183,7 @@ set sub = slice(text, 0, 4)
 println("Slice: ${sub}")
 ```
 
-### 4.6 substring
-
-Returns a substring over the half-open interval `[start, end)`. Alias for `slice`.
-
-```yukino
-public fun substring(s: string, start: int64, end: int64) -> string
-```
-
-Returns a substring of type `string`. Not nullable.
-
-This function never panics.
-
-```yukino
-load std.strings: substring
-load std.io: println
-
-set text = "yukino-driver"
-set sub = substring(text, 0, 6)
-println("Substring: ${sub}")
-```
-
-### 4.7 eq
+### 4.6 eq
 
 Performs a byte-by-byte equality check between two strings `a` and `b`.
 
@@ -226,7 +205,7 @@ set match = eq(s1, s2)
 println("Equal: ${match}")
 ```
 
-### 4.8 ne
+### 4.7 ne
 
 Performs a byte-by-byte inequality check between two strings `a` and `b`.
 
@@ -248,7 +227,7 @@ set diff = ne(s1, s2)
 println("Different: ${diff}")
 ```
 
-### 4.9 compare
+### 4.8 compare
 
 Performs byte-wise lexicographical comparison of strings `a` and `b`.
 
@@ -270,15 +249,15 @@ set cmp = compare(s1, s2)
 println("Comparison: ${cmp}")
 ```
 
-### 4.10 starts_with
+### 4.9 starts_with
 
-Checks whether string `s` begins with prefix `prefix`. An empty prefix `""` always yields `true`. If the prefix is longer than the string, returns `false`.
+Checks whether string `s` begins with prefix `prefix`. If `prefix` is empty `""`, returns `null`. If the prefix is longer than the string, returns `false`.
 
 ```yukino
-public fun starts_with(s: string, prefix: string) -> bool
+public fun starts_with(s: string, prefix: string) -> bool?
 ```
 
-Returns `true` if the prefix matches, otherwise `false`. Not nullable.
+Returns `true` if the prefix matches, `false` if it does not match, or `null` if the prefix is empty `""`. Nullable (`bool?`).
 
 This function never panics.
 
@@ -291,15 +270,15 @@ set ok = starts_with(text, "yukic")
 println("Prefix matched: ${ok}")
 ```
 
-### 4.11 ends_with
+### 4.10 ends_with
 
-Checks whether string `s` terminates with suffix `suffix`. An empty suffix `""` always yields `true`. If the suffix is longer than the string, returns `false`.
+Checks whether string `s` terminates with suffix `suffix`. If `suffix` is empty `""`, returns `null`. If the suffix is longer than the string, returns `false`.
 
 ```yukino
-public fun ends_with(s: string, suffix: string) -> bool
+public fun ends_with(s: string, suffix: string) -> bool?
 ```
 
-Returns `true` if the suffix matches, otherwise `false`. Not nullable.
+Returns `true` if the suffix matches, `false` if it does not match, or `null` if the suffix is empty `""`. Nullable (`bool?`).
 
 This function never panics.
 
@@ -312,7 +291,7 @@ set ok = ends_with(text, ".ykn")
 println("Suffix matched: ${ok}")
 ```
 
-### 4.12 contains
+### 4.11 contains
 
 Checks whether substring `sub` is present within string `s`.
 
@@ -333,15 +312,15 @@ set has = contains(text, "lib")
 println("Contains: ${has}")
 ```
 
-### 4.13 index_of
+### 4.12 index_of
 
-Returns the zero-based byte index of the first occurrence of `sub` in string `s`.
+Returns the zero-based byte index of the first occurrence of `sub` in string `s`, or `null` if the substring is not found.
 
 ```yukino
-public fun index_of(s: string, sub: string) -> int64
+public fun index_of(s: string, sub: string) -> int64?
 ```
 
-Returns the zero-based index as `int64`, or `-1` if not found. An empty `sub` returns `0`. Not nullable.
+Returns the zero-based index as `int64`, or `null` if `sub` is not found within `s`. An empty `sub` returns `0`. Nullable (`int64?`).
 
 This function never panics.
 
@@ -354,15 +333,15 @@ set idx = index_of(text, "na")
 println("Index: ${idx}")
 ```
 
-### 4.14 index_of_from
+### 4.13 index_of_from
 
-Returns the zero-based byte index of the first occurrence of `sub` in string `s`, starting the search at `from_idx`.
+Returns the zero-based byte index of the first occurrence of `sub` in string `s`, starting the search at `from_idx`, or `null` if not found.
 
 ```yukino
-public fun index_of_from(s: string, sub: string, from_idx: int64) -> int64
+public fun index_of_from(s: string, sub: string, from_idx: int64) -> int64?
 ```
 
-Returns the zero-based index as `int64`, or `-1` if not found. If `from_idx < 0`, the search begins at index `0`. Not nullable.
+Returns the zero-based index as `int64`, or `null` if `sub` is not found or `from_idx >= s.len()`. If `from_idx < 0`, the search begins at index `0`. Nullable (`int64?`).
 
 This function never panics.
 
@@ -375,15 +354,15 @@ set idx = index_of_from(text, "na", 3)
 println("Index from 3: ${idx}")
 ```
 
-### 4.15 last_index_of
+### 4.14 last_index_of
 
-Returns the zero-based byte index of the last occurrence of `sub` in string `s`.
+Returns the zero-based byte index of the last occurrence of `sub` in string `s`, or `null` if the substring is not found.
 
 ```yukino
-public fun last_index_of(s: string, sub: string) -> int64
+public fun last_index_of(s: string, sub: string) -> int64?
 ```
 
-Returns the zero-based index as `int64`, or `-1` if not found. An empty `sub` returns `s.len()`. Not nullable.
+Returns the zero-based index as `int64`, or `null` if `sub` is not found. An empty `sub` returns `s.len()`. Nullable (`int64?`).
 
 This function never panics.
 
@@ -396,7 +375,7 @@ set last = last_index_of(path, "/")
 println("Last slash: ${last}")
 ```
 
-### 4.16 count
+### 4.15 count
 
 Counts the number of non-overlapping occurrences of `sub` in string `s`.
 
@@ -417,7 +396,7 @@ set n = count(text, "ab")
 println("Count: ${n}")
 ```
 
-### 4.17 trim
+### 4.16 trim
 
 Strips all leading and trailing whitespace characters (spaces, tabs, newlines, carriage returns, and other Unicode whitespace) from both ends of `s`.
 
@@ -438,7 +417,7 @@ set clean = trim(raw)
 println("Result: '${clean}'")
 ```
 
-### 4.18 trim_start
+### 4.17 trim_start
 
 Removes whitespace characters only from the start of string `s`.
 
@@ -459,7 +438,7 @@ set clean = trim_start(raw)
 println("Result: '${clean}'")
 ```
 
-### 4.19 trim_end
+### 4.18 trim_end
 
 Removes whitespace characters only from the end of string `s`.
 
@@ -480,7 +459,7 @@ set clean = trim_end(raw)
 println("Result: '${clean}'")
 ```
 
-### 4.20 upper
+### 4.19 upper
 
 Converts all characters of string `s` to uppercase following UTF-8 rules.
 
@@ -501,28 +480,7 @@ set s = upper(text)
 println("Upper: ${s}")
 ```
 
-### 4.21 to_uppercase
-
-Converts all characters of string `s` to uppercase. Alias for `upper`.
-
-```yukino
-public fun to_uppercase(s: string) -> string
-```
-
-Returns an uppercase string of type `string`. Not nullable.
-
-This function never panics.
-
-```yukino
-load std.strings: to_uppercase
-load std.io: println
-
-set text = "hello world"
-set s = to_uppercase(text)
-println("Upper: ${s}")
-```
-
-### 4.22 lower
+### 4.20 lower
 
 Converts all characters of string `s` to lowercase following UTF-8 rules.
 
@@ -543,28 +501,7 @@ set s = lower(text)
 println("Lower: ${s}")
 ```
 
-### 4.23 to_lowercase
-
-Converts all characters of string `s` to lowercase. Alias for `lower`.
-
-```yukino
-public fun to_lowercase(s: string) -> string
-```
-
-Returns a lowercase string of type `string`. Not nullable.
-
-This function never panics.
-
-```yukino
-load std.strings: to_lowercase
-load std.io: println
-
-set text = "PARSER"
-set s = to_lowercase(text)
-println("Lower: ${s}")
-```
-
-### 4.24 replace
+### 4.21 replace
 
 Replaces all non-overlapping occurrences of `from_sub` with `to_sub` in string `s`. If `from_sub` is not found, returns the original string. An empty `from_sub` matches every position of the string: `to_sub` is inserted at the beginning and at the end of the string, as well as between every pair of adjacent characters.
 
@@ -585,7 +522,7 @@ set res = replace(text, "apple", "orange")
 println("Result: ${res}")
 ```
 
-### 4.25 repeat
+### 4.22 repeat
 
 Constructs a new string by repeating string `s` a specified number of times `count_num`. If `count_num <= 0` or the string is empty, returns an empty string `""`.
 
@@ -606,7 +543,7 @@ set border = repeat(dash, 5)
 println("Border: ${border}")
 ```
 
-### 4.26 reverse
+### 4.23 reverse
 
 Returns a string with its characters reversed in order while preserving valid Unicode sequence boundaries.
 
@@ -627,7 +564,7 @@ set rev = reverse(text)
 println("Reversed: ${rev}")
 ```
 
-### 4.27 pad_start
+### 4.24 pad_start
 
 Pads string `s` on the left with `pad` until it reaches `target_len`. The `pad` parameter defaults to `" "` (single space). If string length is already greater than or equal to `target_len`, or the padding string is empty, returns `s` unmodified.
 
@@ -648,7 +585,7 @@ set num = pad_start(text, 5, "0")
 println("Result: ${num}")
 ```
 
-### 4.28 pad_end
+### 4.25 pad_end
 
 Pads string `s` on the right with `pad` until it reaches `target_len`. The `pad` parameter defaults to `" "` (single space). If string length is already greater than or equal to `target_len`, or the padding string is empty, returns `s` unmodified.
 
@@ -669,7 +606,7 @@ set padded = pad_end(text, 6)
 println("Result: '${padded}'")
 ```
 
-### 4.29 split
+### 4.26 split
 
 Splits string `s` into an array of substrings `string[]` by delimiter `delimiter`. If `s` is empty, returns an empty array. If `delimiter` is empty, returns a single-element array containing `s`.
 
@@ -690,7 +627,7 @@ set tokens = split(fruits, ",")
 println("Count: ${tokens.len()}")
 ```
 
-### 4.30 lines
+### 4.27 lines
 
 Splits multiline text `s` into an array of individual lines `string[]`. Standard line breaks (LF `\n` and CRLF `\r\n`) are recognized and excluded from resulting elements.
 
@@ -711,7 +648,7 @@ set rows = lines(poem)
 println("Lines: ${rows.len()}")
 ```
 
-### 4.31 str_join
+### 4.28 str_join
 
 Joins all elements in array `items` into a single string using delimiter `delimiter`. Defaults to `""`. If the array is empty, returns an empty string `""`.
 
@@ -732,7 +669,7 @@ set joined = str_join(elements, " -> ")
 println("Joined: ${joined}")
 ```
 
-### 4.32 parse_int
+### 4.29 parse_int
 
 Attempts to parse string `s` into a 64-bit signed integer. Leading and trailing whitespace characters are trimmed.
 
@@ -755,7 +692,7 @@ if num != null {
 }
 ```
 
-### 4.33 parse_float
+### 4.30 parse_float
 
 Attempts to parse string `s` into a 64-bit double precision float. Leading and trailing whitespace characters are trimmed.
 
@@ -778,7 +715,7 @@ if val != null {
 }
 ```
 
-### 4.34 to_int64
+### 4.31 to_int64
 
 Strictly parses string `s` into an `int64` integer. Leading and trailing whitespace is trimmed.
 
@@ -803,7 +740,7 @@ sus {
 }
 ```
 
-### 4.35 to_float64
+### 4.32 to_float64
 
 Strictly parses string `s` into a double-precision floating-point number of type `float64`. Leading and trailing whitespace is trimmed.
 
@@ -828,7 +765,7 @@ sus {
 }
 ```
 
-### 4.36 to_bool
+### 4.33 to_bool
 
 Strictly parses a boolean value from string `s` (after automatic whitespace trimming). Recognized values `"true"`, `"1"`, `"yes"`, `"on"` return `true`. Values `"false"`, `"0"`, `"no"`, `"off"` return `false`.
 
@@ -855,7 +792,7 @@ sus {
 }
 ```
 
-### 4.37 to_string
+### 4.34 to_string
 
 Identity string conversion: takes string `s` by value and returns its value. Useful for callback handlers or type coercion boundaries.
 

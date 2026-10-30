@@ -3,7 +3,7 @@ load .matches: Matches
 load .help: render_help
 load .suggest: print_error_unexpected_arg, print_error_unknown_subcommand, print_error_missing_required, print_error_missing_value, print_error_conflict
 load ..strings: slice, index_of
-load ..io: println
+load ..io: println, flush
 
 fun has_help_or_version(
     ref args: string[],
@@ -71,7 +71,7 @@ fun find_subcommand_pos(
         } elif tok.len() > 1 && tok[0] == 45 {
             if tok.len() > 2 && tok[1] == 45 {
                 set eq = "="
-                set eq_idx = index_of(tok, eq)
+                set eq_idx = index_of(tok, eq) ?? -1
                 if eq_idx < 0 {
                     set key = slice(tok, 2, tok.len())
                     for o in 0..opt_longs.len() {
@@ -353,9 +353,11 @@ public class Line {
         )
         if action == 1 {
             this.print_help()
+            flush()
             exit(0)
         } elif action == 2 {
             this.print_version()
+            flush()
             exit(0)
         }
 
@@ -377,7 +379,7 @@ public class Line {
             // long opt or flag: --opt
             if tok.len() > 2 && tok[0] == 45 && tok[1] == 45 {
                 set eq = "="
-                set eq_idx = index_of(tok, eq)
+                set eq_idx = index_of(tok, eq) ?? -1
                 set key: string = if eq_idx >= 0 { slice(tok, 2, eq_idx) } else { slice(tok, 2, tok.len()) }
                 set arg_idx = this.find_arg_index_by_long(key)
 
@@ -430,7 +432,7 @@ public class Line {
                 }
 
                 set eq = "="
-                set eq_idx = index_of(tok, eq)
+                set eq_idx = index_of(tok, eq) ?? -1
                 if eq_idx == 2 {
                     set s = slice(tok, 1, 2)
                     set arg_idx = this.find_arg_index_by_short(s)

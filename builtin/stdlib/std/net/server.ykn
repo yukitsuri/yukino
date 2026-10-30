@@ -1,3 +1,4 @@
+load ..strings: lower
 load .errors: NetError
 load .tcp: TcpListener, TcpStream, tcp_listen
 load .tls: TlsStream, TlsServerConfig, tls_accept
@@ -20,12 +21,12 @@ public class HttpServer {
             set req = parse_request(ref stream)
             if req == null { break }
             set req_val = req ?? request_new("GET", "/")
+            set conn_hdr = req_val.headers.get("Connection")
             set resp = handler(req_val)
             set out = format_response(resp)
             stream.write(out)
             stream.flush()
-            set conn_hdr = req_val.headers.get("Connection")
-            if conn_hdr != null && (conn_hdr ?? "") == "close" { break }
+            if conn_hdr != null && lower(conn_hdr ?? "") == "close" { break }
         }
         stream.close()
     }
@@ -73,12 +74,12 @@ public class HttpsServer {
             set req = parse_tls_request(ref tls)
             if req == null { break }
             set req_val = req ?? request_new("GET", "/")
+            set conn_hdr = req_val.headers.get("Connection")
             set resp = handler(req_val)
             set out = format_response(resp)
             tls.write(out)
             tls.flush()
-            set conn_hdr = req_val.headers.get("Connection")
-            if conn_hdr != null && (conn_hdr ?? "") == "close" { break }
+            if conn_hdr != null && lower(conn_hdr ?? "") == "close" { break }
         }
         tls.close()
     }

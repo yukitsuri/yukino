@@ -1028,8 +1028,10 @@ fn cfun_decl_to_sig(decl: &yukic_ast::CfunDecl) -> FnSig {
 
 fn struct_decl_to_def(decl: &yukic_ast::StructDecl) -> yukic_types::StructDef {
     let mut fields = std::collections::HashMap::new();
+    let mut field_names = Vec::new();
     for f in &decl.fields {
         fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+        field_names.push(f.name.name.clone());
     }
     let mut methods = std::collections::HashMap::new();
     for method in &decl.methods {
@@ -1059,6 +1061,7 @@ fn struct_decl_to_def(decl: &yukic_ast::StructDecl) -> yukic_types::StructDef {
     }
     yukic_types::StructDef {
         fields,
+        field_names,
         methods,
     }
 }
@@ -1149,11 +1152,14 @@ fn collect_externc_signatures(
             }
             yukic_ast::ExterncItem::Cstruct(decl) => {
                 let mut fields = std::collections::HashMap::new();
+                let mut field_names = Vec::new();
                 for f in &decl.fields {
                     fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                    field_names.push(f.name.name.clone());
                 }
                 let def = yukic_types::StructDef {
                     fields,
+                    field_names,
                     methods: std::collections::HashMap::new(),
                 };
                 sigs.structs.insert(decl.name.name.clone(), def.clone());
@@ -1501,6 +1507,7 @@ fn populate_borrow_signatures(
         );
     }
     for (name, class_def) in &sigs.classes {
+        checker.type_fields.insert(name.clone(), class_def.fields.clone());
         checker
             .fn_returns
             .insert(name.clone(), yukic_types::Type::Class(name.clone()));
@@ -1508,6 +1515,9 @@ fn populate_borrow_signatures(
             checker.fn_returns.insert(format!("{name}::{mname}"), msig.ret.clone());
             checker.fn_returns.insert(mname.clone(), msig.ret.clone());
         }
+    }
+    for (name, struct_def) in &sigs.structs {
+        checker.type_fields.insert(name.clone(), struct_def.fields.clone());
     }
     for (mod_idx, _) in loaded_modules.iter().enumerate().filter(|(_, m)| !m.is_external) {
         let mod_id = ModuleId(u32::try_from(mod_idx).unwrap_or(0));

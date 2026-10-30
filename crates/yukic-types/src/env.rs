@@ -34,6 +34,7 @@ pub struct ClassDef {
 #[derive(Clone, Debug, Default)]
 pub struct StructDef {
     pub fields: HashMap<String, Type>,
+    pub field_names: Vec<String>,
     pub methods: HashMap<String, FnSig>,
 }
 
@@ -135,10 +136,12 @@ impl TypeEnv {
                 ..Default::default()
             },
         );
+        let error_names = vec!["message".to_string(), "code".to_string()];
         self.structs.insert(
             "error".to_string(),
             StructDef {
                 fields: error_fields.clone(),
+                field_names: error_names.clone(),
                 methods: HashMap::new(),
             },
         );
@@ -146,6 +149,7 @@ impl TypeEnv {
             "Error".to_string(),
             StructDef {
                 fields: error_fields,
+                field_names: error_names,
                 methods: HashMap::new(),
             },
         );

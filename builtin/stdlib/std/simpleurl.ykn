@@ -1,4 +1,4 @@
-load .strings: trim, to_lowercase, slice, index_of, last_index_of, starts_with
+load .strings: trim, lower, slice, index_of, last_index_of, starts_with
 
 // decl core/strings.rs start
 
@@ -121,7 +121,7 @@ public fun url_decode(encoded: string) -> string {
 }
 
 public fun default_port_for_scheme(scheme: string) -> int32 {
-    set s = to_lowercase(scheme)
+    set s = lower(scheme)
     if s == "http" || s == "ws" { return 80 }
     if s == "https" || s == "wss" { return 443 }
     if s == "ftp" { return 21 }
@@ -302,7 +302,7 @@ public class Url {
             }
         }
         if this.path.len() > 0 {
-            if this.host.len() > 0 && !starts_with(this.path, "/") {
+            if this.host.len() > 0 && !(starts_with(this.path, "/") ?? false) {
                 rewrite res = res + "/" + this.path.cp()
             } else {
                 rewrite res = res + this.path.cp()
@@ -321,15 +321,15 @@ public class Url {
     }
 
     public fun join(subpath: string) -> Url {
-        if starts_with(subpath, "http://") || starts_with(subpath, "https://") || starts_with(subpath, "ws://") || starts_with(subpath, "wss://") || starts_with(subpath, "ftp://") {
+        if (starts_with(subpath, "http://") ?? false) || (starts_with(subpath, "https://") ?? false) || (starts_with(subpath, "ws://") ?? false) || (starts_with(subpath, "wss://") ?? false) || (starts_with(subpath, "ftp://") ?? false) {
             return url_parse(subpath)
         }
         set raw_path = ""
-        if starts_with(subpath, "/") {
+        if starts_with(subpath, "/") ?? false {
             rewrite raw_path = subpath
         } else {
             set base_dir = "/"
-            set last_slash = last_index_of(this.path, "/")
+            set last_slash = last_index_of(this.path, "/") ?? -1
             if last_slash >= 0 {
                 rewrite base_dir = slice(this.path, 0, last_slash + 1)
             }
@@ -466,7 +466,7 @@ public fun parse_query(q_str: string) -> QueryParam[] {
         if idx == q_len || q_str[idx] == 38 {
             if idx > start {
                 set pair = slice(q_str, start, idx)
-                set eq = index_of(pair, "=")
+                set eq = index_of(pair, "=") ?? -1
                 if eq >= 0 {
                     set pair_len = pair.len()
                     set pk = url_decode_component(slice(pair, 0, eq))
@@ -490,13 +490,13 @@ public fun url_parse(input: string) -> Url {
         panic(UrlParseError { message: "empty url string", input: input })
     }
 
-    set colon_pos = index_of(trimmed, ":")
+    set colon_pos = index_of(trimmed, ":") ?? -1
     if colon_pos <= 0 {
         panic(UrlParseError { message: "missing scheme delimiter ':'", input: input })
     }
 
     set scheme_str = slice(trimmed, 0, colon_pos)
-    set scheme = to_lowercase(scheme_str)
+    set scheme = lower(scheme_str)
     for i in 0..scheme.len() {
         set b = scheme[i]
         if i == 0 {
@@ -520,7 +520,7 @@ public fun url_parse(input: string) -> Url {
     set query_params: QueryParam[] = []
     set fragment: string? = null
 
-    if starts_with(rest, "//") {
+    if starts_with(rest, "//") ?? false {
         set rest_len = rest.len()
         set after_slash = slice(rest, 2, rest_len)
         set auth_end: int64 = after_slash.len()
@@ -537,13 +537,13 @@ public fun url_parse(input: string) -> Url {
         rewrite rest = slice(after_slash, auth_end, after_len)
 
         // userinfo
-        set at_pos = index_of(authority, "@")
+        set at_pos = index_of(authority, "@") ?? -1
         set host_port_part = ""
         if at_pos >= 0 {
             set userinfo = slice(authority, 0, at_pos)
             set auth_len = authority.len()
             rewrite host_port_part = slice(authority, at_pos + 1, auth_len)
-            set colon_user = index_of(userinfo, ":")
+            set colon_user = index_of(userinfo, ":") ?? -1
             if colon_user >= 0 {
                 set userinfo_len = userinfo.len()
                 rewrite username = url_decode_component(slice(userinfo, 0, colon_user))
@@ -552,13 +552,13 @@ public fun url_parse(input: string) -> Url {
         } else { rewrite host_port_part = authority }
 
         // host & port
-        if starts_with(host_port_part, "[") {
-            set bracket_end = index_of(host_port_part, "]")
+        if starts_with(host_port_part, "[") ?? false {
+            set bracket_end = index_of(host_port_part, "]") ?? -1
             if bracket_end > 0 {
                 rewrite host = slice(host_port_part, 0, bracket_end + 1)
                 set hp_len = host_port_part.len()
                 set after_bracket = slice(host_port_part, bracket_end + 1, hp_len)
-                if starts_with(after_bracket, ":") {
+                if starts_with(after_bracket, ":") ?? false {
                     set ab_len = after_bracket.len()
                     set p_str = slice(after_bracket, 1, ab_len)
                     set parsed_port: int64 = 0
@@ -570,7 +570,7 @@ public fun url_parse(input: string) -> Url {
                 }
             } else { rewrite host = host_port_part }
         } else {
-            set colon_host = last_index_of(host_port_part, ":")
+            set colon_host = last_index_of(host_port_part, ":") ?? -1
             if colon_host >= 0 {
                 rewrite host = slice(host_port_part, 0, colon_host)
                 set hp_len = host_port_part.len()
@@ -586,7 +586,7 @@ public fun url_parse(input: string) -> Url {
     }
 
     // fragment '#'
-    set hash_pos = index_of(rest, "#")
+    set hash_pos = index_of(rest, "#") ?? -1
     if hash_pos >= 0 {
         set rest_len = rest.len()
         rewrite fragment = slice(rest, hash_pos + 1, rest_len)
@@ -594,7 +594,7 @@ public fun url_parse(input: string) -> Url {
     }
 
     // query '?'
-    set q_pos = index_of(rest, "?")
+    set q_pos = index_of(rest, "?") ?? -1
     if q_pos >= 0 {
         set rest_len = rest.len()
         set q_str = slice(rest, q_pos + 1, rest_len)

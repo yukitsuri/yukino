@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use yukic_ast::Module as AstModule;
+use yukic_ast::expr::LiteralValue;
 use yukic_ast::item::{
     ClassDecl, CstructDecl, EnumDecl, EnumVariant, ItemKind, StructDecl,
 };
@@ -69,6 +70,7 @@ pub struct TypeRegistry {
     pub fn_candidates: HashMap<String, Vec<MangledFunSig>>,
     // method defaults keyed as "Class::method" (bare names collide)
     pub defaults: yukic_ast::defaults::DefaultArgsMap,
+    pub static_vars: HashMap<String, Type>,
 }
 
 impl TypeRegistry {
@@ -129,6 +131,9 @@ impl TypeRegistry {
             for (_, field_ty) in &mut layout.fields {
                 *field_ty = Self::canon_type(field_ty, &classes, &ifaces, &enums, &cstructs, &self.type_aliases);
             }
+        }
+        for var_ty in self.static_vars.values_mut() {
+            *var_ty = Self::canon_type(var_ty, &classes, &ifaces, &enums, &cstructs, &self.type_aliases);
         }
     }
 
@@ -239,6 +244,14 @@ impl TypeRegistry {
                 }
             }
             ItemKind::Enum(decl) => self.register_enum(decl),
+            ItemKind::Static(decl) => {
+                let ty = decl.ty.as_ref().map(ast_type_to_type).or_else(|| {
+                    Self::infer_const_expr_ty(&decl.init)
+                });
+                if let Some(t) = ty {
+                    self.static_vars.insert(decl.name.name.clone(), t);
+                }
+            }
             ItemKind::Fun(decl) => {
                 let ret = decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
                 self.functions.insert(decl.name.name.clone(), ret.clone());
@@ -705,5 +718,25 @@ impl TypeRegistry {
             }
         }
         self.symbol_overrides.get(name).cloned()
+    }
+
+    fn infer_const_expr_ty(expr: &yukic_ast::Expr) -> Option<Type> {
+        match &expr.kind {
+            yukic_ast::ExprKind::Literal(lit) => match lit {
+                LiteralValue::Int(_) => Some(Type::Int64),
+                LiteralValue::UInt(_) => Some(Type::Uint64),
+                LiteralValue::Float(_) => Some(Type::Float64),
+                LiteralValue::Bool(_) => Some(Type::Bool),
+                LiteralValue::String(_) => Some(Type::String),
+                LiteralValue::Bytes(_) => Some(Type::Bytes),
+                LiteralValue::Char(_) => Some(Type::Char),
+                LiteralValue::Null => Some(Type::Null),
+            },
+            yukic_ast::ExprKind::ArrayInit(elems) => {
+                let elem_ty = elems.first().and_then(Self::infer_const_expr_ty).unwrap_or(Type::Int64);
+                Some(Type::Array(Box::new(elem_ty)))
+            }
+            _ => None,
+        }
     }
 }

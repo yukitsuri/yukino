@@ -68,15 +68,29 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         ty: Option<&TypeNode>,
         init: &Expr,
     ) -> Result<(), String> {
-        let init_val = self.compile_expr(init)?;
-        let (val_ty, sem_ty) = if let Some(type_node) = ty {
+        let (val_ty_opt, sem_ty) = if let Some(type_node) = ty {
             let ast_ty = self.registry.canonicalize_type(&ast_type_to_type(type_node));
             let td = TargetData::create(self.target.spec().data_layout);
             let lowerer = TypeLowerer::new(self.context, &td, self.target, self.registry);
-            (lowerer.lower_type(&ast_ty)?, Some(ast_ty))
+            (Some(lowerer.lower_type(&ast_ty)?), Some(ast_ty))
         } else {
-            (init_val.get_type(), self.expr_semantic_ty(init))
+            (None, None)
         };
+
+        let prev_expected = self.expected_expr_ty;
+        let prev_expected_sem = self.expected_sem_ty.take();
+        if let Some(vt) = val_ty_opt {
+            self.expected_expr_ty = Some(vt);
+        }
+        if let Some(ref st) = sem_ty {
+            self.expected_sem_ty = Some(st.clone());
+        }
+        let init_val = self.compile_expr(init)?;
+        self.expected_expr_ty = prev_expected;
+        self.expected_sem_ty = prev_expected_sem;
+
+        let val_ty = val_ty_opt.unwrap_or_else(|| init_val.get_type());
+        let sem_ty = sem_ty.or_else(|| self.expr_semantic_ty(init));
 
         match target {
             BindingTarget::Ident(ident) => {
@@ -148,7 +162,19 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         op: AssignOp,
         value: &Expr,
     ) -> Result<(), String> {
+        let prev_expected = self.expected_expr_ty;
+        let prev_expected_sem = self.expected_sem_ty.take();
+        if let LValue::Ident(ident) = target {
+            if let Some((ty, sem_ty)) = self.lookup_local(&ident.name).map(|l| (l.ty, l.semantic_ty.clone())) {
+                if ty.is_float_type() {
+                    self.expected_expr_ty = Some(ty);
+                }
+                self.expected_sem_ty = sem_ty;
+            }
+        }
         let rhs_val = self.compile_expr(value)?;
+        self.expected_expr_ty = prev_expected;
+        self.expected_sem_ty = prev_expected_sem;
         match target {
             LValue::Ident(ident) => self.compile_rewrite_ident(ident, op, rhs_val),
             LValue::Field(target, field) => self.compile_rewrite_field(target, field, op, rhs_val),

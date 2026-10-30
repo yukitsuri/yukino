@@ -37,6 +37,7 @@ pub struct BorrowChecker {
     pub diagnostics: Vec<Diagnostic>,
     pub fn_returns: HashMap<String, Type>,
     pub fn_types: HashMap<String, Type>,
+    pub type_fields: HashMap<String, HashMap<String, Type>>,
     loop_depth: usize,
     loop_scope_threshold: usize,
 }
@@ -60,6 +61,7 @@ impl BorrowChecker {
             diagnostics: Vec::new(),
             fn_returns,
             fn_types: HashMap::new(),
+            type_fields: HashMap::new(),
             loop_depth: 0,
             loop_scope_threshold: 0,
         }
@@ -144,29 +146,59 @@ impl BorrowChecker {
                 );
             }
             ItemKind::Externc(block) => self.register_externc_sig(block),
-            ItemKind::Class(decl) => self.register_class_sig(decl),
+            ItemKind::Class(decl) => {
+                let mut fields = HashMap::new();
+                for f in &decl.fields {
+                    fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                }
+                self.type_fields.insert(decl.name.name.clone(), fields);
+                self.register_class_sig(decl);
+            }
+            ItemKind::Struct(decl) => {
+                let mut fields = HashMap::new();
+                for f in &decl.fields {
+                    fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                }
+                self.type_fields.insert(decl.name.name.clone(), fields);
+            }
+            ItemKind::Cstruct(decl) => {
+                let mut fields = HashMap::new();
+                for f in &decl.fields {
+                    fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                }
+                self.type_fields.insert(decl.name.name.clone(), fields);
+            }
             _ => {}
         }
     }
 
     fn register_externc_sig(&mut self, block: &ExterncBlock) {
         for ext_item in &block.items {
-            if let ExterncItem::Cfun(decl) = ext_item {
-                let ret = decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
-                self.fn_returns.insert(decl.name.name.clone(), ret.clone());
-                let params = decl
-                    .params
-                    .iter()
-                    .map(|p| TypeParam::value(ast_type_to_type(&p.ty)))
-                    .collect();
-                self.fn_types.insert(
-                    decl.name.name.clone(),
-                    Type::Fn {
-                        params,
-                        ret: Box::new(ret),
-                        is_cfun: true,
-                    },
-                );
+            match ext_item {
+                ExterncItem::Cfun(decl) => {
+                    let ret = decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
+                    self.fn_returns.insert(decl.name.name.clone(), ret.clone());
+                    let params = decl
+                        .params
+                        .iter()
+                        .map(|p| TypeParam::value(ast_type_to_type(&p.ty)))
+                        .collect();
+                    self.fn_types.insert(
+                        decl.name.name.clone(),
+                        Type::Fn {
+                            params,
+                            ret: Box::new(ret),
+                            is_cfun: true,
+                        },
+                    );
+                }
+                ExterncItem::Cstruct(decl) => {
+                    let mut fields = HashMap::new();
+                    for f in &decl.fields {
+                        fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                    }
+                    self.type_fields.insert(decl.name.name.clone(), fields);
+                }
             }
         }
     }
@@ -509,6 +541,10 @@ impl BorrowChecker {
                 div
             }
             ExprKind::ArrayAlloc(..) => false,
+            ExprKind::FieldAccess(target, _) => {
+                self.check_expr(target, MoveContext::None);
+                false
+            }
             ExprKind::IndexAccess(target, index) => {
                 self.check_expr(target, MoveContext::None);
                 self.check_expr(index, MoveContext::None);
@@ -555,6 +591,17 @@ impl BorrowChecker {
             }
             ExprKind::NamedArg(_, inner) => {
                 self.check_expr(inner, move_ctx)
+            }
+            ExprKind::InterpolatedString(parts) => {
+                let mut div = false;
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        if self.check_expr(e, MoveContext::None) {
+                            div = true;
+                        }
+                    }
+                }
+                div
             }
             _ => false,
         }
@@ -907,6 +954,30 @@ impl BorrowChecker {
             ExprKind::This | ExprKind::Super => self.env.get_var("this").map(|v| v.ty.clone()),
             ExprKind::Call(callee, args) => self.infer_call_type(callee, args),
             ExprKind::MethodCall(target, method, args) => self.infer_method_call_type(target, method, args),
+            ExprKind::FieldAccess(target, field) => {
+                let target_ty = self.infer_expr_type(target)?;
+                let base_name = match &target_ty {
+                    Type::Class(name) | Type::Struct(name) | Type::Cstruct(name) => Some(name.clone()),
+                    Type::Ref { inner, .. } => match &**inner {
+                        Type::Class(name) | Type::Struct(name) | Type::Cstruct(name) => Some(name.clone()),
+                        _ => None,
+                    },
+                    Type::Union(members) => {
+                        let mut found = None;
+                        for m in members {
+                            if let Type::Class(name) | Type::Struct(name) | Type::Cstruct(name) = m {
+                                found = Some(name.clone());
+                                break;
+                            }
+                        }
+                        found
+                    }
+                    _ => None,
+                };
+                base_name.as_deref().and_then(|name| {
+                    self.type_fields.get(name).and_then(|fields| fields.get(&field.name).cloned())
+                })
+            }
             ExprKind::IndexAccess(target, _) => match self.infer_expr_type(target)? {
                 Type::Array(inner) => Some(*inner),
                 Type::String | Type::Bytes => Some(Type::Uint8),
@@ -1163,17 +1234,16 @@ impl BorrowChecker {
 
     fn infer_string_method_type(&self, method: &str) -> Option<Type> {
         match method {
-            "len" | "cap" | "count" | "index_of" | "last_index_of" | "to_i64" | "to_int64" => {
-                Some(Type::Int64)
-            }
-            "is_empty" | "eq" | "starts_with" | "ends_with" | "contains" => Some(Type::Bool),
+            "len" | "cap" | "count" | "to_i64" | "to_int64" => Some(Type::Int64),
+            "index_of" | "last_index_of" | "index_of_from" => Some(Type::nullable(Type::Int64)),
+            "is_empty" | "eq" | "contains" => Some(Type::Bool),
+            "starts_with" | "ends_with" => Some(Type::nullable(Type::Bool)),
             "as_ptr" => Some(Type::Ptr(Box::new(Type::Uint8))),
             "char_at" => Some(Type::Char),
             "byte_at" => Some(Type::Uint8),
             "to_f64" | "to_float64" => Some(Type::Float64),
-            "trim" | "trim_start" | "trim_end" | "upper" | "lower" | "to_uppercase"
-            | "to_lowercase" | "slice" | "substring" | "replace" | "repeat" | "reverse"
-            | "pad_start" | "pad_end" | "join" | "cp" => Some(Type::String),
+            "trim" | "trim_start" | "trim_end" | "upper" | "lower" | "slice" | "replace"
+            | "repeat" | "reverse" | "pad_start" | "pad_end" | "join" | "cp" => Some(Type::String),
             "split" | "lines" => Some(Type::Array(Box::new(Type::String))),
             "to_bytes" => Some(Type::Bytes),
             _ => None,
