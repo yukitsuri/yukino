@@ -38,6 +38,7 @@ unsafe extern "C" {
     fn _Unwind_RaiseException(exception_object: *mut UnwindException) -> UnwindReasonCode;
 }
 
+#[allow(dead_code)]
 unsafe extern "C" fn yukino_exception_cleanup(
     _reason: UnwindReasonCode,
     exc: *mut UnwindException,
@@ -235,6 +236,7 @@ pub unsafe extern "C" fn yukino_raise_panic(msg_ptr: *const u8, msg_len: usize) 
 }
 
 #[unsafe(no_mangle)]
+#[allow(unused_variables)]
 pub unsafe extern "C" fn yukino_raise_typed_panic(
     msg_ptr: *const u8,
     msg_len: usize,

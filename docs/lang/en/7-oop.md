@@ -42,6 +42,15 @@ set px: float64 = pt.x
 set py: float64 = pt.y
 ```
 
+#### Structure declaration and validation rules:
+
+1. **Unique field names in declarations**: field names inside a structure must be unique. Declaring duplicate field names produces compiler error `E0304` (duplicate field).
+2. **Structure type existence**: attempting to instantiate an undeclared structure produces compiler error `E0305` (unknown type/struct).
+3. **Mandatory field initialization**: every declared field must be initialized in the structure literal. Omitting any field produces compiler error `E0401` (missing required field).
+4. **No unknown fields**: specifying fields in the literal that were not declared in the structure produces compiler error `E0401` (unknown field).
+5. **No duplicate fields in literals**: specifying the same field more than once in an initializer produces compiler error `E0401` (duplicate field in struct initializer).
+6. **Field type checking**: the type of each expression provided for a field is strictly verified against the declared field type. A mismatch produces compiler error `E0401` (type mismatch) with an explanatory note.
+
 > [!NOTE]
 > In Yukino, structures (`struct`) are used solely for storing and transferring pure data without overhead (for example, typed errors in `panic(Error { ... })`, passing composite arguments, and returning multiple values). They do not contain methods, constructors, or behavioral logic. For an object-oriented model with methods, inheritance, and polymorphism, classes (`class`) are used.
 

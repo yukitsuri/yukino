@@ -136,6 +136,14 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
     }
 
     fn compile_literal(&mut self, lit: &LiteralValue) -> BasicValueEnum<'ctx> {
+        if let Some(BasicTypeEnum::FloatType(ft)) = self.expected_expr_ty {
+            match lit {
+                LiteralValue::Int(v) => return ft.const_float(*v as f64).into(),
+                LiteralValue::UInt(v) => return ft.const_float(*v as f64).into(),
+                LiteralValue::Float(v) => return ft.const_float(*v).into(),
+                _ => {}
+            }
+        }
         match lit {
             LiteralValue::Int(v) => self
                 .context
@@ -199,8 +207,18 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         if op == BinaryOp::Or {
             return self.compile_short_circuit_or(left, right);
         }
-        let lhs = self.compile_expr(left)?;
-        let rhs = self.compile_expr(right)?;
+        let mut lhs = self.compile_expr(left)?;
+        let mut rhs = self.compile_expr(right)?;
+        if let Some(BasicTypeEnum::FloatType(ft)) = self.expected_expr_ty {
+            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem | BinaryOp::Pow) {
+                if lhs.is_int_value() {
+                    lhs = self.builder.build_signed_int_to_float(lhs.into_int_value(), ft, "sitofp").map_err(|e| e.to_string())?.into();
+                }
+                if rhs.is_int_value() {
+                    rhs = self.builder.build_signed_int_to_float(rhs.into_int_value(), ft, "sitofp").map_err(|e| e.to_string())?.into();
+                }
+            }
+        }
         if let Some(res) = self.try_compile_operator_binary(op, left, lhs, rhs)? {
             return Ok(res);
         }
@@ -445,6 +463,20 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             }
             (BasicValueEnum::FloatValue(l), BasicValueEnum::FloatValue(r)) => {
                 self.compile_float_binary(op, l, r)
+            }
+            (BasicValueEnum::IntValue(l), BasicValueEnum::FloatValue(r)) => {
+                let fl = self
+                    .builder
+                    .build_signed_int_to_float(l, r.get_type(), "sitofp")
+                    .map_err(|e| e.to_string())?;
+                self.compile_float_binary(op, fl, r)
+            }
+            (BasicValueEnum::FloatValue(l), BasicValueEnum::IntValue(r)) => {
+                let fr = self
+                    .builder
+                    .build_signed_int_to_float(r, l.get_type(), "sitofp")
+                    .map_err(|e| e.to_string())?;
+                self.compile_float_binary(op, l, fr)
             }
             (BasicValueEnum::PointerValue(l), BasicValueEnum::PointerValue(r)) => {
                 let pred = match op {
@@ -987,6 +1019,17 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         l: inkwell::values::FloatValue<'ctx>,
         r: inkwell::values::FloatValue<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let (l, r) = if l.get_type() != r.get_type() {
+            if l.get_type() == self.context.f32_type() {
+                let ext = self.builder.build_float_ext(l, self.context.f64_type(), "fpext").map_err(|e| e.to_string())?;
+                (ext, r)
+            } else {
+                let ext = self.builder.build_float_ext(r, self.context.f64_type(), "fpext").map_err(|e| e.to_string())?;
+                (l, ext)
+            }
+        } else {
+            (l, r)
+        };
         let b = self.builder;
         let val: BasicValueEnum<'ctx> = match op {
             BinaryOp::Add => b.build_float_add(l, r, "fadd").map_err(|e| e.to_string())?.into(),
@@ -2139,6 +2182,10 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         let personality = self.get_or_declare_personality();
         self.fn_val.set_personality_function(personality);
 
+        let old_dispatch = self.catch_dispatch_stack.last().copied();
+        let sus_dispatch = self.context.append_basic_block(self.fn_val, "sus_dispatch");
+        self.catch_dispatch_stack.push(sus_dispatch);
+
         let sus_landing = self.context.append_basic_block(self.fn_val, "sus_landing");
         let sus_exit = self.context.append_basic_block(self.fn_val, "sus_exit");
 
@@ -2158,12 +2205,21 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 .map_err(|e| e.to_string())?;
         }
 
-        self.builder.position_at_end(sus_landing);
-
         let pad_type = self.context.struct_type(
             &[self.ptr_type().into(), self.context.i32_type().into()],
             false,
         );
+
+        if self.exc_slot.is_none() {
+            self.exc_slot = Some(self.create_entry_alloca(self.ptr_type().into(), "exc_slot")?);
+        }
+        if self.pad_slot.is_none() {
+            self.pad_slot = Some(self.create_entry_alloca(pad_type.into(), "pad_slot")?);
+        }
+        let exc_slot = self.exc_slot.unwrap();
+        let pad_slot = self.pad_slot.unwrap();
+
+        self.builder.position_at_end(sus_landing);
 
         let mut clauses: Vec<BasicValueEnum<'ctx>> = Vec::new();
         for c in catches {
@@ -2190,6 +2246,24 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         let exc_ptr = self
             .builder
             .build_extract_value(pad_val.into_struct_value(), 0, "exc_ptr")
+            .map_err(|e| e.to_string())?
+            .into_pointer_value();
+
+        self.builder
+            .build_store(exc_slot, exc_ptr)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(pad_slot, pad_val)
+            .map_err(|e| e.to_string())?;
+
+        self.builder
+            .build_unconditional_branch(sus_dispatch)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(sus_dispatch);
+        let cur_exc = self
+            .builder
+            .build_load(self.ptr_type(), exc_slot, "cur_exc")
             .map_err(|e| e.to_string())?
             .into_pointer_value();
 
@@ -2223,7 +2297,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .builder
                     .build_call(
                         kind_eq,
-                        &[exc_ptr.into(), name_ptr.into(), name_len.into()],
+                        &[cur_exc.into(), name_ptr.into(), name_len.into()],
                         "kind_match",
                     )
                     .map_err(|e| e.to_string())?
@@ -2255,7 +2329,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             }
 
             self.builder.position_at_end(catch_bb);
-            self.setup_catch_scope(exc_ptr, c)?;
+            self.setup_catch_scope(cur_exc, c)?;
             self.compile_block(&c.body)?;
             self.pop_scope();
 
@@ -2277,21 +2351,22 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
 
         if !self.is_terminated() {
-            if self.is_windows_gnu_target() {
-                // Re-raise on windows-gnu so unwinder continues to outer handler.
-                let reraise = self.get_or_declare_reraise();
+            if let Some(outer_dispatch) = old_dispatch {
                 self.builder
-                    .build_call(reraise, &[exc_ptr.into()], "")
-                    .map_err(|e| e.to_string())?;
-                self.builder
-                    .build_unreachable()
+                    .build_unconditional_branch(outer_dispatch)
                     .map_err(|e| e.to_string())?;
             } else {
+                let resume_val = self
+                    .builder
+                    .build_load(pad_type, pad_slot, "resume_val")
+                    .map_err(|e| e.to_string())?;
                 self.builder
-                    .build_resume(pad_val)
+                    .build_resume(resume_val)
                     .map_err(|e| e.to_string())?;
             }
         }
+
+        self.catch_dispatch_stack.pop();
 
         self.cleanups_stack.pop_scope();
         self.current_cleanup_bb = None;
@@ -2831,18 +2906,47 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             return Ok(sv.into());
         }
 
-        let mut vals = Vec::with_capacity(elements.len());
-        for elem in elements {
-            vals.push(self.compile_expr(elem)?);
-        }
+        let expected_elem_info = match &self.expected_sem_ty {
+            Some(Type::Array(elem_sem)) => {
+                let layout = self.elem_type_to_layout(elem_sem).ok();
+                layout.map(|(llvm_ty, sz)| (llvm_ty, sz, (**elem_sem).clone()))
+            }
+            _ => None,
+        };
+
+        let (vals, elem_llvm_ty, elem_size, align) = if let Some((elem_llvm_ty, elem_size, elem_sem)) = expected_elem_info {
+            let prev_expected_expr = self.expected_expr_ty;
+            let prev_expected_sem = self.expected_sem_ty.take();
+            let mut vals = Vec::with_capacity(elements.len());
+            for elem in elements {
+                self.expected_expr_ty = Some(elem_llvm_ty);
+                self.expected_sem_ty = Some(elem_sem.clone());
+                let val = self.compile_expr(elem)?;
+                let coerced = self.coerce_type(val, elem_llvm_ty)?;
+                vals.push(coerced);
+            }
+            self.expected_expr_ty = prev_expected_expr;
+            self.expected_sem_ty = prev_expected_sem;
+
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let align = td.get_abi_alignment(&elem_llvm_ty).max(1);
+            let elem_size = (elem_size as u64).max(1);
+            (vals, elem_llvm_ty, elem_size, align)
+        } else {
+            let mut vals = Vec::with_capacity(elements.len());
+            for elem in elements {
+                vals.push(self.compile_expr(elem)?);
+            }
+            let elem_val = vals[0];
+            let elem_llvm_ty = elem_val.get_type();
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let elem_size = (td.get_bit_size(&elem_llvm_ty) / 8).max(1);
+            let align = td.get_abi_alignment(&elem_llvm_ty).max(1);
+            (vals, elem_llvm_ty, elem_size, align)
+        };
 
         let count = elements.len() as u64;
         let count_val = i64_ty.const_int(count, false);
-        let elem_val = vals[0];
-        let elem_ty = elem_val.get_type();
-        let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
-        let elem_size = td.get_bit_size(&elem_ty) / 8;
-        let elem_size = elem_size.max(1);
         let total_size = count * elem_size;
 
         let raw_ptr = if let Some(reg) = self.dest_region.or(self.region_ptr) {
@@ -2852,11 +2956,17 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 self.fn_val,
                 reg,
                 total_size,
-                td.get_abi_alignment(&elem_ty).max(1) as u64,
+                align as u64,
             )?
         } else {
-            let arr_ty = elem_ty.array_type(count as u32);
-            self.builder.build_alloca(arr_ty, "arr_init").map_err(|e| e.to_string())?
+            let arr_ty = elem_llvm_ty.array_type(count as u32);
+            let alloca = self.builder.build_alloca(arr_ty, "arr_init").map_err(|e| e.to_string())?;
+            if align > 1 {
+                if let Some(inst) = alloca.as_instruction() {
+                    let _ = inst.set_alignment(align);
+                }
+            }
+            alloca
         };
 
         let raw_int = self.builder.build_ptr_to_int(raw_ptr, i64_ty, "raw_int").map_err(|e| e.to_string())?;

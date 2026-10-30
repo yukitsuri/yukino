@@ -1028,8 +1028,10 @@ fn cfun_decl_to_sig(decl: &yukic_ast::CfunDecl) -> FnSig {
 
 fn struct_decl_to_def(decl: &yukic_ast::StructDecl) -> yukic_types::StructDef {
     let mut fields = std::collections::HashMap::new();
+    let mut field_names = Vec::new();
     for f in &decl.fields {
         fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+        field_names.push(f.name.name.clone());
     }
     let mut methods = std::collections::HashMap::new();
     for method in &decl.methods {
@@ -1059,6 +1061,7 @@ fn struct_decl_to_def(decl: &yukic_ast::StructDecl) -> yukic_types::StructDef {
     }
     yukic_types::StructDef {
         fields,
+        field_names,
         methods,
     }
 }
@@ -1149,11 +1152,14 @@ fn collect_externc_signatures(
             }
             yukic_ast::ExterncItem::Cstruct(decl) => {
                 let mut fields = std::collections::HashMap::new();
+                let mut field_names = Vec::new();
                 for f in &decl.fields {
                     fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                    field_names.push(f.name.name.clone());
                 }
                 let def = yukic_types::StructDef {
                     fields,
+                    field_names,
                     methods: std::collections::HashMap::new(),
                 };
                 sigs.structs.insert(decl.name.name.clone(), def.clone());

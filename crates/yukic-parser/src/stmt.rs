@@ -75,6 +75,11 @@ impl TokenStream<'_> {
                     ExprKind::ArrayAlloc(elem_ty.clone(), size),
                     t.span,
                 )
+            } else if let TypeNodeKind::Array(_, None) = t.kind {
+                Expr::new(
+                    ExprKind::ArrayInit(Vec::new()),
+                    t.span,
+                )
             } else {
                 self.expect_token(&TokenKind::Eq, "'=' in set statement");
                 self.parse_expr()

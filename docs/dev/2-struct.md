@@ -149,7 +149,7 @@ Before source code is parsed, three foundational crates supply essential shared 
 - **`crates/yukic-parser`**:
   - Entry point: `crates/yukic-parser/src/lib.rs:33` (`Parser::parse_module`).
   - Consumes tokens via `stream.rs:20` (`TokenStream`).
-  - Parses top-level declarations in `item.rs:16` (`parse_module`), blocks and statements in `stmt.rs:12` (`parse_stmt`), expressions in `expr.rs:15` (`parse_expr_with_bp`) using Pratt precedence table in `prec.rs:11`, and type annotations in `types.rs:12` (`parse_type`).
+  - Parses top-level declarations in `item.rs:16` (`parse_module`), blocks and statements in `stmt.rs:12` (`parse_stmt`, including `set x: T[]` without initializer defaulting to an empty dynamic array), expressions in `expr.rs:15` (`parse_expr_with_bp`) using Pratt precedence table in `prec.rs:11`, and type annotations in `types.rs:12` (`parse_type`).
   - Error recovery synchronization is in `recovery.rs`.
   - Output: `yukic_ast::Module`.
 
@@ -182,7 +182,10 @@ Before source code is parsed, three foundational crates supply essential shared 
 - **`crates/yukic-types`**:
   - Called from `crates/yukic-driver/src/pipeline.rs:1014` (`run_type_check_pass`).
   - Entry point: `crates/yukic-types/src/checker.rs:33` (`TypeChecker::check_module`).
-  - Type environment and definitions: `env.rs:48` (`TypeEnv`, `FnSig`, `ClassDef`, `StructDef`).
+  - Type environment and definitions: `env.rs:48` (`TypeEnv`, `FnSig`, `ClassDef`, `StructDef` with preserved `field_names`).
+  - Struct declaration and literal validation: `checker.rs` verifies uniqueness of field names in declarations (`E0304`) and performs comprehensive struct literal checking in `check_struct_init` (validates existence `E0305`, missing fields, unknown fields, duplicate fields, and field type mismatches `E0401`).
+  - Arithmetic expression float propagation: `checker.rs` propagates expected floating-point types (`float32`/`float64`) down into binary arithmetic expressions (`+`, `-`, `*`, `/`, `%`, `**`), allowing integer literal operands to coerce into floats.
+  - Loop type checking and method call diagnostics: checker.rs validates control flow in while, loop, and or loops, verifying conditions and scoped block bodies, and adds contextual diagnostic notes (E0403) when methods are called on function types or enclosing functions.
   - Syntactic to semantic type conversions: `convert.rs:14` (`ast_type_to_type`).
   - Method Resolution Order (MRO) for inheritance: `mro.rs:14` (`MethodResolution::resolve_method`).
   - Pattern match exhaustiveness: `exhaust.rs:12` (`ExhaustivenessChecker::check_switch`).

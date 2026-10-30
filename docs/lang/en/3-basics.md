@@ -42,6 +42,9 @@ set title = "Yukino"         // string
 // Explicit type specification
 set buffer_size: int64 = 4096
 set scale: float32 = 1.5
+
+// Dynamic arrays can be declared without "= []"
+set items: int64[]
 ```
 
 An integer literal without a suffix is inferred as `int64` by default, and a fractional one as `float64`. A literal with a `u` suffix (`u8`..`u64`) becomes unsigned and is inferred as `uint64`; the `i8`..`i64` and `f32`/`f64` suffixes are recognized by the compiler but do not affect the default inferred type. With an explicit type annotation, the literal is coerced to it if the value fits into the type's range.
@@ -140,6 +143,9 @@ set quot = 20 / 3            // 6 (integer division)
 set rem = 20 % 3             // 2
 set pwr = 2 ** 4             // 16
 set neg = -pwr               // -16
+
+// When a float is expected by context, integer literals are coerced to float:
+set half: float32 = 5 / 2    // 2.5 (floating-point division)
 ```
 
 ### 3.2 Bitwise operators

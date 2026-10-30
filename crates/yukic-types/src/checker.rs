@@ -18,6 +18,7 @@ pub struct TypeChecker {
     pub diagnostics: Vec<Diagnostic>,
     current_return_type: Option<Type>,
     pub current_class: Option<String>,
+    pub current_fn_name: Option<String>,
     pub target: yukic_target::TargetTriple,
 }
 
@@ -32,6 +33,7 @@ impl TypeChecker {
             diagnostics: Vec::new(),
             current_return_type: None,
             current_class: None,
+            current_fn_name: None,
             target,
         }
     }
@@ -338,8 +340,15 @@ impl TypeChecker {
     fn register_struct(&mut self, decl: &StructDecl) {
         let mut def = StructDef::default();
         for field in &decl.fields {
-            def.fields
-                .insert(field.name.name.clone(), ast_type_to_type(&field.ty));
+            if def.fields.insert(field.name.name.clone(), ast_type_to_type(&field.ty)).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    ErrorCode::E0304,
+                    format!("field '{}' declared multiple times in struct '{}'", field.name.name, decl.name.name),
+                    field.name.span,
+                ));
+            } else {
+                def.field_names.push(field.name.name.clone());
+            }
         }
         for method in &decl.methods {
             let params = method
@@ -357,14 +366,20 @@ impl TypeChecker {
                 .return_type
                 .as_ref()
                 .map_or(Type::Void, ast_type_to_type);
-            def.methods.insert(
+            if def.methods.insert(
                 method.name.name.clone(),
                 FnSig {
                     params,
                     ret,
                     is_cfun: false,
                 },
-            );
+            ).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    ErrorCode::E0304,
+                    format!("method '{}' declared multiple times in struct '{}'", method.name.name, decl.name.name),
+                    method.name.span,
+                ));
+            }
         }
         self.env.register_struct(decl.name.name.clone(), def);
     }
@@ -372,8 +387,15 @@ impl TypeChecker {
     fn register_cstruct(&mut self, decl: &CstructDecl) {
         let mut def = StructDef::default();
         for field in &decl.fields {
-            def.fields
-                .insert(field.name.name.clone(), ast_type_to_type(&field.ty));
+            if def.fields.insert(field.name.name.clone(), ast_type_to_type(&field.ty)).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    ErrorCode::E0304,
+                    format!("field '{}' declared multiple times in struct '{}'", field.name.name, decl.name.name),
+                    field.name.span,
+                ));
+            } else {
+                def.field_names.push(field.name.name.clone());
+            }
         }
         self.env.register_struct(decl.name.name.clone(), def);
     }
@@ -446,6 +468,9 @@ impl TypeChecker {
 
     fn check_static_item(&mut self, decl: &StaticDecl) {
         if let Some(type_node) = &decl.ty {
+            if self.validate_fixed_array_size(type_node, &decl.init).is_err() {
+                return;
+            }
             let expected = self.resolve_type_node(type_node);
             if let Err(diag) = self.check_expr(&decl.init, &expected) {
                 self.diagnostics.push(diag);
@@ -456,6 +481,7 @@ impl TypeChecker {
     }
 
     fn check_fun(&mut self, decl: &FunDecl) {
+        let prev_fn = self.current_fn_name.replace(decl.name.name.clone());
         let ret = decl
             .return_type
             .as_ref()
@@ -482,9 +508,11 @@ impl TypeChecker {
         );
         self.env.pop_scope();
         self.current_return_type = None;
+        self.current_fn_name = prev_fn;
     }
 
     fn check_cfun_body(&mut self, decl: &CfunDecl, body: &Block) {
+        let prev_fn = self.current_fn_name.replace(decl.name.name.clone());
         let ret = decl
             .return_type
             .as_ref()
@@ -505,6 +533,7 @@ impl TypeChecker {
         );
         self.env.pop_scope();
         self.current_return_type = None;
+        self.current_fn_name = prev_fn;
     }
 
     fn check_class_bodies(&mut self, decl: &ClassDecl) {
@@ -573,6 +602,7 @@ impl TypeChecker {
     }
 
     fn check_method(&mut self, decl: &ClassDecl, method: &MethodDecl) {
+        let prev_fn = self.current_fn_name.replace(method.name.name.clone());
         self.validate_operator_method(method);
         let ret = method
             .return_type
@@ -609,6 +639,7 @@ impl TypeChecker {
         );
         self.env.pop_scope();
         self.current_return_type = None;
+        self.current_fn_name = prev_fn;
     }
 
     pub fn check_block(
@@ -692,10 +723,39 @@ impl TypeChecker {
         self.diagnostics.push(diag);
     }
 
+    fn validate_fixed_array_size(
+        &mut self,
+        type_node: &TypeNode,
+        init: &Expr,
+    ) -> Result<(), Diagnostic> {
+        if let TypeNodeKind::Array(elem_ty, Some(expected_size)) = &type_node.kind {
+            if let ExprKind::ArrayInit(elems) = &init.kind {
+                if elems.len() != *expected_size {
+                    let diag = Diagnostic::error(
+                        ErrorCode::E0401,
+                        format!(
+                            "fixed-size array size mismatch: expected {} elements, found {}",
+                            expected_size,
+                            elems.len()
+                        ),
+                        init.span,
+                    )
+                    .with_note(format!(
+                        "the array type `{elem_ty}[{expected_size}]` specifies exactly {expected_size} elements"
+                    ));
+                    self.diagnostics.push(diag.clone());
+                    return Err(diag);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), Diagnostic> {
         match &stmt.kind {
             StmtKind::Set { target, ty, init } => {
                 let init_ty = if let Some(type_node) = ty {
+                    self.validate_fixed_array_size(type_node, init)?;
                     let expected = self.resolve_type_node(type_node);
                     self.check_expr(init, &expected)?
                 } else {
@@ -721,6 +781,7 @@ impl TypeChecker {
             }
             StmtKind::Static(decl) => {
                 let init_ty = if let Some(type_node) = &decl.ty {
+                    self.validate_fixed_array_size(type_node, &decl.init)?;
                     let expected = self.resolve_type_node(type_node);
                     self.check_expr(&decl.init, &expected)?
                 } else {
@@ -883,6 +944,14 @@ impl TypeChecker {
             }
         }
 
+        if let ExprKind::Binary(op, left, right) = &expr.kind {
+            if expected.is_float() && matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem | BinaryOp::Pow) {
+                self.check_expr(left, expected)?;
+                self.check_expr(right, expected)?;
+                return Ok(expected.clone());
+            }
+        }
+
         if let (ExprKind::ArrayInit(elems), Type::Array(elem_ty)) = (&expr.kind, expected) {
             for elem in elems {
                 self.check_expr(elem, elem_ty)?;
@@ -913,13 +982,19 @@ impl TypeChecker {
             }
         }
 
-        if let (ExprKind::StructInit(name, fields), Type::Struct(expected_name)) = (&expr.kind, expected) {
-            if name.name == *expected_name {
-                for f in fields {
-                    self.infer_expr(&f.value)?;
-                }
+        if let ExprKind::StructInit(name, fields) = &expr.kind {
+            let actual = self.check_struct_init(name, fields, expr.span)?;
+            let is_impl = |c: &str, i: &str| self.env.is_subclass_or_impl(c, i);
+            if actual.is_subtype_of(expected, &is_impl) {
                 return Ok(expected.clone());
             }
+            let diag = Diagnostic::error(
+                ErrorCode::E0401,
+                format!("type mismatch: expected `{expected}`, found `{actual}`"),
+                expr.span,
+            );
+            self.diagnostics.push(diag.clone());
+            return Err(diag);
         }
 
         if let (ExprKind::AnonymousFun(fun), Type::Fn { params: exp_params, ret: exp_ret, .. }) = (&expr.kind, expected) {
@@ -1035,6 +1110,7 @@ impl TypeChecker {
                 }
             }
             (LiteralValue::Float(_), ty) if ty.is_float() => Ok(Some(expected.clone())),
+            (LiteralValue::Int(_) | LiteralValue::UInt(_), ty) if ty.is_float() => Ok(Some(expected.clone())),
             (LiteralValue::String(_), Type::String) => Ok(Some(Type::String)),
             (LiteralValue::Bool(_), Type::Bool) => Ok(Some(Type::Bool)),
             (LiteralValue::Char(_), Type::Char) => Ok(Some(Type::Char)),
@@ -1139,10 +1215,7 @@ impl TypeChecker {
                 self.infer_slice_access(target, start.as_deref(), end.as_deref(), expr.span)
             }
             ExprKind::StructInit(name, fields) => {
-                for f in fields {
-                    self.infer_expr(&f.value)?;
-                }
-                Ok(Type::Struct(name.name.clone()))
+                self.check_struct_init(name, fields, expr.span)
             }
             ExprKind::ClassInit(callee, args) => {
                 self.infer_class_init(callee, args, expr.span)
@@ -1151,9 +1224,135 @@ impl TypeChecker {
             ExprKind::Lambda(params, body) => self.check_lambda(params, body, None, None, expr.span),
             ExprKind::Path(segments) => self.infer_path_expr(segments, expr.span),
             ExprKind::NamedArg(_, val) => self.infer_expr(val),
+            ExprKind::While { cond, body, .. } => {
+                self.check_expr(cond, &Type::Bool)?;
+                self.check_block(body, None)?;
+                Ok(Type::Void)
+            }
+            ExprKind::Loop { body, .. } => {
+                self.check_block(body, None)?;
+                Ok(Type::Void)
+            }
+            ExprKind::For {
+                index_var,
+                item_var,
+                iter,
+                body,
+                ..
+            } => {
+                let iter_ty = self.infer_expr(iter)?;
+                self.env.push_scope();
+                if let Some(idx) = index_var {
+                    self.env
+                        .insert_var(idx.name.clone(), Type::Int64, false, idx.span);
+                }
+                let item_ty = match &iter_ty {
+                    Type::Array(elem) => (**elem).clone(),
+                    _ => Type::Int64,
+                };
+                self.env
+                    .insert_var(item_var.name.clone(), item_ty, false, item_var.span);
+                let res = self.check_block(body, None);
+                self.env.pop_scope();
+                res?;
+                Ok(Type::Void)
+            }
             ExprKind::Error => Ok(Type::Error),
             _ => Ok(Type::Void),
         }
+    }
+
+    fn check_struct_init(
+        &mut self,
+        name: &Ident,
+        fields: &[FieldInit],
+        span: Span,
+    ) -> Result<Type, Diagnostic> {
+        let struct_def = match self.env.lookup_struct(&name.name) {
+            Some(def) => def.clone(),
+            None => {
+                let diag = Diagnostic::error(
+                    ErrorCode::E0305,
+                    format!("cannot find struct '{}' in this scope", name.name),
+                    name.span,
+                );
+                self.diagnostics.push(diag.clone());
+                return Err(diag);
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut first_err: Option<Diagnostic> = None;
+
+        for f in fields {
+            if !seen.insert(f.name.name.clone()) {
+                let diag = Diagnostic::error(
+                    ErrorCode::E0401,
+                    format!("field '{}' specified more than once in struct literal", f.name.name),
+                    f.name.span,
+                );
+                self.diagnostics.push(diag.clone());
+                if first_err.is_none() {
+                    first_err = Some(diag);
+                }
+                continue;
+            }
+
+            match struct_def.fields.get(&f.name.name) {
+                Some(expected_ty) => {
+                    if let Err(mut diag) = self.check_expr(&f.value, expected_ty) {
+                        let note = format!(
+                            "field '{}' of struct '{}' expects type '{}'",
+                            f.name.name, name.name, expected_ty
+                        );
+                        diag.notes.push(note.clone());
+                        if let Some(last) = self.diagnostics.last_mut() {
+                            if last.code.as_str() == "E0401" {
+                                last.notes.push(note);
+                            }
+                        }
+                        if first_err.is_none() {
+                            first_err = Some(diag);
+                        }
+                    }
+                }
+                None => {
+                    let diag = Diagnostic::error(
+                        ErrorCode::E0401,
+                        format!("struct '{}' has no field named '{}'", name.name, f.name.name),
+                        f.name.span,
+                    );
+                    self.diagnostics.push(diag.clone());
+                    if first_err.is_none() {
+                        first_err = Some(diag);
+                    }
+                }
+            }
+        }
+
+        let mut missing = Vec::new();
+        for field_name in &struct_def.field_names {
+            if !seen.contains(field_name) {
+                missing.push(field_name.as_str());
+            }
+        }
+        if !missing.is_empty() {
+            let diag = Diagnostic::error(
+                ErrorCode::E0401,
+                format!("missing field(s) in struct '{}': {}", name.name, missing.join(", ")),
+                span,
+            );
+            self.diagnostics.push(diag.clone());
+            if first_err.is_none() {
+                first_err = Some(diag);
+            }
+        }
+
+        if let Some(err) = first_err {
+            return Err(err);
+        }
+
+        Ok(Type::Struct(name.name.clone()))
     }
 
     fn check_anonymous_fun(
@@ -1509,7 +1708,13 @@ impl TypeChecker {
                 let unwrapped = t_left.unwrap_nullable();
                 Some(Type::union([unwrapped, t_right.clone()]))
             }
-            _ => None,
+            BinaryOp::Range | BinaryOp::RangeInclusive => {
+                if t_left.is_integer() && t_right.is_integer() {
+                    Some(Type::Int64)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -2285,7 +2490,7 @@ impl TypeChecker {
         {
             Ok(s) => s,
             Err(diag) => {
-                let final_diag = if is_super {
+                let mut final_diag = if is_super {
                     Diagnostic::error(
                         ErrorCode::E0416,
                         format!("invalid_super_call: method '{}' not found in superclass", method.name),
@@ -2294,6 +2499,20 @@ impl TypeChecker {
                 } else {
                     diag
                 };
+                if matches!(target_ty, Type::Fn { .. }) {
+                    if let ExprKind::Ident(target_id) = &target.kind {
+                        final_diag.notes.push(format!(
+                            "`{}` is a function, not an object instance; function types have no methods",
+                            target_id.name
+                        ));
+                        if self.current_fn_name.as_deref() == Some(target_id.name.as_str()) {
+                            final_diag.notes.push(format!(
+                                "`{}` refers to the enclosing function; did you mean to call `.{}` on a local instance instead?",
+                                target_id.name, method.name
+                            ));
+                        }
+                    }
+                }
                 self.diagnostics.push(final_diag.clone());
                 return Err(final_diag);
             }

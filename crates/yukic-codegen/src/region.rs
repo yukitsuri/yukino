@@ -120,7 +120,18 @@ impl<'ctx> RegionManager<'ctx> {
         llvm_ret: Option<BasicTypeEnum<'ctx>>,
         is_cfun: bool,
     ) -> (FunctionType<'ctx>, bool) {
-        let needs_dest = !is_cfun && Self::is_regional_type(return_type);
+        self.transform_function_type_with_dest(param_types, return_type, llvm_ret, is_cfun, false)
+    }
+
+    pub fn transform_function_type_with_dest(
+        &self,
+        param_types: &[BasicTypeEnum<'ctx>],
+        return_type: &Type,
+        llvm_ret: Option<BasicTypeEnum<'ctx>>,
+        is_cfun: bool,
+        has_regional_ref: bool,
+    ) -> (FunctionType<'ctx>, bool) {
+        let needs_dest = !is_cfun && (Self::is_regional_type(return_type) || has_regional_ref);
         let mut final_params = Vec::with_capacity(param_types.len() + 1);
 
         if needs_dest {

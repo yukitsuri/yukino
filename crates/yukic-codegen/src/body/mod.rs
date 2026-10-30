@@ -65,6 +65,11 @@ pub struct BodyCompiler<'a, 'ctx> {
     pub in_cleanup: bool,
     pub current_class: Option<String>,
     pub panic_strategy: String,
+    pub catch_dispatch_stack: Vec<BasicBlock<'ctx>>,
+    pub exc_slot: Option<PointerValue<'ctx>>,
+    pub pad_slot: Option<PointerValue<'ctx>>,
+    pub expected_expr_ty: Option<BasicTypeEnum<'ctx>>,
+    pub expected_sem_ty: Option<Type>,
 }
 
 impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
@@ -113,6 +118,11 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             in_cleanup: false,
             current_class: None,
             panic_strategy: "unwind".to_string(),
+            catch_dispatch_stack: Vec::new(),
+            exc_slot: None,
+            pad_slot: None,
+            expected_expr_ty: None,
+            expected_sem_ty: None,
         }
     }
 
@@ -343,6 +353,9 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 if let Some(l) = self.lookup_local(&id.name) {
                     if let Some(sem) = &l.semantic_ty { return Some(sem.clone()); }
                 }
+                if let Some(t) = self.registry.static_vars.get(&id.name) {
+                    return Some(t.clone());
+                }
                 self.registry.fn_types.get(&id.name).cloned()
             }
             ExprKind::This => self.current_class.as_ref().map(|c| Type::Class(c.clone())),
@@ -433,7 +446,7 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             ExprKind::InterpolatedString(_) => Some(Type::String),
             ExprKind::StructInit(name, _) => Some(Type::Struct(name.name.clone())),
             ExprKind::ArrayInit(elems) => {
-                let elem_ty = elems.first().and_then(|e| self.expr_semantic_ty(e)).unwrap_or(Type::Int32);
+                let elem_ty = elems.first().and_then(|e| self.expr_semantic_ty(e)).unwrap_or(Type::Int64);
                 Some(Type::Array(Box::new(elem_ty)))
             }
             ExprKind::ArrayAlloc(elem_ty, _) => {
@@ -441,8 +454,8 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             }
             ExprKind::Is(_, _) => Some(Type::Bool),
             ExprKind::Literal(lit) => match lit {
-                LiteralValue::Int(_) => Some(Type::Int32),
-                LiteralValue::UInt(_) => Some(Type::Uint32),
+                LiteralValue::Int(_) => Some(Type::Int64),
+                LiteralValue::UInt(_) => Some(Type::Uint64),
                 LiteralValue::Float(_) => Some(Type::Float64),
                 LiteralValue::Bool(_) => Some(Type::Bool),
                 LiteralValue::String(_) => Some(Type::String),
@@ -1041,6 +1054,13 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 } else {
                     Ok(val)
                 }
+            }
+            (BasicValueEnum::IntValue(iv), BasicTypeEnum::FloatType(ft)) => {
+                let flt = self
+                    .builder
+                    .build_signed_int_to_float(iv, ft, "sitofp")
+                    .map_err(|e| e.to_string())?;
+                Ok(flt.into())
             }
             (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
                 let src_w = iv.get_type().get_bit_width();
