@@ -379,7 +379,7 @@ The `my_codegen/lib.ykn` entry point contains the runner bootstrap code. Here is
 // my_codegen/my_codegen/lib.ykn
 load macrosdk: MacroRunner, MacroContext, TokenStream, token_stream
 
-fun expand_user_model(ctx: MacroContext, input: TokenStream) -> TokenStream {
+fun expand_user_model(ref ctx: MacroContext, input: TokenStream) -> TokenStream {
     set type_name = input.to_string()
     if type_name.len() == 0 {
         ctx.error("generate_user_model requires a struct name")
@@ -1129,7 +1129,7 @@ load macrosdk.context: MacroContext
 load macrosdk.runner: MacroRunner
 load std.io: println
 
-fun expand_trace(ctx: MacroContext, item_stream: TokenStream) -> TokenStream {
+fun expand_trace(ref ctx: MacroContext, item_stream: TokenStream) -> TokenStream {
     return token_stream("public fun logged_worker() -> int32 { return 100 }")
 }
 
@@ -1156,7 +1156,7 @@ load macrosdk.context: MacroContext
 load macrosdk.runner: MacroRunner
 load std.io: println
 
-fun expand_to_string(ctx: MacroContext, type_decl: TokenStream) -> TokenStream {
+fun expand_to_string(ref ctx: MacroContext, type_decl: TokenStream) -> TokenStream {
     return token_stream("public fun user_to_string(u: User) -> string { return \"User\" }")
 }
 
@@ -1182,7 +1182,7 @@ load macrosdk.tokens: TokenStream, token_stream
 load macrosdk.context: MacroContext
 load macrosdk.runner: MacroRunner
 
-fun expand_ping(ctx: MacroContext, in_stream: TokenStream) -> TokenStream {
+fun expand_ping(ref ctx: MacroContext, in_stream: TokenStream) -> TokenStream {
     return token_stream("println(\"pong\")")
 }
 
