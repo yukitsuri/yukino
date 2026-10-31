@@ -165,7 +165,7 @@ public class YamlScanner {
                         this.enqueue(YAML_TOK_INDENT, "", 0.0, false)
                     } elif indent < top_indent {
                         while this.indent_stack.len() > 1 && indent < this.indent_stack[this.indent_stack.len() - 1] {
-                            set _: int64 = this.indent_stack.pop()
+                            set _: int64? = this.indent_stack.pop()
                             this.enqueue(YAML_TOK_DEDENT, "", 0.0, false)
                         }
                     }
@@ -317,7 +317,7 @@ public class YamlScanner {
         // EOF: unwind remaining indents
         if this.indent_stack.len() > 1 {
             while this.indent_stack.len() > 1 {
-                set _: int64 = this.indent_stack.pop()
+                set _: int64? = this.indent_stack.pop()
                 this.enqueue(YAML_TOK_DEDENT, "", 0.0, false)
             }
         }

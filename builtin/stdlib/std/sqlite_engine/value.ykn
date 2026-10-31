@@ -5,14 +5,14 @@ public class SqliteValue {
     public int_val: int64
     public float_val: float64
     public str_val: string
-    public blob_val: uint8[]
+    public blob_val: bytes
 
     public fun init() {
         rewrite this.kind = SQLITE_NULL
         rewrite this.int_val = 0
         rewrite this.float_val = 0.0
         rewrite this.str_val = ""
-        rewrite this.blob_val = []
+        rewrite this.blob_val = cast("", "bytes")
     }
 
     public fun is_null() -> bool { return this.kind == SQLITE_NULL }
@@ -88,12 +88,11 @@ public class SqliteValue {
         return fallback
     }
 
-    public fun as_blob() -> uint8[] {
+    public fun as_blob() -> bytes {
         if this.kind == SQLITE_BLOB {
             return this.blob_val
         }
-        set empty: uint8[] = []
-        return empty
+        return cast("", "bytes")
     }
 }
 
@@ -128,7 +127,7 @@ public fun sqlite_text(val: string) -> SqliteValue {
     return sqlite_string(val)
 }
 
-public fun sqlite_blob(val: uint8[]) -> SqliteValue {
+public fun sqlite_blob(val: bytes) -> SqliteValue {
     set v = init SqliteValue()
     rewrite v.kind = SQLITE_BLOB
     rewrite v.blob_val = val

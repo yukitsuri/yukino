@@ -245,7 +245,7 @@ public class Url {
         set new_params: QueryParam[] = []
         for i in 0..this.query_params.len() {
             if this.query_params[i].key != key {
-                new_params.push(this.query_params[i].cp())
+                new_params.push(QueryParam { key: this.query_params[i].key.cp(), value: this.query_params[i].value.cp() })
             }
         }
         new_params.push(QueryParam { key: key, value: value })
@@ -260,7 +260,7 @@ public class Url {
         set new_params: QueryParam[] = []
         for i in 0..this.query_params.len() {
             if this.query_params[i].key != key {
-                new_params.push(this.query_params[i].cp())
+                new_params.push(QueryParam { key: this.query_params[i].key.cp(), value: this.query_params[i].value.cp() })
             }
         }
         rewrite this.query_params = new_params
@@ -274,7 +274,7 @@ public class Url {
         set new_params: QueryParam[] = []
         for i in 0..this.query_params.len() {
             if predicate(this.query_params[i].key.cp(), this.query_params[i].value.cp()) {
-                new_params.push(this.query_params[i].cp())
+                new_params.push(QueryParam { key: this.query_params[i].key.cp(), value: this.query_params[i].value.cp() })
             }
         }
         rewrite this.query_params = new_params
@@ -407,7 +407,7 @@ public class UrlBuilder {
         set new_params: QueryParam[] = []
         for i in 0..this._query_params.len() {
             if this._query_params[i].key != k {
-                new_params.push(this._query_params[i].cp())
+                new_params.push(QueryParam { key: this._query_params[i].key.cp(), value: this._query_params[i].value.cp() })
             }
         }
         new_params.push(QueryParam { key: k, value: v })
@@ -424,7 +424,7 @@ public class UrlBuilder {
         set new_params: QueryParam[] = []
         for i in 0..this._query_params.len() {
             if this._query_params[i].key != k {
-                new_params.push(this._query_params[i].cp())
+                new_params.push(QueryParam { key: this._query_params[i].key.cp(), value: this._query_params[i].value.cp() })
             }
         }
         rewrite this._query_params = new_params
