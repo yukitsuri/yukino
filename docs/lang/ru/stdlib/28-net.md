@@ -45,7 +45,7 @@ load std.net
   - UDP фабрика: `udp_bind`
   - TLS фабрики: `tls_connect`, `tls_accept`
   - HTTP фабрики ответов: `response_status`, `response_ok`, `response_text`, `response_json_str`, `response_html`, `response_json`, `response_not_found`, `response_error`, `status_reason`, `request_new`
-  - Кодек HTTP/1.1: `parse_request_str`, `parse_response_str`, `format_request`, `format_response`, `parse_request`, `parse_tls_request`, `parse_response`, `parse_tls_response`
+  - Кодек HTTP/1.1: `parse_request_str`, `parse_response_str`, `format_request`, `format_response`, `parse_request`, `parse_request_with_limit`, `parse_tls_request`, `parse_tls_request_with_limit`, `parse_response`, `parse_response_with_limit`, `parse_tls_response`, `parse_tls_response_with_limit`
   - Запросы requests: `get`, `http_get`, `post`, `http_post`, `post_json`, `http_post_json`, `put`, `http_put`, `delete`, `http_delete`, `patch`, `http_patch`, `head`, `http_head`, `http_client_default`
 
 Все перечисленные сущности также автоматически становятся доступны при загрузке всей стандартной библиотеки целиком: `load std`.
@@ -855,53 +855,101 @@ public fun parse_response_str(raw: string) -> HttpResponse
 
 ### 6.19 parse_request
 
-Читает и разбирает входящий HTTP-запрос непосредственно из потока `TcpStream`. Корректно считывает тело запроса фиксированной длины согласно заголовку `Content-Length`.
+Читает и разбирает входящий HTTP-запрос непосредственно из сетевого потока `TcpStream`. Корректно считывает тело запроса фиксированной длины согласно заголовку `Content-Length`. Если указан `max_body > 0`, проверяет заголовок `Content-Length` и фактически считываемый размер тела до аллокации и чтения из сокета; при превышении лимита немедленно прерывает чтение и вызывает панику.
 
 ```yukino
-public fun parse_request(ref stream: TcpStream) -> HttpRequest?
+public fun parse_request(ref stream: TcpStream, max_body: int64 = 0) -> HttpRequest?
 ```
 
 Возвращает разобранный `HttpRequest` либо `null`, если клиент закрыл соединение без передачи данных.
 
-Функция никогда не вызывает панику.
+При превышении предельного размера `max_body` вызывает панику со структурой `HttpError` (код `413`). При поврежденном или неполном заголовке вызывает панику со структурой `HttpError` (код `400`).
 
-### 6.20 parse_tls_request
+### 6.20 parse_request_with_limit
 
-Читает и разбирает входящий защищенный HTTP-запрос из сеанса `TlsStream`.
+Явный вариант функции `parse_request` с обязательным указанием предельного размера тела запроса в байтах.
 
 ```yukino
-public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest?
+public fun parse_request_with_limit(ref stream: TcpStream, max_body: int64) -> HttpRequest?
+```
+
+Возвращает разобранный `HttpRequest` либо `null`, если клиент закрыл соединение без передачи данных.
+
+При превышении предельного размера `max_body` вызывает панику со структурой `HttpError` (код `413`).
+
+### 6.21 parse_tls_request
+
+Читает и разбирает входящий защищенный HTTP-запрос из сеанса `TlsStream`. Поддерживает ограничение предельного размера тела через `max_body`.
+
+```yukino
+public fun parse_tls_request(ref stream: TlsStream, max_body: int64 = 0) -> HttpRequest?
 ```
 
 Возвращает разобранный `HttpRequest` либо `null` при завершении соединения.
 
-Функция никогда не вызывает панику.
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`). При синтаксической ошибке заголовка вызывает панику с кодом `400`.
 
-### 6.21 parse_response
+### 6.22 parse_tls_request_with_limit
 
-Читает входящий HTTP-ответ из сетевого потока `TcpStream`.
+Явный вариант функции `parse_tls_request` с обязательным указанием предельного размера тела запроса в байтах.
 
 ```yukino
-public fun parse_response(ref stream: TcpStream) -> HttpResponse?
+public fun parse_tls_request_with_limit(ref stream: TlsStream, max_body: int64) -> HttpRequest?
+```
+
+Возвращает разобранный `HttpRequest` либо `null` при завершении соединения.
+
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`).
+
+### 6.23 parse_response
+
+Читает входящий HTTP-ответ из сетевого потока `TcpStream`. Поддерживает ограничение предельного размера тела ответа через `max_body`.
+
+```yukino
+public fun parse_response(ref stream: TcpStream, max_body: int64 = 0) -> HttpResponse?
 ```
 
 Возвращает прочитанный объект `HttpResponse` либо `null`, если удаленный сервер разорвал соединение.
 
-Функция никогда не вызывает панику.
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`). При некорректном заголовке ответа вызывает панику со структурой `HttpError` (код `502`).
 
-### 6.22 parse_tls_response
+### 6.24 parse_response_with_limit
 
-Читает входящий HTTP-ответ из защищенного сеанса `TlsStream`.
+Явный вариант функции `parse_response` с обязательным указанием предельного размера тела ответа в байтах.
 
 ```yukino
-public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse?
+public fun parse_response_with_limit(ref stream: TcpStream, max_body: int64) -> HttpResponse?
+```
+
+Возвращает прочитанный объект `HttpResponse` либо `null`, если сервер разорвал соединение.
+
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`).
+
+### 6.25 parse_tls_response
+
+Читает входящий HTTP-ответ из защищенного сеанса `TlsStream`. Поддерживает ограничение предельного размера тела через `max_body`.
+
+```yukino
+public fun parse_tls_response(ref stream: TlsStream, max_body: int64 = 0) -> HttpResponse?
 ```
 
 Возвращает прочитанный объект `HttpResponse` либо `null`, если сервер разорвал сеанс.
 
-Функция никогда не вызывает панику.
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`). При некорректном заголовке ответа вызывает панику со структурой `HttpError` (код `502`).
 
-### 6.23 format_request
+### 6.26 parse_tls_response_with_limit
+
+Явный вариант функции `parse_tls_response` с обязательным указанием предельного размера тела ответа в байтах.
+
+```yukino
+public fun parse_tls_response_with_limit(ref stream: TlsStream, max_body: int64) -> HttpResponse?
+```
+
+Возвращает прочитанный объект `HttpResponse` либо `null`, если сервер разорвал сеанс.
+
+При превышении `max_body` вызывает панику со структурой `HttpError` (код `413`).
+
+### 6.27 format_request
 
 Сериализует объект `HttpRequest` в канонический проводной формат HTTP/1.1 с автоматическим вычислением заголовков `Host` и `Content-Length`.
 
@@ -913,7 +961,7 @@ public fun format_request(req: HttpRequest, host: string = "") -> string
 
 Функция никогда не вызывает панику.
 
-### 6.24 format_response
+### 6.28 format_response
 
 Сериализует объект `HttpResponse` в проводной формат HTTP/1.1, формируя строку статуса с соответствующим `Reason-Phrase` и выставляя заголовок `Content-Length`.
 
@@ -925,7 +973,7 @@ public fun format_response(res: HttpResponse) -> string
 
 Функция никогда не вызывает панику.
 
-### 6.25 get / http_get
+### 6.29 get / http_get
 
 Выполняет высокоуровневый сетевой запрос метода GET по указанному URL (поддерживаются протоколы `http://` и `https://`).
 
@@ -947,7 +995,7 @@ println("Статус ответа: " + cast(resp.status, "string"))
 println("Тело:\n" + resp.body)
 ```
 
-### 6.26 post / http_post
+### 6.30 post / http_post
 
 Выполняет высокоуровневый сетевой запрос метода POST с передачей текстового тела `body`.
 
@@ -968,7 +1016,7 @@ set resp = post("http://httpbin.org/post", "hello from yukino")
 println("Код ответа: " + cast(resp.status, "string"))
 ```
 
-### 6.27 post_json / http_post_json
+### 6.31 post_json / http_post_json
 
 Сериализует переданное значение `JsonValue` и выполняет POST-запрос с автоматическим выставлением заголовка `Content-Type: application/json; charset=utf-8`.
 
@@ -981,7 +1029,7 @@ public fun http_post_json(url_str: string, json_val: JsonValue) -> HttpResponse
 
 При ошибке соединения вызывает панику со структурой `HttpError`.
 
-### 6.28 put / http_put
+### 6.32 put / http_put
 
 Выполняет HTTP-запрос метода PUT по указанному URL с телом `body`.
 
@@ -994,7 +1042,7 @@ public fun http_put(url_str: string, body: string) -> HttpResponse
 
 При сетевом сбое вызывает панику со структурой `HttpError`.
 
-### 6.29 delete / http_delete
+### 6.33 delete / http_delete
 
 Выполняет HTTP-запрос метода DELETE по указанному URL.
 
@@ -1007,7 +1055,7 @@ public fun http_delete(url_str: string) -> HttpResponse
 
 При ошибке сети вызывает панику со структурой `HttpError`.
 
-### 6.30 patch / http_patch
+### 6.34 patch / http_patch
 
 Выполняет HTTP-запрос метода PATCH с телом `body`.
 
@@ -1020,7 +1068,7 @@ public fun http_patch(url_str: string, body: string) -> HttpResponse
 
 При ошибке сети вызывает панику со структурой `HttpError`.
 
-### 6.31 head / http_head
+### 6.35 head / http_head
 
 Выполняет легковесный HTTP-запрос метода HEAD для проверки существования ресурса и считывания заголовков без передачи тела.
 
@@ -1033,7 +1081,7 @@ public fun http_head(url_str: string) -> HttpResponse
 
 При ошибке сети вызывает панику со структурой `HttpError`.
 
-### 6.32 http_client_default
+### 6.36 http_client_default
 
 Создает экземпляр клиента `HttpClient` со стандартным таймаутом 15 000 миллисекунд и включенной верификацией TLS-сертификатов.
 

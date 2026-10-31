@@ -21,6 +21,7 @@ This section lists libraries maintained and developed by the team at [yukitsuri]
 *Catalog:*
 
 [shareui/buildtool](https://github.com/shareui/buildtool): Compiles C/C++/Rust in a Yukino project.
+[shareui/clarity](https://github.com/shareui/clarity): A library for the declarative definition of CLI interfaces.
 
 ---
 
