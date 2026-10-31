@@ -45,7 +45,7 @@ Importing the module exposes the following entities:
   - UDP Factory: `udp_bind`
   - TLS Factories: `tls_connect`, `tls_accept`
   - HTTP Response Factories: `response_status`, `response_ok`, `response_text`, `response_json_str`, `response_html`, `response_json`, `response_not_found`, `response_error`, `status_reason`, `request_new`
-  - HTTP/1.1 Codec: `parse_request_str`, `parse_response_str`, `format_request`, `format_response`, `parse_request`, `parse_tls_request`, `parse_response`, `parse_tls_response`
+  - HTTP/1.1 Codec: `parse_request_str`, `parse_response_str`, `format_request`, `format_response`, `parse_request`, `parse_request_with_limit`, `parse_tls_request`, `parse_tls_request_with_limit`, `parse_response`, `parse_response_with_limit`, `parse_tls_response`, `parse_tls_response_with_limit`
   - Requests Client: `get`, `http_get`, `post`, `http_post`, `post_json`, `http_post_json`, `put`, `http_put`, `delete`, `http_delete`, `patch`, `http_patch`, `head`, `http_head`, `http_client_default`
 
 All listed entities are also automatically made available when loading the entire standard library: `load std`.
@@ -855,53 +855,101 @@ This function never panics.
 
 ### 6.19 parse_request
 
-Reads and parses an HTTP request directly from a `TcpStream`, reading fixed-length body payloads according to `Content-Length`.
+Reads and parses an incoming HTTP request directly from a `TcpStream`. Correctly reads fixed-length body payloads according to `Content-Length`. When `max_body > 0` is supplied, inspects the `Content-Length` header and consumed bytes before allocating and reading socket data; if the limit is exceeded, immediately panics.
 
 ```yukino
-public fun parse_request(ref stream: TcpStream) -> HttpRequest?
+public fun parse_request(ref stream: TcpStream, max_body: int64 = 0) -> HttpRequest?
 ```
 
 Returns a parsed `HttpRequest` or `null` if the connection is closed without data.
 
-This function never panics.
+Panics with `HttpError` (code `413`) if `max_body` is exceeded. Panics with `HttpError` (code `400`) if the request headers are malformed or incomplete.
 
-### 6.20 parse_tls_request
+### 6.20 parse_request_with_limit
 
-Reads and parses an HTTP request from an encrypted `TlsStream`.
+Explicit variant of `parse_request` with a mandatory maximum body size limit in bytes.
 
 ```yukino
-public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest?
+public fun parse_request_with_limit(ref stream: TcpStream, max_body: int64) -> HttpRequest?
+```
+
+Returns a parsed `HttpRequest` or `null` if the connection is closed.
+
+Panics with `HttpError` (code `413`) if `max_body` is exceeded.
+
+### 6.21 parse_tls_request
+
+Reads and parses an HTTP request from an encrypted `TlsStream`. Supports body size bounds via `max_body`.
+
+```yukino
+public fun parse_tls_request(ref stream: TlsStream, max_body: int64 = 0) -> HttpRequest?
 ```
 
 Returns a parsed `HttpRequest` or `null` upon connection termination.
 
-This function never panics.
+Panics with `HttpError` (code `413`) if `max_body` is exceeded. Panics with `HttpError` (code `400`) on malformed headers.
 
-### 6.21 parse_response
+### 6.22 parse_tls_request_with_limit
 
-Reads and parses an HTTP response from a `TcpStream`.
+Explicit variant of `parse_tls_request` with a mandatory maximum body size limit in bytes.
 
 ```yukino
-public fun parse_response(ref stream: TcpStream) -> HttpResponse?
+public fun parse_tls_request_with_limit(ref stream: TlsStream, max_body: int64) -> HttpRequest?
+```
+
+Returns a parsed `HttpRequest` or `null` upon connection termination.
+
+Panics with `HttpError` (code `413`) if `max_body` is exceeded.
+
+### 6.23 parse_response
+
+Reads and parses an HTTP response from a `TcpStream`. Supports response body size limits via `max_body`.
+
+```yukino
+public fun parse_response(ref stream: TcpStream, max_body: int64 = 0) -> HttpResponse?
 ```
 
 Returns an `HttpResponse` or `null` if the remote server closed the connection.
 
-This function never panics.
+Panics with `HttpError` (code `413`) if `max_body` is exceeded. Panics with `HttpError` (code `502`) on malformed headers.
 
-### 6.22 parse_tls_response
+### 6.24 parse_response_with_limit
 
-Reads and parses an HTTP response from an encrypted `TlsStream`.
+Explicit variant of `parse_response` with a mandatory maximum body size limit in bytes.
 
 ```yukino
-public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse?
+public fun parse_response_with_limit(ref stream: TcpStream, max_body: int64) -> HttpResponse?
+```
+
+Returns an `HttpResponse` or `null` if the remote server closed the connection.
+
+Panics with `HttpError` (code `413`) if `max_body` is exceeded.
+
+### 6.25 parse_tls_response
+
+Reads and parses an HTTP response from an encrypted `TlsStream`. Supports response body size limits via `max_body`.
+
+```yukino
+public fun parse_tls_response(ref stream: TlsStream, max_body: int64 = 0) -> HttpResponse?
 ```
 
 Returns an `HttpResponse` or `null` if the session was closed.
 
-This function never panics.
+Panics with `HttpError` (code `413`) if `max_body` is exceeded. Panics with `HttpError` (code `502`) on malformed headers.
 
-### 6.23 format_request
+### 6.26 parse_tls_response_with_limit
+
+Explicit variant of `parse_tls_response` with a mandatory maximum body size limit in bytes.
+
+```yukino
+public fun parse_tls_response_with_limit(ref stream: TlsStream, max_body: int64) -> HttpResponse?
+```
+
+Returns an `HttpResponse` or `null` if the session was closed.
+
+Panics with `HttpError` (code `413`) if `max_body` is exceeded.
+
+### 6.27 format_request
 
 Serializes an `HttpRequest` to HTTP/1.1 wire format, calculating `Host` and `Content-Length` headers.
 
@@ -913,7 +961,7 @@ Returns a request wire string of type `string`.
 
 This function never panics.
 
-### 6.24 format_response
+### 6.28 format_response
 
 Serializes an `HttpResponse` to HTTP/1.1 wire format with status reason phrase and `Content-Length`.
 
@@ -925,7 +973,7 @@ Returns a response wire string of type `string`.
 
 This function never panics.
 
-### 6.25 get / http_get
+### 6.29 get / http_get
 
 Sends an HTTP GET request to `url_str` (supports both `http://` and `https://`).
 
@@ -947,7 +995,7 @@ println("Status: " + cast(resp.status, "string"))
 println("Body:\n" + resp.body)
 ```
 
-### 6.26 post / http_post
+### 6.30 post / http_post
 
 Sends an HTTP POST request with string body `body`.
 
@@ -968,7 +1016,7 @@ set resp = post("http://httpbin.org/post", "hello from yukino")
 println("Response status: " + cast(resp.status, "string"))
 ```
 
-### 6.27 post_json / http_post_json
+### 6.31 post_json / http_post_json
 
 Serializes `JsonValue` and sends a POST request with `Content-Type: application/json; charset=utf-8`.
 
@@ -981,7 +1029,7 @@ Returns server `HttpResponse`.
 
 Panics with `HttpError` on failure.
 
-### 6.28 put / http_put
+### 6.32 put / http_put
 
 Sends an HTTP PUT request with string body `body`.
 
@@ -994,7 +1042,7 @@ Returns server `HttpResponse`.
 
 Panics with `HttpError` on failure.
 
-### 6.29 delete / http_delete
+### 6.33 delete / http_delete
 
 Sends an HTTP DELETE request.
 
@@ -1007,7 +1055,7 @@ Returns server `HttpResponse`.
 
 Panics with `HttpError` on failure.
 
-### 6.30 patch / http_patch
+### 6.34 patch / http_patch
 
 Sends an HTTP PATCH request with body `body`.
 
@@ -1020,7 +1068,7 @@ Returns server `HttpResponse`.
 
 Panics with `HttpError` on failure.
 
-### 6.31 head / http_head
+### 6.35 head / http_head
 
 Sends a lightweight HTTP HEAD request to check resource existence without downloading the body.
 
@@ -1033,7 +1081,7 @@ Returns server `HttpResponse`.
 
 Panics with `HttpError` on failure.
 
-### 6.32 http_client_default
+### 6.36 http_client_default
 
 Creates a new `HttpClient` with a default 15 000 ms timeout and TLS certificate verification enabled.
 

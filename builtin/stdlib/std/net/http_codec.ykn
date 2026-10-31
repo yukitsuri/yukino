@@ -118,41 +118,59 @@ public fun parse_response_str(raw: string) -> HttpResponse {
     return init HttpResponse(cast(code_val, "int32"), headers, body_part)
 }
 
-fun read_content_length_body_tcp(ref stream: TcpStream, headers: HttpHeaders, initial_body: string) -> string {
+fun read_content_length_body_tcp(ref stream: TcpStream, headers: HttpHeaders, initial_body: string, max_body: int64 = 0) -> string {
+    if max_body > 0 && initial_body.len() > max_body {
+        panic(HttpError { message: "payload too large", code: 413 })
+    }
     set cl_str = headers.get("Content-Length")
     if cl_str == null { return initial_body }
     set cl_non_null = cl_str ?? ""
     set cl_val: int64 = 0
     set ok = yukistd_str_parse_i64(cl_non_null.as_ptr(), cl_non_null.len(), ptr_of(cl_val))
     if !ok || cl_val <= 0 { return initial_body }
+    if max_body > 0 && cl_val > max_body {
+        panic(HttpError { message: "payload too large", code: 413 })
+    }
     set cur = initial_body
     while cur.len() < cl_val {
         set chunk = stream.read(65536)
         if chunk.len() == 0 { break }
         rewrite cur = cur + chunk
+        if max_body > 0 && cur.len() > max_body {
+            panic(HttpError { message: "payload too large", code: 413 })
+        }
     }
     return cur
 }
 
-fun read_content_length_body_tls(ref stream: TlsStream, headers: HttpHeaders, initial_body: string) -> string {
+fun read_content_length_body_tls(ref stream: TlsStream, headers: HttpHeaders, initial_body: string, max_body: int64 = 0) -> string {
+    if max_body > 0 && initial_body.len() > max_body {
+        panic(HttpError { message: "payload too large", code: 413 })
+    }
     set cl_str = headers.get("Content-Length")
     if cl_str == null { return initial_body }
     set cl_non_null = cl_str ?? ""
     set cl_val: int64 = 0
     set ok = yukistd_str_parse_i64(cl_non_null.as_ptr(), cl_non_null.len(), ptr_of(cl_val))
     if !ok || cl_val <= 0 { return initial_body }
+    if max_body > 0 && cl_val > max_body {
+        panic(HttpError { message: "payload too large", code: 413 })
+    }
     set cur = initial_body
     while cur.len() < cl_val {
         set chunk = stream.read(65536)
         if chunk.len() == 0 { break }
         rewrite cur = cur + chunk
+        if max_body > 0 && cur.len() > max_body {
+            panic(HttpError { message: "payload too large", code: 413 })
+        }
     }
     return cur
 }
 
-public fun parse_request(ref stream: TcpStream) -> HttpRequest? {
+public fun parse_request(ref stream: TcpStream, max_body: int64 = 0) -> HttpRequest? {
     set buf = ""
-    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
+    while index_of(buf, "\r\n\r\n") == null {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -161,14 +179,18 @@ public fun parse_request(ref stream: TcpStream) -> HttpRequest? {
         rewrite buf = buf + chunk
     }
     set req = parse_request_str(buf)
-    set complete_body = read_content_length_body_tcp(ref stream, req.headers, req.body)
+    set complete_body = read_content_length_body_tcp(ref stream, req.headers, req.body, max_body)
     rewrite req.body = complete_body
     return req
 }
 
-public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest? {
+public fun parse_request_with_limit(ref stream: TcpStream, max_body: int64) -> HttpRequest? {
+    return parse_request(ref stream, max_body)
+}
+
+public fun parse_tls_request(ref stream: TlsStream, max_body: int64 = 0) -> HttpRequest? {
     set buf = ""
-    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
+    while index_of(buf, "\r\n\r\n") == null {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -177,14 +199,18 @@ public fun parse_tls_request(ref stream: TlsStream) -> HttpRequest? {
         rewrite buf = buf + chunk
     }
     set req = parse_request_str(buf)
-    set complete_body = read_content_length_body_tls(ref stream, req.headers, req.body)
+    set complete_body = read_content_length_body_tls(ref stream, req.headers, req.body, max_body)
     rewrite req.body = complete_body
     return req
 }
 
-public fun parse_response(ref stream: TcpStream) -> HttpResponse? {
+public fun parse_tls_request_with_limit(ref stream: TlsStream, max_body: int64) -> HttpRequest? {
+    return parse_tls_request(ref stream, max_body)
+}
+
+public fun parse_response(ref stream: TcpStream, max_body: int64 = 0) -> HttpResponse? {
     set buf = ""
-    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
+    while index_of(buf, "\r\n\r\n") == null {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -193,14 +219,18 @@ public fun parse_response(ref stream: TcpStream) -> HttpResponse? {
         rewrite buf = buf + chunk
     }
     set res = parse_response_str(buf)
-    set complete_body = read_content_length_body_tcp(ref stream, res.headers, res.body)
+    set complete_body = read_content_length_body_tcp(ref stream, res.headers, res.body, max_body)
     rewrite res.body = complete_body
     return res
 }
 
-public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse? {
+public fun parse_response_with_limit(ref stream: TcpStream, max_body: int64) -> HttpResponse? {
+    return parse_response(ref stream, max_body)
+}
+
+public fun parse_tls_response(ref stream: TlsStream, max_body: int64 = 0) -> HttpResponse? {
     set buf = ""
-    while (index_of(buf, "\r\n\r\n") ?? -1) < 0 {
+    while index_of(buf, "\r\n\r\n") == null {
         set chunk = stream.read(4096)
         if chunk.len() == 0 {
             if buf.len() == 0 { return null }
@@ -209,7 +239,11 @@ public fun parse_tls_response(ref stream: TlsStream) -> HttpResponse? {
         rewrite buf = buf + chunk
     }
     set res = parse_response_str(buf)
-    set complete_body = read_content_length_body_tls(ref stream, res.headers, res.body)
+    set complete_body = read_content_length_body_tls(ref stream, res.headers, res.body, max_body)
     rewrite res.body = complete_body
     return res
+}
+
+public fun parse_tls_response_with_limit(ref stream: TlsStream, max_body: int64) -> HttpResponse? {
+    return parse_tls_response(ref stream, max_body)
 }

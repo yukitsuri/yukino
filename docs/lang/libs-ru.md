@@ -21,6 +21,7 @@ Yukino — это экспериментальный проект одного �
 *Список:*
 
 [shareui/buildtool](https://github.com/shareui/buildtool): Компиляция С/С++/Rust кода в проектах Yukino.
+[shareui/clarity](https://github.com/shareui/clarity): Библиотека для декларативного описания CLI интерфейсов.
 
 ---
 
