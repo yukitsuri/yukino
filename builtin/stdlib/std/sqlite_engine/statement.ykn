@@ -72,7 +72,10 @@ public class SqliteStatement {
             } elif ctype == SQLITE_BLOB {
                 set b_len: int64 = 0
                 set b_p = yukistd_sqlite_column_blob(this.handle, col, ptr_of(b_len))
-                set b_val: uint8[] = if b_p != null && b_len > 0 { from_raw_parts(b_p, b_len, b_len) } else { [] }
+                set b_val: bytes = cast("", "bytes")
+                if b_p != null && b_len > 0 {
+                    rewrite b_val = from_raw_parts(b_p, b_len, b_len)
+                }
                 vals.push(sqlite_blob(b_val))
             } else {
                 vals.push(sqlite_null())
@@ -140,7 +143,7 @@ public class SqliteStatement {
         }
     }
 
-    public fun bind_blob(index: int32, val: uint8[]) {
+    public fun bind_blob(index: int32, val: bytes) {
         if this.is_finalized || this.handle == null {
             panic(SqliteError { message: "cannot bind on finalized statement", code: 1 })
         }

@@ -125,7 +125,7 @@ public fun bithash64_u64_to_hex(val: uint64) -> string {
     set hex_chars = "0123456789abcdef"
     set res: string = ""
     for i in 0..16 {
-        set shift = (15 - i) * 4
+        set shift: uint64 = cast((15 - i) * 4, "uint64")
         set nibble = cast((val >> shift) & 15u64, "int64")
         rewrite res = res + hex_chars[nibble..nibble + 1]
     }

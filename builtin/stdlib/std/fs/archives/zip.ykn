@@ -200,9 +200,15 @@ public fun zip_pack_with_password(archive_path: string, paths: string[], passwor
                 rewrite uncomp_data = cast(file_read_text(item), "bytes")
             }
             set uncomp_size = cast(uncomp_data.len(), "uint32")
-            set uncomp_crc: uint32 = if is_dir { 0u32 } else { crc32(uncomp_data.cp()) }
+            set uncomp_crc: uint32 = 0u32
+            if !is_dir {
+                rewrite uncomp_crc = crc32(uncomp_data.cp())
+            }
             set comp_data: bytes = uncomp_data.cp()
-            set use_method: uint16 = if is_dir { 0u16 } else { method }
+            set use_method: uint16 = method
+            if is_dir {
+                rewrite use_method = 0u16
+            }
             if use_method == 8u16 && !is_dir {
                 rewrite comp_data = deflate_compress(uncomp_data)
             }
@@ -211,7 +217,7 @@ public fun zip_pack_with_password(archive_path: string, paths: string[], passwor
                 set enc_header: uint8[12]
                 for i in 0..11 { rewrite enc_header[i] = 88u8 }
                 set header_bytes: bytes = from_raw_parts(enc_header.as_ptr(), 12, 12)
-                set combined_payload: bytes = cast(header_bytes + comp_data, "bytes")
+                set combined_payload: bytes = cast(cast(header_bytes, "string") + cast(comp_data, "string"), "bytes")
                 rewrite comp_data = zipcrypto_encrypt(password.cp(), combined_payload)
             }
             set comp_size = cast(comp_data.len(), "uint32")
@@ -291,7 +297,10 @@ public fun zip_pack_with_password(archive_path: string, paths: string[], passwor
             rewrite cd_hdr[35] = 0u8
             rewrite cd_hdr[36] = 0u8
             rewrite cd_hdr[37] = 0u8
-            set ext_attr: uint32 = if is_dir { 1106051088u32 } else { 2175008768u32 }
+            set ext_attr: uint32 = 2175008768u32
+            if is_dir {
+                rewrite ext_attr = 1106051088u32
+            }
             rewrite cd_hdr[38] = cast(ext_attr & 255u32, "uint8")
             rewrite cd_hdr[39] = cast((ext_attr >> 8) & 255u32, "uint8")
             rewrite cd_hdr[40] = cast((ext_attr >> 16) & 255u32, "uint8")
