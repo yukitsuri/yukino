@@ -23,7 +23,7 @@ All public components from submodules `paths`, `dirs`, `files`, `defaults`, and 
 - **Path Operations (`paths`):**
   - Separators: `path_separator`, `path_is_separator`
   - Validation: `path_is_absolute`, `path_is_relative`, `path_exists`, `path_is_file`, `path_is_dir`, `path_is_symlink`
-  - Joining: `path_join`, `path_join3`
+  - Joining: `path_join`
   - Component analysis: `path_parent`, `path_file_name`, `path_file_stem`, `path_extension`, `path_has_extension`
   - Modification: `path_with_extension`
   - Canonicalization: `path_canonicalize`
@@ -329,7 +329,7 @@ Returns the path separator string used by the standard library.
 public fun path_separator() -> string
 ```
 
-Returns the string `"/"`. In the current implementation the standard library uses the forward slash as the separator on every platform, including Windows. This function never returns null.
+Returns the platform-specific path component separator for the target platform (the string `"\\"` on Windows and `"/"` on all other platforms). Resolved at compile time via the `get_target!()` macro. This function never returns null.
 
 This function never panics.
 
@@ -482,13 +482,13 @@ println("Is symlink: ${is_link}")
 
 ### 4.9 path_join
 
-Joins two path components, inserting the `/` separator when needed.
+Joins an arbitrary number of file path segments into a unified path string, correctly normalizing separators.
 
 ```yukino
-public fun path_join(a: string, b: string) -> string
+public fun path_join(...parts: string) -> string
 ```
 
-Returns the joined path. If `b` is already an absolute path, `b` is returned unchanged. If either string is empty, the other string is returned unchanged. A duplicated separator at the junction is not repeated. This function never returns null.
+Accepts a variadic number of path segments (`...parts: string`). If no arguments are passed, returns an empty string `""`. When passed a single argument, returns it. Empty segments are skipped automatically. If any subsequent segment is an absolute path (`path_is_absolute`), all previously accumulated segments are discarded and joining starts anew from that absolute path. Redundant separators and extraneous relative markers (`./`) at boundaries are cleaned without repeating slashes, preserving root paths (`/`, `\`, `C:\`, `C:/`). This function never returns null.
 
 This function never panics.
 
@@ -498,29 +498,15 @@ load std.io: println
 
 set joined = path_join("src", "main.ykn")
 println(joined) // "src/main.ykn"
-```
 
-### 4.10 path_join3
-
-Joins three sequential path segments into a unified path string by applying `path_join` sequentially.
-
-```yukino
-public fun path_join3(a: string, b: string, c: string) -> string
-```
-
-Returns the joined path as a `string`. This function never returns null.
-
-This function never panics.
-
-```yukino
-load std.fs.paths: path_join3
-load std.io: println
-
-set full = path_join3("var", "log", "audit.log")
+set full = path_join("var", "log", "audit.log")
 println(full) // "var/log/audit.log"
+
+set reset = path_join("base", "dir", "/etc/hosts")
+println(reset) // "/etc/hosts"
 ```
 
-### 4.11 path_parent
+### 4.10 path_parent
 
 Calculates the parent directory path for the given path string.
 
@@ -540,7 +526,7 @@ set parent = path_parent("/home/user/document.txt")
 println("Parent directory: ${parent}") // "/home/user"
 ```
 
-### 4.12 path_file_name
+### 4.11 path_file_name
 
 Extracts the filename or trailing segment of the path.
 
@@ -560,7 +546,7 @@ set name = path_file_name("/home/user/report.pdf")
 println("Filename: ${name}") // "report.pdf"
 ```
 
-### 4.13 path_file_stem
+### 4.12 path_file_stem
 
 Extracts the filename stem excluding the trailing extension and dot.
 
@@ -580,7 +566,7 @@ set stem = path_file_stem("archive.tar.gz")
 println("Stem: ${stem}") // "archive.tar"
 ```
 
-### 4.14 path_extension
+### 4.13 path_extension
 
 Extracts the file extension (all characters following the final dot).
 
@@ -600,7 +586,7 @@ set ext = path_extension("document.docx")
 println("Extension: ${ext}") // "docx"
 ```
 
-### 4.15 path_has_extension
+### 4.14 path_has_extension
 
 Checks whether the filename in the specified path contains an extension.
 
@@ -620,7 +606,7 @@ set has_ext = path_has_extension("build.sh")
 println("Has extension: ${has_ext}") // true
 ```
 
-### 4.16 path_with_extension
+### 4.15 path_with_extension
 
 Replaces an existing file extension or adds one if missing.
 
@@ -640,7 +626,7 @@ set updated = path_with_extension("image.jpeg", "png")
 println(updated) // "image.png"
 ```
 
-### 4.17 path_canonicalize
+### 4.16 path_canonicalize
 
 Resolves the path to its absolute canonical form by querying the filesystem (resolving symlinks and `.`/`..` segments).
 

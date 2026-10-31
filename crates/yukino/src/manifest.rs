@@ -133,7 +133,7 @@ pub fn generate_dynamic_lib_ykn() -> &'static str {
 }
 
 pub fn generate_macro_lib_ykn() -> &'static str {
-    "// procedural macro\nload macrosdk: MacroRunner, MacroContext, TokenStream, token_stream\n\nfun expand_macro(ctx: MacroContext, input: TokenStream) -> TokenStream {\n    return token_stream(\"// generated code\")\n}\n\nfun main() {\n    set runner = init MacroRunner()\n    set _ = runner.register(\"my_macro\", expand_macro)\n    set _ = runner.run()\n}\n"
+    "// procedural macro\nload macrosdk: MacroRunner, MacroContext, TokenStream, token_stream\n\nfun expand_macro(ref ctx: MacroContext, input: TokenStream) -> TokenStream {\n    return token_stream(\"// generated code\")\n}\n\nfun main() {\n    set runner = init MacroRunner()\n    set _ = runner.register(\"my_macro\", expand_macro)\n    set _ = runner.run()\n}\n"
 }
 
 pub fn generate_lib_ykn() -> &'static str { generate_static_lib_ykn() }

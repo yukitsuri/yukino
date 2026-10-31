@@ -16,7 +16,7 @@ cfun yukimacrosdk_write_response_json(
 ) -> int32
 cfun yukimacrosdk_free_buffer(ptr: ptr<uint8>, len: int64)
 
-public type MacroFn = fun(MacroContext, TokenStream) -> TokenStream
+public type MacroFn = fun(ref MacroContext, TokenStream) -> TokenStream
 
 fun format_tracked_files_json(files: string[]) -> string {
     set res = "["
@@ -139,7 +139,7 @@ public class MacroRunner {
         set ctx = init MacroContext(macro_name, working_dir, kind, attr_args)
         set in_stream = token_stream(input_tokens)
         set handler: MacroFn = this.handlers[handler_idx]
-        set out_stream: TokenStream = handler(ctx, in_stream)
+        set out_stream: TokenStream = handler(ref ctx, in_stream)
         set out_code = out_stream.to_string()
 
         set tf_json = format_tracked_files_json(ctx.tracked_files)

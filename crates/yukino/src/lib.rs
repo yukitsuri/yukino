@@ -3,6 +3,7 @@
 use std::io::IsTerminal;
 
 pub mod builder;
+pub mod clipboard;
 pub mod config;
 pub mod dashboard;
 pub mod features;
@@ -20,9 +21,9 @@ pub use builder::{BuildOptions, TestOptions, build_project, clean_project, test_
 pub use dashboard::BuildDashboard;
 
 pub use config::{
-    default_pool_threads, global_config_path, load_global_cthreads, load_global_full_lib_log,
-    load_global_macrotimeout, num_cpus, parse_cthreads_from_json, resolve_pool_threads,
-    set_macrotimeout,
+    default_pool_threads, global_config_path, load_global_copy_output_path, load_global_cthreads,
+    load_global_full_lib_log, load_global_macrotimeout, num_cpus, parse_cthreads_from_json,
+    resolve_pool_threads, set_copy_output_path, set_macrotimeout,
 };
 pub use pool::CompilationThreadPool;
 pub use project::{
