@@ -28,7 +28,10 @@ pub fn ast_type_to_type(node: &TypeNode) -> Type {
         TypeNodeKind::Fun(params, ret) => Type::Fn {
             params: params
                 .iter()
-                .map(|p| TypeParam::value(ast_type_to_type(p)))
+                .map(|p| match &p.kind {
+                    TypeNodeKind::Ref(inner) => TypeParam::new(ast_type_to_type(inner), true, false),
+                    _ => TypeParam::value(ast_type_to_type(p)),
+                })
                 .collect(),
             ret: Box::new(ast_type_to_type(ret)),
             is_cfun: false,
@@ -36,7 +39,10 @@ pub fn ast_type_to_type(node: &TypeNode) -> Type {
         TypeNodeKind::CFun(params, ret) => Type::Fn {
             params: params
                 .iter()
-                .map(|p| TypeParam::value(ast_type_to_type(p)))
+                .map(|p| match &p.kind {
+                    TypeNodeKind::Ref(inner) => TypeParam::new(ast_type_to_type(inner), true, false),
+                    _ => TypeParam::value(ast_type_to_type(p)),
+                })
                 .collect(),
             ret: Box::new(ast_type_to_type(ret)),
             is_cfun: true,

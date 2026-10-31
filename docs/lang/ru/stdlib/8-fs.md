@@ -23,7 +23,7 @@ load std.fs
 - **Функции работы с путями (`paths`):**
   - Разделители: `path_separator`, `path_is_separator`
   - Проверка пути: `path_is_absolute`, `path_is_relative`, `path_exists`, `path_is_file`, `path_is_dir`, `path_is_symlink`
-  - Объединение: `path_join`, `path_join3`
+  - Объединение: `path_join`
   - Анализ компонентов: `path_parent`, `path_file_name`, `path_file_stem`, `path_extension`, `path_has_extension`
   - Модификация: `path_with_extension`
   - Канонизация: `path_canonicalize`
@@ -329,7 +329,7 @@ println("Файл закрыт: ${is_closed}")
 public fun path_separator() -> string
 ```
 
-Возвращает строку `"/"`. В текущей реализации стандартная библиотека использует прямой слэш в качестве разделителя на всех платформах, включая Windows. Функция никогда не возвращает null.
+Возвращает системный разделитель компонентов пути для целевой платформы (строку `"\\"` для Windows и `"/"` для остальных платформ). Определяется во время компиляции через встроенный макрос `get_target!()`. Функция никогда не возвращает null.
 
 Функция никогда не паникует.
 
@@ -482,13 +482,13 @@ println("Символическая ссылка: ${is_link}")
 
 ### 4.9 path_join
 
-Объединяет два сегмента файлового пути, добавляя разделитель `/` при необходимости.
+Объединяет произвольное количество сегментов файлового пути в единый путь, корректно нормализуя разделители.
 
 ```yukino
-public fun path_join(a: string, b: string) -> string
+public fun path_join(...parts: string) -> string
 ```
 
-Возвращает объединенный путь. Если `b` является абсолютным путем, возвращается сам `b`. Если одна из строк пуста, возвращается вторая строка без изменений. Повторяющийся разделитель на стыке не дублируется. Функция никогда не возвращает null.
+Принимает вариативное количество аргументов (`...parts: string`). Если аргументы не переданы, возвращает пустую строку `""`. При передаче одного аргумента возвращает его. Пустые сегменты автоматически пропускаются. Если какой-либо последующий сегмент является абсолютным путем (`path_is_absolute`), все ранее накопленные сегменты сбрасываются и объединение начинается с этого абсолютного пути. Повторяющиеся разделители и лишние относительные маркеры (`./`) на стыках очищаются без дублирования слешей, сохраняя корневые пути (`/`, `\`, `C:\`, `C:/`). Функция никогда не возвращает null.
 
 Функция никогда не паникует.
 
@@ -498,29 +498,15 @@ load std.io: println
 
 set joined = path_join("src", "main.ykn")
 println(joined) // "src/main.ykn"
-```
 
-### 4.10 path_join3
-
-Объединяет три последовательных сегмента файлового пути в единую строку, последовательно применяя `path_join`.
-
-```yukino
-public fun path_join3(a: string, b: string, c: string) -> string
-```
-
-Возвращает результирующий объединенный путь как строку `string`. Функция никогда не возвращает null.
-
-Функция никогда не паникует.
-
-```yukino
-load std.fs.paths: path_join3
-load std.io: println
-
-set full = path_join3("var", "log", "audit.log")
+set full = path_join("var", "log", "audit.log")
 println(full) // "var/log/audit.log"
+
+set reset = path_join("base", "dir", "/etc/hosts")
+println(reset) // "/etc/hosts"
 ```
 
-### 4.11 path_parent
+### 4.10 path_parent
 
 Определяет путь к родительской директории для указанного пути.
 
@@ -540,7 +526,7 @@ set parent = path_parent("/home/user/document.txt")
 println("Родительский каталог: ${parent}") // "/home/user"
 ```
 
-### 4.12 path_file_name
+### 4.11 path_file_name
 
 Извлекает имя файла или последнего сегмента пути.
 
@@ -560,7 +546,7 @@ set name = path_file_name("/home/user/report.pdf")
 println("Имя файла: ${name}") // "report.pdf"
 ```
 
-### 4.13 path_file_stem
+### 4.12 path_file_stem
 
 Извлекает имя файла без завершающего расширения и точки.
 
@@ -580,7 +566,7 @@ set stem = path_file_stem("archive.tar.gz")
 println("Основа: ${stem}") // "archive.tar"
 ```
 
-### 4.14 path_extension
+### 4.13 path_extension
 
 Извлекает расширение файла (все символы после последней точки).
 
@@ -600,7 +586,7 @@ set ext = path_extension("document.docx")
 println("Расширение: ${ext}") // "docx"
 ```
 
-### 4.15 path_has_extension
+### 4.14 path_has_extension
 
 Проверяет наличие расширения у имени файла в указанном пути.
 
@@ -620,7 +606,7 @@ set has_ext = path_has_extension("build.sh")
 println("Имеет расширение: ${has_ext}") // true
 ```
 
-### 4.16 path_with_extension
+### 4.15 path_with_extension
 
 Заменяет существующее расширение файла на новое либо добавляет его, если расширение отсутствовало.
 
@@ -640,7 +626,7 @@ set updated = path_with_extension("image.jpeg", "png")
 println(updated) // "image.png"
 ```
 
-### 4.17 path_canonicalize
+### 4.16 path_canonicalize
 
 Преобразует путь в абсолютный канонический, обращаясь к файловой системе (разрешает символические ссылки и сегменты `.`/`..`).
 

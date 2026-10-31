@@ -107,6 +107,20 @@ pub fn parse_full_lib_log_from_json(json: &str) -> Option<bool> {
     }
 }
 
+pub fn parse_copy_output_path_from_json(json: &str) -> Option<bool> {
+    let val: serde_json::Value = serde_json::from_str(json).ok()?;
+    let item = val
+        .get("copy_output_path")
+        .or_else(|| val.get("copy-output-path"))?;
+    if let Some(b) = item.as_bool() {
+        Some(b)
+    } else if let Some(s) = item.as_str() {
+        s.parse::<bool>().ok()
+    } else {
+        None
+    }
+}
+
 pub fn load_global_cthreads() -> Option<usize> {
     let path = global_config_path();
     let content = fs::read_to_string(path).ok()?;
@@ -135,6 +149,14 @@ pub fn load_global_full_lib_log() -> bool {
         return false;
     };
     parse_full_lib_log_from_json(&content).unwrap_or(false)
+}
+
+pub fn load_global_copy_output_path() -> bool {
+    let path = global_config_path();
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+    parse_copy_output_path_from_json(&content).unwrap_or(false)
 }
 
 pub fn parse_macrotimeout_from_json(json: &str) -> Option<u64> {
@@ -249,9 +271,34 @@ pub fn set_macrotimeout(secs: u64) -> Result<(), std::io::Error> {
     set_global_config_value("macrotimeout", &secs.to_string())
 }
 
+pub fn set_copy_output_path(enabled: bool) -> Result<(), std::io::Error> {
+    set_global_config_value("copy_output_path", &enabled.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_copy_output_path_json() {
+        assert_eq!(
+            parse_copy_output_path_from_json(r#"{"copy_output_path": true}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_copy_output_path_from_json(r#"{"copy_output_path": false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            parse_copy_output_path_from_json(r#"{"copy_output_path": "true"}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_copy_output_path_from_json(r#"{"copy-output-path": true}"#),
+            Some(true)
+        );
+        assert_eq!(parse_copy_output_path_from_json(r#"{"other": 1}"#), None);
+    }
 
     #[test]
     fn test_parse_cthreads_valid_json() {

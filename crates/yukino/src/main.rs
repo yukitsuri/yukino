@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use yukino::{
     BuildOptions, FOLDER_EXISTS_ERROR, NewOptions, ProjectError, ProjectKind, TestOptions, banner_output,
-    build_project, clean_project, config, create_project, runtime, should_color, test_project,
+    build_project, clean_project, clipboard, config, create_project, runtime, should_color, test_project,
     version_output, YUKINO_NAME,
 };
 
@@ -254,6 +254,8 @@ pub struct ConfigArgs {
 pub enum ConfigCommands {
     Cthreads(CthreadsArgs),
     Macrotimeout(MacrotimeoutArgs),
+    #[command(name = "copy_output_path", alias = "copy-output-path")]
+    CopyOutputPath(CopyOutputPathArgs),
     Get(KeyArgs),
     Set(KeyValueArgs),
     List,
@@ -268,6 +270,12 @@ pub struct CthreadsArgs {
 #[derive(Args, Debug, PartialEq, Eq)]
 pub struct MacrotimeoutArgs {
     pub timeout: u64,
+}
+
+#[derive(Args, Debug, PartialEq, Eq)]
+pub struct CopyOutputPathArgs {
+    #[arg(action = clap::ArgAction::Set)]
+    pub enabled: bool,
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -407,6 +415,18 @@ fn parse_overrides(raw: &[String]) -> Result<Vec<(String, String)>, ProjectError
     Ok(pairs)
 }
 
+fn handle_copy_output_path(artifact: &std::path::Path, current_dir: &std::path::Path, no_out: bool) {
+    if config::load_global_copy_output_path() {
+        let rel = artifact.strip_prefix(current_dir).unwrap_or(artifact);
+        let rel_str = rel.to_string_lossy().to_string();
+        if let Err(e) = clipboard::copy_to_clipboard(&rel_str) {
+            if !no_out {
+                eprintln!("warning: failed to copy output path to clipboard: {e}");
+            }
+        }
+    }
+}
+
 fn execute_build(args: BuildArgs) -> Result<(), ProjectError> {
     let current_dir = std::env::current_dir().map_err(|e| ProjectError::Io(e.to_string()))?;
     let overrides = parse_overrides(&args.overrides)?;
@@ -432,9 +452,10 @@ fn execute_build(args: BuildArgs) -> Result<(), ProjectError> {
         lib_warns: args.lib_warns,
         threads: args.threads,
         cgunits: args.cgunits,
-        project_dir: current_dir,
+        project_dir: current_dir.clone(),
     };
-    build_project(&opts)?;
+    let artifact = build_project(&opts)?;
+    handle_copy_output_path(&artifact, &current_dir, args.no_out);
     Ok(())
 }
 
@@ -463,9 +484,10 @@ fn execute_run(args: RunArgs) -> Result<(), ProjectError> {
         lib_warns: args.lib_warns,
         threads: args.threads,
         cgunits: args.cgunits,
-        project_dir: current_dir,
+        project_dir: current_dir.clone(),
     };
-    build_project(&opts)?;
+    let artifact = build_project(&opts)?;
+    handle_copy_output_path(&artifact, &current_dir, args.no_out);
     Ok(())
 }
 
@@ -508,6 +530,11 @@ fn execute_config(args: ConfigArgs) -> Result<(), ProjectError> {
             config::set_macrotimeout(sub.timeout).map_err(|e| ProjectError::Io(e.to_string()))?;
             println!("macrotimeout set to {}", sub.timeout);
         }
+        Some(ConfigCommands::CopyOutputPath(sub)) => {
+            config::set_copy_output_path(sub.enabled)
+                .map_err(|e| ProjectError::Io(e.to_string()))?;
+            println!("copy_output_path set to {}", sub.enabled);
+        }
         Some(ConfigCommands::Get(sub)) => {
             if let Some(val) = config::get_global_config_value(&sub.key) {
                 println!("{val}");
@@ -521,6 +548,8 @@ fn execute_config(args: ConfigArgs) -> Result<(), ProjectError> {
                 println!("false");
             } else if sub.key == "macrotimeout" {
                 println!("{}", config::load_global_macrotimeout());
+            } else if sub.key == "copy_output_path" || sub.key == "copy-output-path" {
+                println!("{}", config::load_global_copy_output_path());
             } else {
                 eprintln!("key '{}' not found", sub.key);
                 std::process::exit(1);
@@ -818,6 +847,16 @@ mod tests {
             Some(Commands::Config(args)) => match args.command {
                 Some(ConfigCommands::Macrotimeout(sub)) => assert_eq!(sub.timeout, 15),
                 _ => panic!("expected Macrotimeout"),
+            },
+            _ => panic!("expected Config"),
+        }
+
+        let cli_copy = Cli::try_parse_from(["yukino", "config", "copy_output_path", "true"])
+            .expect("parse config copy_output_path");
+        match cli_copy.command {
+            Some(Commands::Config(args)) => match args.command {
+                Some(ConfigCommands::CopyOutputPath(sub)) => assert!(sub.enabled),
+                _ => panic!("expected CopyOutputPath"),
             },
             _ => panic!("expected Config"),
         }

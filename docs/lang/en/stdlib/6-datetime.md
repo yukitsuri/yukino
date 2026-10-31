@@ -312,21 +312,30 @@ Public fields:
 
 ##### init
 
-Initializes the timer with a given duration in milliseconds in an inactive (stopped) state.
+Initializes a timer instance with a given base duration in milliseconds.
 
 ```yukino
 public fun init(duration_ms: uint64 = 0u64)
 ```
 
+- **`duration_ms` argument**: specifies the default countdown timeout for this timer instance. Defaults to `0u64` (no interval preset).
+- **Timer state**: the constructor **does not start** countdown (`is_active = false`, `running = false`). It stores the duration internally as the target duration and the initial remaining time (`remaining_ms`).
+- **Difference from `start()`**: `init` only configures timer parameters at instantiation time and leaves the timer idle. To begin countdown, you must explicitly call `start()`.
+
 Does not return a value. The method never panics.
 
 ##### start
 
-Starts countdown. If `duration_ms > 0u64` is provided, sets a new target interval. If 0, uses previously preserved remaining duration or initial target duration.
+Starts countdown using monotonic system clocks.
 
 ```yukino
 public fun start(duration_ms: uint64 = 0u64)
 ```
+
+- **`duration_ms` argument**: optional duration override.
+  - If `duration_ms > 0u64`, the timer is **reconfigured to this new duration**: target duration and remaining time are both overwritten with this value, and countdown begins.
+  - If `duration_ms == 0u64` (the default value), the timer starts with its **previously configured base duration** (specified in `init`) or continues with the preserved remaining time.
+- **Difference from `init()`**: while `init()` only establishes the initial timeout upon creation and leaves the timer in a stopped state, `start()` actively activates the countdown (`is_active = true`, `running = true`) and allows either reusing the preset duration without arguments (`timer.start()`) or supplying a new duration on the fly (`timer.start(5000u64)`).
 
 Does not return a value. The method never panics.
 

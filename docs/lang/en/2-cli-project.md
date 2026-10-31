@@ -79,6 +79,7 @@ yukino build
 
 # Build with an explicit profile (debug, release, or any custom profile)
 yukino build debug
+yukino build release
 
 # Force a rebuild of the project and all libraries bypassing the cache (-b / --rebuild, alias rb)
 # Recompiles from scratch the project and all libraries (including stdlib and [libs.runtime] dependencies)
@@ -131,6 +132,17 @@ yukino build --no-lib-log
 # Enable warnings from third-party libraries and stdlib (by default, library warnings are always muted)
 yukino build --lib-warns
 ```
+
+> [!WARNING]
+> Binary files compiled in the `debug` profile (the default when invoking `yukino build` and `yukino run`) are very large (tens of megabytes, around 30–40 MB with the standard library). This occurs because debug builds include complete uncompressed debug symbol tables (DWARF / CodeView), disable aggressive optimizations (`opt_level = 0`), and skip strip/LTO to ensure fast compilation cycles.
+>
+> For production deployments, performance benchmarks, and distribution of finished executables, **always use the release profile**:
+> ```sh
+> yukino build release
+> # or to build and immediately run:
+> yukino run release
+> ```
+> The `release` profile automatically activates compiler optimizations (`opt_level = 3`), Link-Time Optimization (`lto = true`), Dead Code Elimination (`strip_unused = true`), and debug symbol stripping (`strip = true`), dramatically reducing the binary size and improving performance.
 
 #### Supported platforms
 
@@ -274,6 +286,7 @@ yukino config set macrotimeout 15
 # Set global defaults
 yukino config cthreads 8
 yukino config macrotimeout 15
+yukino config copy_output_path true
 ```
 
 #### Configuration parameters
@@ -285,6 +298,7 @@ yukino config macrotimeout 15
 | `noanim` | `bool` | Disable compilation panel disappearance animation (`true` for instant wipe, `false` for animation enabled). |
 | `full-lib-log` | `bool` | Verbose library compilation logs (`true` to show compilation of each file and CGU, `false` to show only library-level build status). |
 | `macrotimeout` | `int` | Procedural macro execution timeout in seconds (hang protection). |
+| `copy_output_path` | `bool` | Copy relative path of output binary to clipboard on successful compilation (`true` to copy, `false` disabled). |
 
 #### Defaults
 
@@ -293,6 +307,11 @@ yukino config macrotimeout 15
 - `noanim`: `false`
 - `full-lib-log`: `false`
 - `macrotimeout`: `10`
+- `copy_output_path`: `false`
+
+Detailed explanation of `copy_output_path`:
+- With `copy_output_path = true`, upon successful project compilation the relative path to the compiled binary artifact (for example, `yuki-work/local/build/debug/x86_64-unknown-linux-gnu/app/app`) is automatically copied to the system clipboard (supported on both Linux and Windows).
+- With `copy_output_path = false` (default), the binary path is not copied.
 
 Detailed explanation of `full-lib-log`:
 - With `full-lib-log = false` (default), only `Compiling {library} library` and `Compiled {library} library` are printed to the console log for dependencies and the standard library. Individual files and codegen units (CGU) of libraries do not clutter the log, while the interactive core dashboard continues to reflect their compilation in real time.
@@ -428,6 +447,9 @@ system = ["ws2_32", "user32", "advapi32"]
 ### 2.6 Compilation profiles: [config.<profile>]
 
 Each profile (for example, `[config.release]`, `[config.debug]`) describes optimization parameters. The `release` profile defaults to `opt_level = 3`, `lto = true`, `strip = true`, `strip_unused = true`, and `inline_statics = true`; any other profile starts from the debug defaults (`opt_level = 0`, `debug_assertions = true`). Unspecified fields fall back to these defaults.
+
+> [!NOTE]
+> Because debug builds include full uncompressed debug symbol tables and zero optimizations, binaries are substantially larger. Switching to the `release` profile enables `strip = true`, `opt_level = 3`, and `lto = true`, significantly reducing the final binary size.
 
 Only the following fields currently affect the build:
 

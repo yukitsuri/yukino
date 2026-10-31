@@ -1,4 +1,4 @@
-load ..strings: slice
+load ..strings: slice, contains
 
 // decl core/fs.rs start
 
@@ -32,6 +32,10 @@ fun panic_last_fs_error(default_msg: string, default_code: int32) {
 
 #[inline_always]
 public fun path_separator() -> string {
+    set tgt = get_target!()
+    if contains(tgt, "windows") {
+        return "\\"
+    }
     return "/"
 }
 
@@ -62,26 +66,67 @@ public fun path_is_relative(path: string) -> bool {
     return !path_is_absolute(path)
 }
 
-public fun path_join(a: string, b: string) -> string {
-    if a.len() == 0 { return b }
-    if b.len() == 0 { return a }
-    if path_is_absolute(b.cp()) { return b }
-
-    set a_last = a[a.len() - 1]
-    set b_first = b[0]
-    set a_has_sep = a_last == 47u8 || a_last == 92u8
-    set b_has_sep = b_first == 47u8 || b_first == 92u8
-
-    if a_has_sep && b_has_sep {
-        set b_len = b.len()
-        return a + slice(b, 1, b_len)
-    }
-    if a_has_sep || b_has_sep { return a + b }
-    return a + "/" + b
+#[inline]
+fun is_path_sep_byte(b: uint8) -> bool {
+    return b == 47u8 || b == 92u8
 }
 
-public fun path_join3(a: string, b: string, c: string) -> string {
-    return path_join(path_join(a, b), c)
+fun is_root_path(p: string) -> bool {
+    set len = p.len()
+    if len == 0 { return false }
+    if len == 1 { return is_path_sep_byte(p[0]) }
+    if len == 2 && is_path_sep_byte(p[0]) && is_path_sep_byte(p[1]) { return true }
+    if len == 3 && p[1] == 58u8 && is_path_sep_byte(p[2]) {
+        set b0 = p[0]
+        set is_upper = b0 >= 65u8 && b0 <= 90u8
+        set is_lower = b0 >= 97u8 && b0 <= 122u8
+        return is_upper || is_lower
+    }
+    return false
+}
+
+public fun path_join(...parts: string) -> string {
+    set count = parts.len()
+    if count == 0 { return "" }
+    set res = ""
+    for i in 0..count {
+        set part = parts[i]
+        if part.len() == 0 { continue }
+        if path_is_absolute(part.cp()) {
+            rewrite res = part
+            continue
+        }
+        if res.len() == 0 {
+            rewrite res = part
+            continue
+        }
+        set res_end = res.len()
+        while res_end > 0 && is_path_sep_byte(res[res_end - 1]) && !is_root_path(slice(res, 0, res_end)) {
+            rewrite res_end = res_end - 1
+        }
+        if res_end < res.len() {
+            rewrite res = slice(res, 0, res_end)
+        }
+        set part_start: int64 = 0
+        set part_len = part.len()
+        while part_start < part_len && is_path_sep_byte(part[part_start]) {
+            rewrite part_start = part_start + 1
+        }
+        if part_start + 1 < part_len && part[part_start] == 46u8 && is_path_sep_byte(part[part_start + 1]) {
+            rewrite part_start = part_start + 2
+            while part_start < part_len && is_path_sep_byte(part[part_start]) {
+                rewrite part_start = part_start + 1
+            }
+        }
+        if part_start >= part_len { continue }
+        set clean_part: string = if part_start > 0 { slice(part, part_start, part_len) } else { part }
+        if is_path_sep_byte(res[res.len() - 1]) {
+            rewrite res = res + clean_part
+        } else {
+            rewrite res = res + "/" + clean_part
+        }
+    }
+    return res
 }
 
 public fun path_file_name(path: string) -> string {

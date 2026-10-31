@@ -8,6 +8,7 @@ Priority for implementation.
 - [ ] MacOS target [Details](<roadmap#MacOS targets>)
 - [ ] git init on project creation [Details](<roadmap#Git init>) 
 - [ ] ^~^ operator [Details](<roadmap#Operator ^~^>) 
+- [ ] Yukino full(syntax, specif, memory, stdlib, etc...) RAG skills for LLM
 
 ## Details
 
