@@ -1,0 +1,70 @@
+public struct Span {
+    file_id: uint32
+    start: uint32
+    end: uint32
+    line: uint32
+    col: uint32
+}
+
+public fun span_default() -> Span {
+    return Span {
+        file_id: 0,
+        start: 0,
+        end: 0,
+        line: 1,
+        col: 1
+    }
+}
+
+public struct Ident {
+    name: string
+    span: Span
+}
+
+public struct Literal {
+    raw: string
+    span: Span
+}
+
+public struct Punct {
+    ch: string
+    span: Span
+}
+
+public class TokenStream {
+    code: string
+
+    public fun init(code: string) {
+        rewrite this.code = code
+    }
+
+    public fun to_string() -> string {
+        return this.code
+    }
+
+    public fun is_empty() -> bool {
+        return this.code.len() == 0
+    }
+
+    public fun append(other: TokenStream) -> TokenStream {
+        if this.code.len() == 0 {
+            rewrite this.code = other.to_string()
+        } else {
+            rewrite this.code = "${this.code}\n${other.to_string()}"
+        }
+        return this
+    }
+
+    public fun append_str(snippet: string) -> TokenStream {
+        if this.code.len() == 0 {
+            rewrite this.code = snippet
+        } else {
+            rewrite this.code = "${this.code}\n${snippet}"
+        }
+        return this
+    }
+}
+
+public fun token_stream(code: string) -> TokenStream {
+    return init TokenStream(code)
+}

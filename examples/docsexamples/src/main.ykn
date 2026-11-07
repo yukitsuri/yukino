@@ -1,0 +1,25 @@
+load std.io: print
+load .basics_test: test_basics
+load .types_test: test_types
+load .memory_test: test_memory
+load .functions_test: test_functions
+load .oop_test: test_oop
+load .strings_test: test_strings
+load .modules_test: test_modules
+load .macros_test: test_macros
+load .cabi_test: test_cabi
+load .intrinsics_test: test_intrinsics
+
+fun main() {
+    test_basics()
+    test_types()
+    test_memory()
+    test_functions()
+    test_oop()
+    test_strings()
+    test_modules()
+    test_macros()
+    test_cabi()
+    test_intrinsics()
+    print("All tests passed!\n")
+}

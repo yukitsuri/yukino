@@ -1,0 +1,44 @@
+public fun acontains(ref arr: int64[], item: int64) -> bool {
+    set i: int64 = 0
+    while i < arr.len() {
+        if arr[i] == item { return true }
+        rewrite i = i + 1
+    }
+    return false
+}
+
+public fun acontains_str(ref arr: string[], item: string) -> bool {
+    set i: int64 = 0
+    while i < arr.len() {
+        if arr[i] == item { return true }
+        rewrite i = i + 1
+    }
+    return false
+}
+
+public fun aindex_of(ref arr: int64[], item: int64) -> int64 {
+    set i: int64 = 0
+    while i < arr.len() {
+        if arr[i] == item { return i }
+        rewrite i = i + 1
+    }
+    return -1
+}
+
+public fun aindex_of_str(ref arr: string[], item: string) -> int64 {
+    set i: int64 = 0
+    while i < arr.len() {
+        if arr[i] == item { return i }
+        rewrite i = i + 1
+    }
+    return -1
+}
+
+public fun afind(ref arr: int64[], predicate: fun(int64) -> bool) -> int64? {
+    set i: int64 = 0
+    while i < arr.len() {
+        if predicate(arr[i]) { return arr[i] }
+        rewrite i = i + 1
+    }
+    return null
+}

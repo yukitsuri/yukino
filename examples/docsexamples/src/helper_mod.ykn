@@ -1,0 +1,8 @@
+fun private_helper() -> int32 {
+    return 10
+}
+
+#[inline]
+public fun public_calc(x: int32) -> int32 {
+    return x * 2 + private_helper()
+}

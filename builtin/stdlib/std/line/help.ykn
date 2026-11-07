@@ -1,0 +1,184 @@
+load .arg: Arg
+load ..outf: style
+
+fun pad_right(s: string, width: int64) -> string {
+    set res = s.cp()
+    while res.len() < width {
+        rewrite res = res + " "
+    }
+    return res
+}
+
+fun format_section_header(name: string) -> string {
+    return style(name).bold().yellow().render()
+}
+
+fun format_entry_name(name: string) -> string {
+    return style(name).bold().cyan().render()
+}
+
+public fun render_help(
+    name: string,
+    version: string,
+    about: string,
+    author: string,
+    parent_chain: string,
+    args: Arg[],
+    sub_names: string[],
+    sub_abouts: string[],
+    disable_help: bool,
+    disable_version: bool,
+    allow_short_h: bool,
+    allow_long_help: bool,
+    allow_short_v: bool,
+    allow_long_version: bool
+) -> string {
+    set res = ""
+    set full_cmd: string = if parent_chain.len() > 0 { parent_chain + " " + name } else { name.cp() }
+
+    // Title line
+    set title = full_cmd + if version.len() > 0 { " " + version } else { "" }
+    rewrite res = style(title).bold().render() + "\n"
+
+    if author.len() > 0 {
+        rewrite res = res + author + "\n"
+    }
+    if about.len() > 0 {
+        rewrite res = res + about + "\n"
+    }
+
+    // Usage line
+    rewrite res = res + "\n" + format_section_header("USAGE:") + "\n"
+    set usage_str = "    " + full_cmd
+    set auto_help = !disable_help && (allow_short_h || allow_long_help)
+    set auto_ver = !disable_version && version.len() > 0 && (allow_short_v || allow_long_version)
+    set has_flags = auto_help || auto_ver
+    set has_opts = false
+    set has_args = false
+
+    for i in 0..args.len() {
+        if args[i].is_flag {
+            rewrite has_flags = true
+        } elif args[i].is_positional {
+            rewrite has_args = true
+        } else {
+            rewrite has_opts = true
+        }
+    }
+
+    if has_flags { rewrite usage_str = usage_str + " [FLAGS]" }
+    if has_opts { rewrite usage_str = usage_str + " [OPTIONS]" }
+    if sub_names.len() > 0 { rewrite usage_str = usage_str + " [SUBCOMMAND]" }
+
+    for i in 0..args.len() {
+        if args[i].is_positional {
+            set hint: string = if args[i].is_required { "<" + args[i].name + ">" } else { "[" + args[i].name + "]" }
+            rewrite usage_str = usage_str + " " + hint
+        }
+    }
+    rewrite res = res + usage_str + "\n"
+
+    // Flags section
+    set flag_lines_col: string[] = []
+    set flag_lines_desc: string[] = []
+    if !disable_help {
+        if allow_short_h && allow_long_help {
+            flag_lines_col.push("-h, --help")
+            flag_lines_desc.push("Print help information")
+        } elif allow_long_help {
+            flag_lines_col.push("    --help")
+            flag_lines_desc.push("Print help information")
+        } elif allow_short_h {
+            flag_lines_col.push("-h")
+            flag_lines_desc.push("Print help information")
+        }
+    }
+    if !disable_version && version.len() > 0 {
+        if allow_short_v && allow_long_version {
+            flag_lines_col.push("-v, --version")
+            flag_lines_desc.push("Print version information")
+        } elif allow_long_version {
+            flag_lines_col.push("    --version")
+            flag_lines_desc.push("Print version information")
+        } elif allow_short_v {
+            flag_lines_col.push("-v")
+            flag_lines_desc.push("Print version information")
+        }
+    }
+    for i in 0..args.len() {
+        if args[i].is_flag {
+            set col: string = if args[i].short_name.len() > 0 { "-" + args[i].short_name + ", --" + args[i].long_name } else { "    --" + args[i].long_name }
+            flag_lines_col.push(col)
+            flag_lines_desc.push(args[i].about_text.cp())
+        }
+    }
+
+    if flag_lines_col.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("FLAGS:") + "\n"
+        for i in 0..flag_lines_col.len() {
+            set padded = pad_right(flag_lines_col[i], 22)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + flag_lines_desc[i] + "\n"
+        }
+    }
+
+    // Options section
+    set opt_lines_col: string[] = []
+    set opt_lines_desc: string[] = []
+    for i in 0..args.len() {
+        if !args[i].is_flag && !args[i].is_positional {
+            set val_part = " <" + args[i].value_hint + ">"
+            set col: string = if args[i].short_name.len() > 0 { "-" + args[i].short_name + ", --" + args[i].long_name + val_part } else { "    --" + args[i].long_name + val_part }
+            set desc = args[i].about_text.cp()
+            if args[i].has_default {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[default: " + args[i].default_val + "]"
+            }
+            if args[i].is_required {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+            }
+            opt_lines_col.push(col)
+            opt_lines_desc.push(desc)
+        }
+    }
+
+    if opt_lines_col.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("OPTIONS:") + "\n"
+        for i in 0..opt_lines_col.len() {
+            set padded = pad_right(opt_lines_col[i], 26)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + opt_lines_desc[i] + "\n"
+        }
+    }
+
+    // Positionals section
+    set pos_lines_col: string[] = []
+    set pos_lines_desc: string[] = []
+    for i in 0..args.len() {
+        if args[i].is_positional {
+            set col = "<" + args[i].name + ">"
+            set desc = args[i].about_text.cp()
+            if args[i].is_required {
+                rewrite desc = desc + if desc.len() > 0 { " " } else { "" } + "[required]"
+            }
+            pos_lines_col.push(col)
+            pos_lines_desc.push(desc)
+        }
+    }
+
+    if pos_lines_col.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("ARGS:") + "\n"
+        for i in 0..pos_lines_col.len() {
+            set padded = pad_right(pos_lines_col[i], 22)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + pos_lines_desc[i] + "\n"
+        }
+    }
+
+    // Subcommands section
+    if sub_names.len() > 0 {
+        rewrite res = res + "\n" + format_section_header("SUBCOMMANDS:") + "\n"
+        for i in 0..sub_names.len() {
+            set padded = pad_right(sub_names[i], 18)
+            rewrite res = res + "    " + format_entry_name(padded) + " " + sub_abouts[i] + "\n"
+        }
+    }
+
+    return res
+}

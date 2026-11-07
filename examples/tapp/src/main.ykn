@@ -1,0 +1,8 @@
+load std.io: print
+load menu: app
+
+fun main() {
+    print("Welocome to example app!\n")
+    
+    app()
+}

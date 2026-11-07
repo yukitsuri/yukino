@@ -1,0 +1,5 @@
+public load .paths: *
+public load .dirs: *
+public load .files: *
+public load .defaults: *
+public load .archives: *

@@ -1,0 +1,37 @@
+load .common: MIX_SEED, mix
+
+static MANDEL_SIZE: int64 = 1000
+static MANDEL_MAX_ITER: uint64 = 500
+static MANDEL_FRAC: int64 = 24
+
+fun iterations(cr: int64, ci: int64) -> uint64 {
+    set limit: int64 = 4i64 << MANDEL_FRAC
+    set zr: int64 = 0
+    set zi: int64 = 0
+    set n: uint64 = 0
+    while n < MANDEL_MAX_ITER {
+        set zr2: int64 = (zr * zr) >> MANDEL_FRAC
+        set zi2: int64 = (zi * zi) >> MANDEL_FRAC
+        if zr2 + zi2 > limit {
+            break
+        }
+        rewrite zi = ((2 * zr * zi) >> MANDEL_FRAC) + ci
+        rewrite zr = zr2 - zi2 + cr
+        rewrite n = n + 1
+    }
+    return n
+}
+
+public fun mandel() -> uint64 {
+    set one: int64 = 1i64 << MANDEL_FRAC
+    set x0: int64 = -2 * one
+    set y0: int64 = -3 * one / 2
+    set step: int64 = 3 * one / MANDEL_SIZE
+    set total: uint64 = 0
+    for py in 0..MANDEL_SIZE {
+        for px in 0..MANDEL_SIZE {
+            rewrite total = total + iterations(x0 + px * step, y0 + py * step)
+        }
+    }
+    return mix(MIX_SEED, total)
+}

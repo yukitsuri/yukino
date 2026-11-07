@@ -1,0 +1,48 @@
+!#[direct_internal_access]
+
+public struct MemoryError {
+    message: string
+    code: int32
+}
+
+#[internal_ptr_of_impl]
+public fun ptr_of<T>(variable: T) -> ptr<T> { space }
+
+public fun from_raw_parts<T>(p: ptr<T>, len: int64, cap: int64) -> T[]? {
+    if p == null && len > 0 { return null }
+    return _internal_slice_from_raw_parts(p, len, cap)
+}
+
+public fun region_used() -> int64 { return _internal_region_used() }
+public fun region_cap() -> int64 { return _internal_region_cap() }
+public fun region_reset() -> void { _internal_region_reset() }
+public fun export<T>(val: T) -> T { return _internal_export(val) }
+public fun persistent<T>(val: T) -> T { return _internal_persistent(val) }
+
+public locked class Arena {
+    raw_ptr: ptr<uint8>
+
+    public fun init(cap: int64 = 65536) {
+        rewrite this.raw_ptr = _internal_arena_create(cap)
+    }
+
+    public fun cap() -> int64 {
+        return _internal_region_capacity_bytes(this.raw_ptr)
+    }
+
+    public fun used() -> int64 {
+        return _internal_region_used_bytes(this.raw_ptr)
+    }
+
+    public fun reset() -> void {
+        _internal_region_reset(this.raw_ptr)
+    }
+
+    public fun destroy() -> void {
+        _internal_arena_destroy(this.raw_ptr)
+    }
+
+    public fun as_ptr() -> ptr<uint8> {
+        return this.raw_ptr
+    }
+}

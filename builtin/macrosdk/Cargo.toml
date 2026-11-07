@@ -1,0 +1,16 @@
+[package]
+name = "yukimacrosdk-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+path = "core/lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+yukino-macroproto = { path = "../../crates/yukino-macroproto" }
+yukic-lexer = { path = "../../crates/yukic-lexer" }
+yukic-span = { path = "../../crates/yukic-span" }
+yukic-diagnostics = { path = "../../crates/yukic-diagnostics" }

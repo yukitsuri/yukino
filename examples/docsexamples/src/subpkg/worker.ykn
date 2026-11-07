@@ -1,0 +1,6 @@
+public fun work_a() -> int32 {
+    return 100
+}
+public fun work_b() -> int32 {
+    return 200
+}

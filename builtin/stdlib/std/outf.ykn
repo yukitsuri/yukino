@@ -1,0 +1,406 @@
+load .io: is_stdout_terminal
+load .env: get_env
+load .strings: slice, utflen
+
+public static COLOR_AUTO: int32 = 0
+public static COLOR_ALWAYS: int32 = 1
+public static COLOR_NEVER: int32 = 2
+
+public static RESET: string = "\x1b[0m"
+
+cfun yukistd_io_set_color_mode(mode: int32)
+cfun yukistd_io_get_color_mode() -> int32
+
+public fun set_color_mode(mode: int32) {
+    yukistd_io_set_color_mode(mode)
+}
+
+public fun get_color_mode() -> int32 {
+    return yukistd_io_get_color_mode()
+}
+
+public fun is_color_enabled() -> bool {
+    set mode = get_color_mode()
+    if mode == COLOR_ALWAYS { return true }
+    if mode == COLOR_NEVER { return false }
+
+    set cf = get_env("CLICOLOR_FORCE")
+    if cf != null {
+        set s = cf ?? ""
+        if s != "0" && s.len() > 0 { return true }
+    }
+
+    set nc = get_env("NO_COLOR")
+    if nc != null {
+        set s = nc ?? ""
+        if s.len() > 0 { return false }
+    }
+
+    set cl = get_env("CLICOLOR")
+    if cl != null {
+        set s = cl ?? ""
+        if s == "0" { return false }
+    }
+
+    set term = get_env("TERM")
+    if term != null {
+        set s = term ?? ""
+        if s == "dumb" { return false }
+    }
+
+    return is_stdout_terminal()
+}
+
+public fun supports_color() -> bool {
+    set term = get_env("TERM")
+    if term != null {
+        set s = term ?? ""
+        if s == "dumb" { return false }
+    }
+    return is_stdout_terminal()
+}
+
+public fun supports_truecolor() -> bool {
+    set ct = get_env("COLORTERM")
+    if ct != null {
+        set s = ct ?? ""
+        if s == "truecolor" || s == "24bit" { return true }
+    }
+    return false
+}
+
+fun clamp_u8(v: int32) -> int32 {
+    if v < 0 { return 0 }
+    if v > 255 { return 255 }
+    return v
+}
+
+fun format_ansi(text: string, code: string) -> string {
+    if !is_color_enabled() || text.len() == 0 { return text }
+    return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+
+// Text styles
+
+public fun bold(text: string) -> string { return format_ansi(text, "1") }
+public fun dim(text: string) -> string { return format_ansi(text, "2") }
+public fun italic(text: string) -> string { return format_ansi(text, "3") }
+public fun underline(text: string) -> string { return format_ansi(text, "4") }
+public fun blink(text: string) -> string { return format_ansi(text, "5") }
+public fun reversed(text: string) -> string { return format_ansi(text, "7") }
+public fun hidden(text: string) -> string { return format_ansi(text, "8") }
+public fun strikethrough(text: string) -> string { return format_ansi(text, "9") }
+
+// Foreground colors (Standard 8)
+
+public fun black(text: string) -> string { return format_ansi(text, "30") }
+public fun red(text: string) -> string { return format_ansi(text, "31") }
+public fun green(text: string) -> string { return format_ansi(text, "32") }
+public fun yellow(text: string) -> string { return format_ansi(text, "33") }
+public fun blue(text: string) -> string { return format_ansi(text, "34") }
+public fun magenta(text: string) -> string { return format_ansi(text, "35") }
+public fun cyan(text: string) -> string { return format_ansi(text, "36") }
+public fun white(text: string) -> string { return format_ansi(text, "37") }
+
+// Foreground colors (Bright 8)
+
+public fun gray(text: string) -> string { return format_ansi(text, "90") }
+public fun bright_black(text: string) -> string { return format_ansi(text, "90") }
+public fun bright_red(text: string) -> string { return format_ansi(text, "91") }
+public fun bright_green(text: string) -> string { return format_ansi(text, "92") }
+public fun bright_yellow(text: string) -> string { return format_ansi(text, "93") }
+public fun bright_blue(text: string) -> string { return format_ansi(text, "94") }
+public fun bright_magenta(text: string) -> string { return format_ansi(text, "95") }
+public fun bright_cyan(text: string) -> string { return format_ansi(text, "96") }
+public fun bright_white(text: string) -> string { return format_ansi(text, "97") }
+
+// Background colors (Standard 8)
+
+public fun bg_black(text: string) -> string { return format_ansi(text, "40") }
+public fun bg_red(text: string) -> string { return format_ansi(text, "41") }
+public fun bg_green(text: string) -> string { return format_ansi(text, "42") }
+public fun bg_yellow(text: string) -> string { return format_ansi(text, "43") }
+public fun bg_blue(text: string) -> string { return format_ansi(text, "44") }
+public fun bg_magenta(text: string) -> string { return format_ansi(text, "45") }
+public fun bg_cyan(text: string) -> string { return format_ansi(text, "46") }
+public fun bg_white(text: string) -> string { return format_ansi(text, "47") }
+
+// Background colors (Bright 8)
+
+public fun bg_gray(text: string) -> string { return format_ansi(text, "100") }
+public fun bg_bright_black(text: string) -> string { return format_ansi(text, "100") }
+public fun bg_bright_red(text: string) -> string { return format_ansi(text, "101") }
+public fun bg_bright_green(text: string) -> string { return format_ansi(text, "102") }
+public fun bg_bright_yellow(text: string) -> string { return format_ansi(text, "103") }
+public fun bg_bright_blue(text: string) -> string { return format_ansi(text, "104") }
+public fun bg_bright_magenta(text: string) -> string { return format_ansi(text, "105") }
+public fun bg_bright_cyan(text: string) -> string { return format_ansi(text, "106") }
+public fun bg_bright_white(text: string) -> string { return format_ansi(text, "107") }
+
+// Extended 256 and TrueColor RGB colors
+
+public fun color256(text: string, code: int32) -> string {
+    set c = clamp_u8(code)
+    return format_ansi(text, "38;5;${c}")
+}
+
+public fun bg_color256(text: string, code: int32) -> string {
+    set c = clamp_u8(code)
+    return format_ansi(text, "48;5;${c}")
+}
+
+public fun rgb(text: string, r: int32, g: int32, b: int32) -> string {
+    set cr = clamp_u8(r)
+    set cg = clamp_u8(g)
+    set cb = clamp_u8(b)
+    return format_ansi(text, "38;2;${cr};${cg};${cb}")
+}
+
+public fun bg_rgb(text: string, r: int32, g: int32, b: int32) -> string {
+    set cr = clamp_u8(r)
+    set cg = clamp_u8(g)
+    set cb = clamp_u8(b)
+    return format_ansi(text, "48;2;${cr};${cg};${cb}")
+}
+
+public fun clear_style(text: string) -> string {
+    return text + "\x1b[0m"
+}
+
+public fun strip_ansi(text: string) -> string {
+    set n = text.len()
+    if n == 0 { return "" }
+    set res = ""
+    set i: int64 = 0
+    set last: int64 = 0
+
+    while i < n {
+        set b = text[i]
+        if b == 27 {
+            if i > last {
+                rewrite res = res + slice(text, last, i)
+            }
+            rewrite i = i + 1
+            if i < n && text[i] == 91 {
+                rewrite i = i + 1
+                while i < n {
+                    set c = text[i]
+                    if c >= 64 && c <= 126 {
+                        rewrite i = i + 1
+                        break
+                    }
+                    rewrite i = i + 1
+                }
+            } elif i < n && text[i] == 93 {
+                rewrite i = i + 1
+                while i < n {
+                    set c = text[i]
+                    if c == 7 {
+                        rewrite i = i + 1
+                        break
+                    }
+                    if c == 27 && i + 1 < n && text[i + 1] == 92 {
+                        rewrite i = i + 2
+                        break
+                    }
+                    rewrite i = i + 1
+                }
+            }
+            rewrite last = i
+        } else {
+            rewrite i = i + 1
+        }
+    }
+    if last < n {
+        rewrite res = res + slice(text, last, n)
+    }
+    return res
+}
+
+public fun visible_len(text: string) -> int64 {
+    set stripped = strip_ansi(text)
+    return utflen(stripped)
+}
+
+public fun visible_bytes(text: string) -> int64 {
+    set stripped = strip_ansi(text)
+    return stripped.len()
+}
+
+// Fluent chained styling class
+
+public class Styled {
+    text: string
+    fg_code: int32
+    bg_code: int32
+    fg_r: int32
+    fg_g: int32
+    fg_b: int32
+    bg_r: int32
+    bg_g: int32
+    bg_b: int32
+    is_256_fg: bool
+    is_256_bg: bool
+    is_rgb_fg: bool
+    is_rgb_bg: bool
+    is_bold: bool
+    is_dim: bool
+    is_italic: bool
+    is_underline: bool
+    is_blink: bool
+    is_reversed: bool
+    is_hidden: bool
+    is_strikethrough: bool
+
+    fun init(text: string) {
+        rewrite this.text = text
+        rewrite this.fg_code = 0
+        rewrite this.bg_code = 0
+        rewrite this.fg_r = 0
+        rewrite this.fg_g = 0
+        rewrite this.fg_b = 0
+        rewrite this.bg_r = 0
+        rewrite this.bg_g = 0
+        rewrite this.bg_b = 0
+        rewrite this.is_256_fg = false
+        rewrite this.is_256_bg = false
+        rewrite this.is_rgb_fg = false
+        rewrite this.is_rgb_bg = false
+        rewrite this.is_bold = false
+        rewrite this.is_dim = false
+        rewrite this.is_italic = false
+        rewrite this.is_underline = false
+        rewrite this.is_blink = false
+        rewrite this.is_reversed = false
+        rewrite this.is_hidden = false
+        rewrite this.is_strikethrough = false
+    }
+
+    fun bold() -> Styled { rewrite this.is_bold = true; return this }
+    fun dim() -> Styled { rewrite this.is_dim = true; return this }
+    fun italic() -> Styled { rewrite this.is_italic = true; return this }
+    fun underline() -> Styled { rewrite this.is_underline = true; return this }
+    fun blink() -> Styled { rewrite this.is_blink = true; return this }
+    fun reversed() -> Styled { rewrite this.is_reversed = true; return this }
+    fun hidden() -> Styled { rewrite this.is_hidden = true; return this }
+    fun strikethrough() -> Styled { rewrite this.is_strikethrough = true; return this }
+
+    fun black() -> Styled { rewrite this.fg_code = 30; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun red() -> Styled { rewrite this.fg_code = 31; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun green() -> Styled { rewrite this.fg_code = 32; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun yellow() -> Styled { rewrite this.fg_code = 33; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun blue() -> Styled { rewrite this.fg_code = 34; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun magenta() -> Styled { rewrite this.fg_code = 35; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun cyan() -> Styled { rewrite this.fg_code = 36; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun white() -> Styled { rewrite this.fg_code = 37; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+
+    fun gray() -> Styled { rewrite this.fg_code = 90; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_black() -> Styled { rewrite this.fg_code = 90; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_red() -> Styled { rewrite this.fg_code = 91; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_green() -> Styled { rewrite this.fg_code = 92; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_yellow() -> Styled { rewrite this.fg_code = 93; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_blue() -> Styled { rewrite this.fg_code = 94; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_magenta() -> Styled { rewrite this.fg_code = 95; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_cyan() -> Styled { rewrite this.fg_code = 96; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+    fun bright_white() -> Styled { rewrite this.fg_code = 97; rewrite this.is_256_fg = false; rewrite this.is_rgb_fg = false; return this }
+
+    fun bg_black() -> Styled { rewrite this.bg_code = 40; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_red() -> Styled { rewrite this.bg_code = 41; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_green() -> Styled { rewrite this.bg_code = 42; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_yellow() -> Styled { rewrite this.bg_code = 43; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_blue() -> Styled { rewrite this.bg_code = 44; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_magenta() -> Styled { rewrite this.bg_code = 45; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_cyan() -> Styled { rewrite this.bg_code = 46; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_white() -> Styled { rewrite this.bg_code = 47; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+
+    fun bg_gray() -> Styled { rewrite this.bg_code = 100; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_black() -> Styled { rewrite this.bg_code = 100; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_red() -> Styled { rewrite this.bg_code = 101; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_green() -> Styled { rewrite this.bg_code = 102; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_yellow() -> Styled { rewrite this.bg_code = 103; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_blue() -> Styled { rewrite this.bg_code = 104; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_magenta() -> Styled { rewrite this.bg_code = 105; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_cyan() -> Styled { rewrite this.bg_code = 106; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+    fun bg_bright_white() -> Styled { rewrite this.bg_code = 107; rewrite this.is_256_bg = false; rewrite this.is_rgb_bg = false; return this }
+
+    fun color256(code: int32) -> Styled {
+        rewrite this.fg_code = clamp_u8(code)
+        rewrite this.is_256_fg = true
+        rewrite this.is_rgb_fg = false
+        return this
+    }
+
+    fun bg_color256(code: int32) -> Styled {
+        rewrite this.bg_code = clamp_u8(code)
+        rewrite this.is_256_bg = true
+        rewrite this.is_rgb_bg = false
+        return this
+    }
+
+    fun rgb(r: int32, g: int32, b: int32) -> Styled {
+        rewrite this.fg_r = clamp_u8(r)
+        rewrite this.fg_g = clamp_u8(g)
+        rewrite this.fg_b = clamp_u8(b)
+        rewrite this.is_rgb_fg = true
+        rewrite this.is_256_fg = false
+        return this
+    }
+
+    fun bg_rgb(r: int32, g: int32, b: int32) -> Styled {
+        rewrite this.bg_r = clamp_u8(r)
+        rewrite this.bg_g = clamp_u8(g)
+        rewrite this.bg_b = clamp_u8(b)
+        rewrite this.is_rgb_bg = true
+        rewrite this.is_256_bg = false
+        return this
+    }
+
+    fun to_string() -> string {
+        if !is_color_enabled() || this.text.len() == 0 { return this.text.cp() }
+
+        set seq = ""
+        if this.is_bold { rewrite seq = if seq.len() > 0 { seq + ";1" } else { "1" } }
+        if this.is_dim { rewrite seq = if seq.len() > 0 { seq + ";2" } else { "2" } }
+        if this.is_italic { rewrite seq = if seq.len() > 0 { seq + ";3" } else { "3" } }
+        if this.is_underline { rewrite seq = if seq.len() > 0 { seq + ";4" } else { "4" } }
+        if this.is_blink { rewrite seq = if seq.len() > 0 { seq + ";5" } else { "5" } }
+        if this.is_reversed { rewrite seq = if seq.len() > 0 { seq + ";7" } else { "7" } }
+        if this.is_hidden { rewrite seq = if seq.len() > 0 { seq + ";8" } else { "8" } }
+        if this.is_strikethrough { rewrite seq = if seq.len() > 0 { seq + ";9" } else { "9" } }
+
+        if this.is_rgb_fg {
+            set c = "38;2;${this.fg_r};${this.fg_g};${this.fg_b}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        } elif this.is_256_fg {
+            set c = "38;5;${this.fg_code}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        } elif this.fg_code > 0 {
+            set c = "${this.fg_code}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        }
+
+        if this.is_rgb_bg {
+            set c = "48;2;${this.bg_r};${this.bg_g};${this.bg_b}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        } elif this.is_256_bg {
+            set c = "48;5;${this.bg_code}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        } elif this.bg_code > 0 {
+            set c = "${this.bg_code}"
+            rewrite seq = if seq.len() > 0 { seq + ";" + c } else { c }
+        }
+
+        if seq.len() == 0 { return this.text.cp() }
+        return "\x1b[" + seq + "m" + this.text.cp() + "\x1b[0m"
+    }
+
+    fun render() -> string { return this.to_string() }
+}
+
+public fun style(text: string) -> Styled {
+    return init Styled(text)
+}
+
+public fun styled(text: string) -> Styled {
+    return init Styled(text)
+}

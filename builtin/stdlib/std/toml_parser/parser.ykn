@@ -1,0 +1,257 @@
+load ..strings: slice
+load .tokens: *
+load .value: *
+load .scanner: TomlScanner
+
+public class TomlParser {
+    public scanner: TomlScanner
+    public curr_tok: int32
+    public has_error: bool
+    public error: TomlError
+
+    public fun init(text: string) {
+        rewrite this.scanner = init TomlScanner(text)
+        rewrite this.curr_tok = TOML_TOK_EOF
+        rewrite this.has_error = false
+        rewrite this.error = TomlError {
+            message: "",
+            line: 0,
+            column: 0,
+            offset: 0,
+        }
+    }
+
+    public fun record_error(msg: string) {
+        if !this.has_error {
+            rewrite this.has_error = true
+            rewrite this.error = TomlError {
+                message: msg,
+                line: this.scanner.token_line,
+                column: this.scanner.token_col,
+                offset: this.scanner.token_offset,
+            }
+        }
+    }
+
+    public fun next() {
+        rewrite this.curr_tok = this.scanner.scan()
+        if this.curr_tok == TOML_TOK_ERROR {
+            this.record_error(this.scanner.error_msg)
+        }
+    }
+
+    public fun skip_newlines() {
+        while this.curr_tok == TOML_TOK_NEWLINE {
+            this.next()
+        }
+    }
+
+    public fun parse_key_path() -> string[] {
+        set parts: string[] = []
+        while true {
+            if this.curr_tok == TOML_TOK_IDENT || this.curr_tok == TOML_TOK_STRING || this.curr_tok == TOML_TOK_INTEGER || this.curr_tok == TOML_TOK_BOOLEAN {
+                parts.push(this.scanner.token_str.cp())
+                this.next()
+            } else {
+                this.record_error("expected key segment in TOML")
+                break
+            }
+
+            if this.curr_tok == TOML_TOK_DOT {
+                this.next()
+            } else {
+                break
+            }
+        }
+        return parts
+    }
+
+    public fun parse_value() -> TomlValue {
+        if this.curr_tok == TOML_TOK_BOOLEAN {
+            set b: bool = this.scanner.token_bool
+            this.next()
+            return toml_bool(b)
+        }
+        if this.curr_tok == TOML_TOK_INTEGER {
+            set i: int64 = this.scanner.token_int
+            this.next()
+            return toml_int(i)
+        }
+        if this.curr_tok == TOML_TOK_FLOAT {
+            set f: float64 = this.scanner.token_float
+            this.next()
+            return toml_float(f)
+        }
+        if this.curr_tok == TOML_TOK_STRING {
+            set s: string = this.scanner.token_str.cp()
+            this.next()
+            return toml_string(s)
+        }
+        if this.curr_tok == TOML_TOK_DATETIME {
+            set s: string = this.scanner.token_str.cp()
+            this.next()
+            return toml_datetime(s)
+        }
+        if this.curr_tok == TOML_TOK_LBRACKET {
+            return this.parse_array()
+        }
+        if this.curr_tok == TOML_TOK_LBRACE {
+            return this.parse_inline_table()
+        }
+
+        this.record_error("expected TOML value")
+        return toml_null()
+    }
+
+    fun parse_array() -> TomlValue {
+        this.next() // consume '['
+        set items: TomlValue[] = []
+
+        while this.curr_tok != TOML_TOK_RBRACKET && this.curr_tok != TOML_TOK_EOF && !this.has_error {
+            this.skip_newlines()
+            if this.curr_tok == TOML_TOK_RBRACKET {
+                break
+            }
+            set val: TomlValue = this.parse_value()
+            items.push(val)
+            this.skip_newlines()
+            if this.curr_tok == TOML_TOK_COMMA {
+                this.next()
+                this.skip_newlines()
+            } elif this.curr_tok == TOML_TOK_RBRACKET {
+                break
+            } else {
+                this.record_error("expected ',' or ']' in TOML array")
+                break
+            }
+        }
+
+        if this.curr_tok == TOML_TOK_RBRACKET {
+            this.next()
+        } else {
+            this.record_error("expected ']' at end of TOML array")
+        }
+
+        return toml_array(items)
+    }
+
+    fun parse_inline_table() -> TomlValue {
+        this.next() // consume '{'
+        set tbl: TomlValue = toml_table()
+
+        while this.curr_tok != TOML_TOK_RBRACE && this.curr_tok != TOML_TOK_EOF && !this.has_error {
+            if this.curr_tok == TOML_TOK_RBRACE {
+                break
+            }
+            set key_path: string[] = this.parse_key_path()
+            if this.curr_tok != TOML_TOK_EQUAL {
+                this.record_error("expected '=' after key in inline table")
+                break
+            }
+            this.next() // consume '='
+            set val: TomlValue = this.parse_value()
+            tbl.set_path(key_path, val)
+
+            if this.curr_tok == TOML_TOK_COMMA {
+                this.next()
+            } elif this.curr_tok == TOML_TOK_RBRACE {
+                break
+            } else {
+                this.record_error("expected ',' or '}' in inline table")
+                break
+            }
+        }
+
+        if this.curr_tok == TOML_TOK_RBRACE {
+            this.next()
+        } else {
+            this.record_error("expected '}' at end of inline table")
+        }
+
+        return tbl
+    }
+
+    public fun parse_document() -> TomlValue {
+        set root: TomlValue = toml_table()
+        set current_section: string[] = []
+        set is_section_array: bool = false
+        this.next()
+
+        while this.curr_tok != TOML_TOK_EOF && !this.has_error {
+            if this.curr_tok == TOML_TOK_NEWLINE {
+                this.next()
+                continue
+            }
+
+            // Array of tables: [[header]]
+            if this.curr_tok == TOML_TOK_LDBRACKET {
+                this.next() // consume '[['
+                set path: string[] = this.parse_key_path()
+                if this.curr_tok != TOML_TOK_RDBRACKET {
+                    this.record_error("expected ']]' at end of table array header")
+                    break
+                }
+                this.next() // consume ']]'
+
+                rewrite current_section = path
+                rewrite is_section_array = true
+                root.add_table_to_array(current_section.cp())
+                continue
+            }
+
+            // Standard table: [header]
+            if this.curr_tok == TOML_TOK_LBRACKET {
+                this.next() // consume '['
+                set path: string[] = this.parse_key_path()
+                if this.curr_tok != TOML_TOK_RBRACKET {
+                    this.record_error("expected ']' at end of table header")
+                    break
+                }
+                this.next() // consume ']'
+
+                rewrite current_section = path
+                rewrite is_section_array = false
+                root.ensure_table_path(current_section.cp())
+                continue
+            }
+
+            // Standard key-value assignment: key = value
+            set key_path: string[] = this.parse_key_path()
+            if this.has_error {
+                break
+            }
+            if this.curr_tok != TOML_TOK_EQUAL {
+                this.record_error("expected '=' after TOML key")
+                break
+            }
+            this.next() // consume '='
+            set val: TomlValue = this.parse_value()
+
+            if is_section_array {
+                root.get_last_in_array(current_section.cp()).set_path(key_path, val)
+            } else {
+                set full_path: string[] = []
+                set s_i: int64 = 0
+                while s_i < current_section.len() {
+                    full_path.push(current_section[s_i])
+                    rewrite s_i = s_i + 1
+                }
+                set k_i: int64 = 0
+                while k_i < key_path.len() {
+                    full_path.push(key_path[k_i])
+                    rewrite k_i = k_i + 1
+                }
+                root.set_path(full_path, val)
+            }
+
+            if this.curr_tok == TOML_TOK_NEWLINE {
+                this.next()
+            } elif this.curr_tok != TOML_TOK_EOF {
+                this.record_error("expected newline after key-value pair")
+                break
+            }
+        }
+
+        return root
+    }
+}

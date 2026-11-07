@@ -1,0 +1,67 @@
+!#[direct_internal_access]
+
+public struct CastError {
+    message: string
+    code: int32
+    source_type: string
+    target_type: string
+}
+
+public struct AssertionError {
+    message: string
+    code: int32
+    file: string
+    line: int32
+}
+
+public struct AssertEqualError {
+    message: string
+    code: int32
+    file: string
+    line: int32
+    actual: string
+    expected: string
+}
+
+load core.panic: panic
+load core.macro: file, line
+
+#[internal_cast_impl]
+public fun cast<T, U>(val: T, target: string) -> U { space }
+
+public fun assert(condition: bool, message: string = "assertion failed") {
+    if !condition {
+        panic(AssertionError {
+            message: message,
+            code: 3001,
+            file: file!(),
+            line: line!(),
+        })
+    }
+}
+
+public fun assert_eq<T>(actual: T, expected: T, message: string = "values are not equal") {
+    if actual != expected {
+        panic(AssertEqualError {
+            message: message,
+            code: 3002,
+            file: file!(),
+            line: line!(),
+            actual: cast(actual, "string"),
+            expected: cast(expected, "string"),
+        })
+    }
+}
+
+public fun assert_ne<T>(actual: T, expected: T, message: string = "values must not be equal") {
+    if actual == expected {
+        panic(AssertEqualError {
+            message: message,
+            code: 3003,
+            file: file!(),
+            line: line!(),
+            actual: cast(actual, "string"),
+            expected: cast(expected, "string"),
+        })
+    }
+}

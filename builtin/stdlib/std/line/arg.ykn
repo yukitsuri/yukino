@@ -1,0 +1,80 @@
+public class Arg {
+    public name: string
+    public short_name: string
+    public long_name: string
+    public about_text: string
+    public is_flag: bool
+    public is_required: bool
+    public is_positional: bool
+    public is_multiple: bool
+    public default_val: string
+    public has_default: bool
+    public value_hint: string
+    public conflicts: string[]
+
+    public fun init(name: string) {
+        rewrite this.name = name
+        rewrite this.short_name = ""
+        rewrite this.long_name = name
+        rewrite this.about_text = ""
+        rewrite this.is_flag = false
+        rewrite this.is_required = false
+        rewrite this.is_positional = false
+        rewrite this.is_multiple = false
+        rewrite this.default_val = ""
+        rewrite this.has_default = false
+        rewrite this.value_hint = "VALUE"
+        rewrite this.conflicts = []
+    }
+
+    public fun short(s: string) -> Arg {
+        rewrite this.short_name = s
+        return this
+    }
+
+    public fun long(l: string) -> Arg {
+        rewrite this.long_name = l
+        return this
+    }
+
+    public fun about(desc: string) -> Arg {
+        rewrite this.about_text = desc
+        return this
+    }
+
+    public fun flag() -> Arg {
+        rewrite this.is_flag = true
+        return this
+    }
+
+    public fun required(r: bool) -> Arg {
+        rewrite this.is_required = r
+        return this
+    }
+
+    public fun positional(p: bool) -> Arg {
+        rewrite this.is_positional = p
+        return this
+    }
+
+    public fun multiple(m: bool) -> Arg {
+        rewrite this.is_multiple = m
+        return this
+    }
+
+    public fun default_value(val: string) -> Arg {
+        rewrite this.default_val = val
+        rewrite this.has_default = true
+        return this
+    }
+
+    public fun value_hint(hint: string) -> Arg {
+        rewrite this.value_hint = hint
+        return this
+    }
+
+    public fun conflicts_with(other_name: string) -> Arg {
+        this.conflicts.push(other_name)
+        return this
+    }
+}

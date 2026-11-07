@@ -1,0 +1,16 @@
+[package]
+name = "yukic-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+yukic-span = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-lexer = { workspace = true }
+yukic-diagnostics = { workspace = true }

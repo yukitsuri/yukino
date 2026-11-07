@@ -1,0 +1,25 @@
+public static YAML_TOK_EOF: int32 = 0
+public static YAML_TOK_NEWLINE: int32 = 1
+public static YAML_TOK_INDENT: int32 = 2
+public static YAML_TOK_DEDENT: int32 = 3
+public static YAML_TOK_COLON: int32 = 4
+public static YAML_TOK_COMMA: int32 = 5
+public static YAML_TOK_DASH: int32 = 6
+public static YAML_TOK_LBRACKET: int32 = 7
+public static YAML_TOK_RBRACKET: int32 = 8
+public static YAML_TOK_LBRACE: int32 = 9
+public static YAML_TOK_RBRACE: int32 = 10
+public static YAML_TOK_STRING: int32 = 11
+public static YAML_TOK_NUMBER: int32 = 12
+public static YAML_TOK_BOOLEAN: int32 = 13
+public static YAML_TOK_NULL: int32 = 14
+public static YAML_TOK_DOC_START: int32 = 15
+public static YAML_TOK_DOC_END: int32 = 16
+public static YAML_TOK_ERROR: int32 = 17
+
+public struct YamlError {
+    message: string
+    line: int64
+    column: int64
+    offset: int64
+}

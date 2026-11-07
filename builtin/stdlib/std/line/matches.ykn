@@ -1,0 +1,177 @@
+load ..strings: parse_int, parse_float
+
+public class Matches {
+    public flag_names: string[]
+    public opt_names: string[]
+    public opt_values: string[]
+    public pos_names: string[]
+    public pos_values: string[]
+    public all_pos: string[]
+    public trailing_items: string[]
+    public sub_name: string
+    public sub_matches: Matches?
+
+    public fun init() {
+        rewrite this.flag_names = []
+        rewrite this.opt_names = []
+        rewrite this.opt_values = []
+        rewrite this.pos_names = []
+        rewrite this.pos_values = []
+        rewrite this.all_pos = []
+        rewrite this.trailing_items = []
+        rewrite this.sub_name = ""
+        rewrite this.sub_matches = null
+    }
+
+    public fun add_flag(name: string) -> Matches {
+        this.flag_names.push(name)
+        return this
+    }
+
+    public fun add_opt(name: string, val: string) -> Matches {
+        this.opt_names.push(name)
+        this.opt_values.push(val)
+        return this
+    }
+
+    public fun add_pos(name: string, val: string) -> Matches {
+        this.pos_names.push(name)
+        this.pos_values.push(val.cp())
+        this.all_pos.push(val)
+        return this
+    }
+
+    public fun add_trailing(val: string) -> Matches {
+        this.trailing_items.push(val.cp())
+        this.all_pos.push(val)
+        return this
+    }
+
+    public fun add_raw_pos(val: string) -> Matches {
+        this.all_pos.push(val)
+        return this
+    }
+
+    public fun get_bool(name: string) -> bool {
+        for i in 0..this.flag_names.len() {
+            if this.flag_names[i] == name {
+                return true
+            }
+        }
+        return false
+    }
+
+    public fun has(name: string) -> bool {
+        if this.get_bool(name.cp()) {
+            return true
+        }
+        for i in 0..this.opt_names.len() {
+            if this.opt_names[i] == name {
+                return true
+            }
+        }
+        for i in 0..this.pos_names.len() {
+            if this.pos_names[i] == name {
+                return true
+            }
+        }
+        return false
+    }
+
+    public fun get(name: string) -> string? {
+        for i in 0..this.opt_names.len() {
+            if this.opt_names[i] == name {
+                return this.opt_values[i].cp()
+            }
+        }
+        for i in 0..this.pos_names.len() {
+            if this.pos_names[i] == name {
+                return this.pos_values[i].cp()
+            }
+        }
+        return null
+    }
+
+    public fun get_or(name: string, fallback: string) -> string {
+        set val = this.get(name)
+        if val != null {
+            return val ?? fallback
+        }
+        return fallback
+    }
+
+    public fun get_int(name: string) -> int64? {
+        set s = this.get(name)
+        if s == null {
+            return null
+        }
+        set str_val = s ?? ""
+        return parse_int(str_val)
+    }
+
+    public fun get_int_or(name: string, fallback: int64) -> int64 {
+        set v = this.get_int(name)
+        if v != null {
+            return v ?? fallback
+        }
+        return fallback
+    }
+
+    public fun get_float(name: string) -> float64? {
+        set s = this.get(name)
+        if s == null {
+            return null
+        }
+        set str_val = s ?? ""
+        return parse_float(str_val)
+    }
+
+    public fun get_float_or(name: string, fallback: float64) -> float64 {
+        set v = this.get_float(name)
+        if v != null {
+            return v ?? fallback
+        }
+        return fallback
+    }
+
+    public fun get_all(name: string) -> string[] {
+        set res: string[] = []
+        for i in 0..this.opt_names.len() {
+            if this.opt_names[i] == name {
+                res.push(this.opt_values[i].cp())
+            }
+        }
+        return res
+    }
+
+    public fun trailing() -> string[] {
+        set res: string[] = []
+        for i in 0..this.trailing_items.len() {
+            res.push(this.trailing_items[i].cp())
+        }
+        return res
+    }
+
+    public fun raw_positionals() -> string[] {
+        set res: string[] = []
+        for i in 0..this.all_pos.len() {
+            res.push(this.all_pos[i].cp())
+        }
+        return res
+    }
+
+    public fun subcommand_name() -> string? {
+        if this.sub_name.len() > 0 {
+            return this.sub_name.cp()
+        }
+        return null
+    }
+
+    public fun subcommand_matches() -> Matches? {
+        return this.sub_matches
+    }
+
+    public fun has_subcommand(name: string) -> bool {
+        return this.sub_name == name
+    }
+}

@@ -1,0 +1,18 @@
+!#[direct_internal_access]
+
+#[internal_macro_impl] public define typeof(expr) { space }
+#[internal_macro_impl] public define file() { space }
+#[internal_macro_impl] public define line() { space }
+#[internal_macro_impl] public define col() { space }
+#[internal_macro_impl] public define cfg(predicate) { space }
+#[internal_macro_impl] public define compile_error(msg) { space }
+#[internal_macro_impl] public define compile_print(fmt) { space }
+#[internal_macro_impl] public define include_str(path) { space }
+#[internal_macro_impl] public define include_bytes(path) { space }
+#[internal_macro_impl] public define hostenv(var) { space }
+#[internal_macro_impl] public define yukienv(key, scope) { space }
+#[internal_macro_impl] public define is_lib_connected(lib, scope) { space }
+#[internal_macro_impl] public define get_features() { space }
+#[internal_macro_impl] public define get_profileconfig() { space }
+#[internal_macro_impl] public define get_target() { space }
+#[internal_macro_impl] public define get_yukic_version() { space }

@@ -1,0 +1,32 @@
+load std.io: print
+
+externc {
+    |cdecl|
+    cfun abs(x: int32) -> int32;
+
+    cfun custom_c_multiply(a: int32, b: int32) -> int32;
+
+    |packed, align="4"|
+    cstruct NativePoint {
+        x: int32,
+        y: int32,
+    }
+
+    |cold, inline_never|
+    cfun native_slow_abort(code: int32) -> void;
+}
+
+|cdecl, hot| public cfun yukino_c_add(a: int32, b: int32) -> int32 {
+    return a + b
+}
+
+public fun test_cabi() {
+    set res1 = abs(-42)
+    set res2 = custom_c_multiply(6, 7)
+    set res3 = yukino_c_add(10, 20)
+
+    set pt = NativePoint { x: 10, y: 20 }
+    set pt_x: int32 = pt.x
+
+    print("C ABI OK\n")
+}

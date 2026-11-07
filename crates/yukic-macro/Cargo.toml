@@ -1,0 +1,24 @@
+[package]
+name = "yukic-macro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+indexmap = { workspace = true }
+toml = { workspace = true }
+yukic-span = { workspace = true }
+yukic-ast = { workspace = true }
+yukic-diagnostics = { workspace = true }
+yukic-target = { workspace = true }
+yukic-lexer = { workspace = true }
+yukic-parser = { workspace = true }
+yukino-macroproto = { workspace = true }
+
+[dev-dependencies]
+yukic-resolve = { workspace = true }

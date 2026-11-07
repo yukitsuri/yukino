@@ -1,0 +1,64 @@
+!#[direct_internal_access]
+
+public struct IndexError {
+    message: string
+    code: int32
+    index: int64
+    length: int64
+}
+
+load core.panic: panic
+
+public fun del<T>(ref s: T[], index: int64) -> void {
+    if index < 0 || index >= s.len() {
+        panic(IndexError {
+            message: "slice index out of bounds in del",
+            code: 2001,
+            index: index,
+            length: s.len(),
+        })
+    }
+    s.del(index)
+}
+
+public fun pop<T>(ref s: T[]) -> T? {
+    if s.len() == 0 {
+        return null
+    }
+    return s.pop()
+}
+
+public fun push<T>(ref s: T[], item: T) -> void {
+    s.push(item)
+}
+
+public fun clear<T>(ref s: T[]) -> void {
+    s.clear()
+}
+
+public fun reserve<T>(ref s: T[], additional: int64) -> void {
+    s.reserve(additional)
+}
+
+public fun len<T>(ref s: T[]) -> int64 {
+    return s.len()
+}
+
+public fun cap<T>(ref s: T[]) -> int64 {
+    return s.cap()
+}
+
+public fun as_ptr<T>(ref s: T[]) -> ptr<T> {
+    return s.as_ptr()
+}
+
+public fun cp<T>(ref s: T[]) -> T[] {
+    return s.cp()
+}
+
+public fun from_raw_parts<T>(p: ptr<T>, length: int64, capacity: int64) -> T[]? {
+    if p == null && length > 0 {
+        return null
+    }
+    return _internal_slice_from_raw_parts(p, length, capacity)
+}

@@ -1,0 +1,33 @@
+load std.io: print
+
+define square(x) => x * x
+
+define calculate_cube(n) => n * n * n
+
+define setup_coords() {
+    set coord_x = 10
+    set coord_y = 20
+}
+
+public fun test_macros() {
+    // 1. User-defined expression macro
+    set sq = square!(4)
+    set cb = calculate_cube!(3)
+
+    // 2. User-defined block macro
+    setup_coords!()
+
+    // 3. Built-in location macros
+    set current_file = file!()
+    set current_line = line!()
+    set current_col = col!()
+
+    // 4. Built-in target and environment macros
+    set target_name = get_target!()
+    set compiler_ver = get_yukic_version!()
+
+    // 5. Hostenv macro
+    set user_name = hostenv!("USER")
+
+    print("Macros OK\n")
+}

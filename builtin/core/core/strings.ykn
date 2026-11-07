@@ -1,0 +1,10 @@
+!#[direct_internal_access]
+
+public fun len(s: string) -> int64 { return s.len() }
+public fun is_empty(s: string) -> bool { return s.is_empty() }
+public fun as_ptr(s: string) -> ptr<uint8> { return s.as_ptr() }
+public fun cp(s: string) -> string { return s.cp() }
+
+public fun from_raw_parts(p: ptr<uint8>, length: int64) -> string {
+    return _internal_slice_from_raw_parts(p, length)
+}

@@ -1,0 +1,47 @@
+public fun amap(ref arr: int64[], f: fun(int64) -> int64) -> int64[] {
+    set res: int64[] = []
+    set i: int64 = 0
+    while i < arr.len() {
+        res.push(f(arr[i]))
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun afilter(ref arr: int64[], predicate: fun(int64) -> bool) -> int64[] {
+    set res: int64[] = []
+    set i: int64 = 0
+    while i < arr.len() {
+        if predicate(arr[i]) {
+            res.push(arr[i])
+        }
+        rewrite i = i + 1
+    }
+    return res
+}
+
+public fun areduce(ref arr: int64[], initial: int64, f: fun(int64, int64) -> int64) -> int64 {
+    set acc: int64 = initial
+    set i: int64 = 0
+    while i < arr.len() {
+        rewrite acc = f(acc, arr[i])
+        rewrite i = i + 1
+    }
+    return acc
+}
+
+public fun afor_each(ref arr: int64[], f: fun(int64)) {
+    set i: int64 = 0
+    while i < arr.len() {
+        f(arr[i])
+        rewrite i = i + 1
+    }
+}
+
+public fun afor_each_str(ref arr: string[], f: fun(string)) {
+    set i: int64 = 0
+    while i < arr.len() {
+        f(arr[i])
+        rewrite i = i + 1
+    }
+}

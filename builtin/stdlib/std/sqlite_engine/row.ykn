@@ -1,0 +1,70 @@
+load .value: SqliteValue, sqlite_null
+
+public class SqliteRow {
+    public col_names: string[]
+    public col_vals: SqliteValue[]
+
+    public fun init(names: string[], vals: SqliteValue[]) {
+        rewrite this.col_names = names
+        rewrite this.col_vals = vals
+    }
+
+    public fun len() -> int64 {
+        return this.col_names.len()
+    }
+
+    public fun keys() -> string[] {
+        return this.col_names
+    }
+
+    public fun values() -> SqliteValue[] {
+        return this.col_vals
+    }
+
+    public fun has(key: string) -> bool {
+        set i: int64 = 0
+        while i < this.col_names.len() {
+            if this.col_names[i] == key {
+                return true
+            }
+            rewrite i = i + 1
+        }
+        return false
+    }
+
+    public fun get(key: string) -> SqliteValue {
+        set i: int64 = 0
+        while i < this.col_names.len() {
+            if this.col_names[i] == key {
+                return this.col_vals[i]
+            }
+            rewrite i = i + 1
+        }
+        return sqlite_null()
+    }
+
+    public fun get_opt(key: string) -> SqliteValue? {
+        set i: int64 = 0
+        while i < this.col_names.len() {
+            if this.col_names[i] == key {
+                return this.col_vals[i]
+            }
+            rewrite i = i + 1
+        }
+        return null
+    }
+
+    public fun at(index: int64) -> SqliteValue {
+        if index >= 0 && index < this.col_vals.len() {
+            return this.col_vals[index]
+        }
+        return sqlite_null()
+    }
+
+    public fun at_opt(index: int64) -> SqliteValue? {
+        if index >= 0 && index < this.col_vals.len() {
+            return this.col_vals[index]
+        }
+        return null
+    }
+}

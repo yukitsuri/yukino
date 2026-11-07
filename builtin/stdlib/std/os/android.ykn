@@ -1,0 +1,19 @@
+// decl core/os/android.rs start
+
+cfun yukistd_os_android_log_print(prio: int32, tag_p: ptr<uint8>, tag_len: int64, text_p: ptr<uint8>, text_len: int64) -> int32
+
+// decl end
+
+public static ANDROID_LOG_UNKNOWN: int32 = 0
+public static ANDROID_LOG_DEFAULT: int32 = 1
+public static ANDROID_LOG_VERBOSE: int32 = 2
+public static ANDROID_LOG_DEBUG: int32 = 3
+public static ANDROID_LOG_INFO: int32 = 4
+public static ANDROID_LOG_WARN: int32 = 5
+public static ANDROID_LOG_ERROR: int32 = 6
+public static ANDROID_LOG_FATAL: int32 = 7
+public static ANDROID_LOG_SILENT: int32 = 8
+
+public fun android_log_print(prio: int32, tag: string, text: string) -> int32 {
+    return yukistd_os_android_log_print(prio, tag.as_ptr(), tag.len(), text.as_ptr(), text.len())
+}

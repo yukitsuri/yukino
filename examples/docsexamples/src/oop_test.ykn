@@ -1,0 +1,104 @@
+load std.io: print
+
+// 1. Struct with methods
+struct Vector2 {
+    x: float64,
+    y: float64
+
+    fun len_sq() -> float64 {
+        return this.x * this.x + this.y * this.y
+    }
+}
+
+// 2. Interface
+interface Describable {
+    fun describe() -> string
+}
+
+// 3. Class hierarchy and constructor
+class Animal with Describable {
+    name: string
+
+    fun init(name: string) {
+        rewrite this.name = name
+    }
+
+    fun speak() -> string {
+        return "..."
+    }
+
+    fun describe() -> string {
+        return this.name
+    }
+}
+
+class Dog extends Animal {
+    breed: string
+
+    fun init(name: string, breed: string) {
+        super(name)
+        rewrite this.breed = breed
+    }
+
+    fun speak() -> string {
+        return "Woof!"
+    }
+}
+
+// 4. Locked class
+locked class GuardService {
+    active: bool
+
+    fun init(active: bool) {
+        rewrite this.active = active
+    }
+}
+
+// 5. Properties (get / set)
+class Rectangle {
+    w: float64
+    h: float64
+
+    fun init(w: float64, h: float64) {
+        rewrite this.w = w
+        rewrite this.h = h
+    }
+
+    get area() -> float64 {
+        return this.w * this.h
+    }
+
+    set size(val: float64) {
+        rewrite this.w = val
+        rewrite this.h = val
+    }
+}
+
+// 6. Enum
+enum Status {
+    Ok,
+    NotFound,
+    Error(code: int32)
+}
+
+public fun test_oop() {
+    // 1. Struct test (pure data)
+    set v = Vector2 { x: 3.0, y: 4.0 }
+    set x_val: float64 = v.x
+    set y_val: float64 = v.y
+
+    // 2. Class and inheritance
+    set dog = init Dog("Rex", "Collie")
+    set sound = dog.speak()
+    set name = dog.describe()
+
+    // 3. Locked class
+    set g = init GuardService(true)
+
+    // 4. Properties (get/set)
+    set rect = init Rectangle(10.0, 5.0)
+    set a: float64 = rect.area
+    rewrite rect.size = 20.0
+
+    print("OOP OK\n")
+}

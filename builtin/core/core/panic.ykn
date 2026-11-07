@@ -1,0 +1,3 @@
+!#[direct_internal_access]
+
+public fun panic<T>(error: T) -> never { _internal_panic(error) }

@@ -1,0 +1,90 @@
+public fun afill(ref ~arr: int64[], val: int64) {
+    set i: int64 = 0
+    while i < arr.len() {
+        rewrite arr[i] = val
+        rewrite i = i + 1
+    }
+}
+
+public fun areverse(ref ~arr: int64[]) {
+    set i: int64 = 0
+    set j: int64 = arr.len() - 1
+    while i < j {
+        set tmp: int64 = arr[i]
+        rewrite arr[i] = arr[j]
+        rewrite arr[j] = tmp
+        rewrite i = i + 1
+        rewrite j = j - 1
+    }
+}
+
+public fun asort(ref ~arr: int64[]) {
+    set n = arr.len()
+    set i: int64 = 0
+    while i < n {
+        set j: int64 = 0
+        while j < n - i - 1 {
+            if arr[j] > arr[j + 1] {
+                set tmp: int64 = arr[j]
+                rewrite arr[j] = arr[j + 1]
+                rewrite arr[j + 1] = tmp
+            }
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+}
+
+public fun asort_by(ref ~arr: int64[], cmp: fun(int64, int64) -> int32) {
+    set n = arr.len()
+    set i: int64 = 0
+    while i < n {
+        set j: int64 = 0
+        while j < n - i - 1 {
+            if cmp(arr[j], arr[j + 1]) > 0 {
+                set tmp: int64 = arr[j]
+                rewrite arr[j] = arr[j + 1]
+                rewrite arr[j + 1] = tmp
+            }
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+}
+
+public fun afill_str(ref ~arr: string[], val: string) {
+    set i: int64 = 0
+    while i < arr.len() {
+        rewrite arr[i] = val
+        rewrite i = i + 1
+    }
+}
+
+public fun areverse_str(ref ~arr: string[]) {
+    set i: int64 = 0
+    set j: int64 = arr.len() - 1
+    while i < j {
+        set tmp: string = arr[i]
+        rewrite arr[i] = arr[j]
+        rewrite arr[j] = tmp
+        rewrite i = i + 1
+        rewrite j = j - 1
+    }
+}
+
+public fun asort_str(ref ~arr: string[]) {
+    set n = arr.len()
+    set i: int64 = 0
+    while i < n {
+        set j: int64 = 0
+        while j < n - i - 1 {
+            if arr[j] > arr[j + 1] {
+                set tmp: string = arr[j]
+                rewrite arr[j] = arr[j + 1]
+                rewrite arr[j + 1] = tmp
+            }
+            rewrite j = j + 1
+        }
+        rewrite i = i + 1
+    }
+}

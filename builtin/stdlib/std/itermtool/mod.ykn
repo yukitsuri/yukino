@@ -1,0 +1,6 @@
+public load .terminal: *
+public load .draw: *
+public load .color: *
+public load .key: *
+public load .mouse: *
+public load .event: *

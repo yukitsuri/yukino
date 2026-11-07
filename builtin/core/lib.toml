@@ -1,0 +1,7 @@
+[lib]
+name = "core"
+version = "0.1.0"
+entry = "core/lib.ykn"
+yukino = ["0.1.0", "+"]
+output = "static"
+includes = []

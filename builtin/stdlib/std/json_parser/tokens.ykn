@@ -1,0 +1,22 @@
+public static TOK_EOF: int32 = 0
+public static TOK_LBRACE: int32 = 1
+public static TOK_RBRACE: int32 = 2
+public static TOK_LBRACKET: int32 = 3
+public static TOK_RBRACKET: int32 = 4
+public static TOK_COLON: int32 = 5
+public static TOK_COMMA: int32 = 6
+public static TOK_STRING: int32 = 7
+public static TOK_NUMBER: int32 = 8
+public static TOK_TRUE: int32 = 9
+public static TOK_FALSE: int32 = 10
+public static TOK_NULL: int32 = 11
+public static TOK_LINE_COMMENT: int32 = 12
+public static TOK_BLOCK_COMMENT: int32 = 13
+public static TOK_ERROR: int32 = 14
+
+public struct JsonError {
+    message: string
+    line: int64
+    column: int64
+    offset: int64
+}

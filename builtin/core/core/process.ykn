@@ -1,0 +1,5 @@
+!#[direct_internal_access]
+
+public fun args() -> string[] { return _internal_args() }
+public fun raw_args() -> string { return _internal_raw_args() }
+public fun exit(code: int32) -> never { _internal_exit(code) }

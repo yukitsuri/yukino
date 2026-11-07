@@ -1,0 +1,93 @@
+load .tokens: Span
+
+public struct Diagnostic {
+    severity: string
+    message: string
+    file_id: uint32
+    line: uint32
+    col: uint32
+}
+
+public class MacroContext {
+    public tracked_files: string[]
+    public diagnostics: Diagnostic[]
+    public macro_name: string
+    public working_dir: string
+    public kind: string
+    public attr_args: string
+
+    public fun init(
+        macro_name: string,
+        working_dir: string,
+        kind: string = "FunctionLike",
+        attr_args: string = ""
+    ) {
+        rewrite this.macro_name = macro_name
+        rewrite this.working_dir = working_dir
+        rewrite this.kind = kind
+        rewrite this.attr_args = attr_args
+        rewrite this.tracked_files = []
+        rewrite this.diagnostics = []
+    }
+
+    public fun is_attribute() -> bool {
+        return this.kind == "Attribute" || this.kind == "attribute"
+    }
+
+    public fun is_mutation() -> bool {
+        return this.kind == "Mutation" || this.kind == "mutation"
+    }
+
+    public fun is_function_like() -> bool {
+        return this.kind == "FunctionLike" || this.kind == "function_like"
+    }
+
+    public fun track_file(path: string) -> MacroContext {
+        this.tracked_files.push(path)
+        return this
+    }
+
+    public fun error(msg: string) -> MacroContext {
+        this.diagnostics.push(Diagnostic {
+            severity: "Error",
+            message: msg,
+            file_id: 0,
+            line: 0,
+            col: 0
+        })
+        return this
+    }
+
+    public fun error_at(span: Span, msg: string) -> MacroContext {
+        this.diagnostics.push(Diagnostic {
+            severity: "Error",
+            message: msg,
+            file_id: span.file_id,
+            line: span.line,
+            col: span.col
+        })
+        return this
+    }
+
+    public fun warning(msg: string) -> MacroContext {
+        this.diagnostics.push(Diagnostic {
+            severity: "Warning",
+            message: msg,
+            file_id: 0,
+            line: 0,
+            col: 0
+        })
+        return this
+    }
+
+    public fun warning_at(span: Span, msg: string) -> MacroContext {
+        this.diagnostics.push(Diagnostic {
+            severity: "Warning",
+            message: msg,
+            file_id: span.file_id,
+            line: span.line,
+            col: span.col
+        })
+        return this
+    }
+}

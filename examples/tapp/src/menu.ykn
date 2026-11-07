@@ -1,0 +1,26 @@
+load std.io: print, println, flush, read_line
+load std.strings: *
+load snake: run_snake_game
+load utils.calc: run_calc
+
+public fun app() {
+    set running = true
+    while running {
+        println("\n-- Menu --")
+        println("1. Calculator")
+        println("2. Play Snake game")
+        println("0. Exit")
+        print("Select an option: ")
+        flush()
+
+        set line = read_line()
+        set choice = line.trim()
+        if line.len() == 0 { rewrite running = false
+        } elif choice.eq("1") { run_calc()
+        } elif choice.eq("2") { run_snake_game()
+        } elif choice.eq("0") {
+            rewrite running = false
+            println("Exiting application. Goodbye!")
+        } else { println("Unknown option. Please choose 1, 2, or 0.") }
+    }
+}

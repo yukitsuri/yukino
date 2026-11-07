@@ -1,0 +1,6 @@
+public load .cursor: *
+public load .format: *
+public load .frames: *
+public load .bar: *
+public load .live_line: *
+public load .live_area: *

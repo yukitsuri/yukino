@@ -1,0 +1,7 @@
+!#[direct_internal_access]
+
+public fun len(b: bytes) -> int64 { return b.len() }
+public fun cap(b: bytes) -> int64 { return b.cap() }
+public fun is_empty(b: bytes) -> bool { return b.is_empty() }
+public fun as_ptr(b: bytes) -> ptr<uint8> { return b.as_ptr() }
+public fun cp(b: bytes) -> bytes { return b.cp() }
