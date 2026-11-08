@@ -63,16 +63,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install LLVM dependencies (Ubuntu)
+      - name: Workaround missing LLVM Polly library (Ubuntu)
         if: "!contains(matrix.target, 'windows') && !matrix.use_cross"
         run: |
           sudo apt-get update
-          if command -v llvm-config >/dev/null 2>&1; then
-            LLVM_VER=$(llvm-config --version | cut -d. -f1)
-            sudo apt-get install -y "libpolly-${LLVM_VER}-dev" || sudo apt-get install -y libpolly-dev || true
-          else
-            sudo apt-get install -y libpolly-dev || true
-          fi
+          sudo apt-get install -y 'libpolly-*-dev' || true
+
+          for cfg in $(which llvm-config llvm-config-18 llvm-config-19 llvm-config-17 llvm-config-16 2>/dev/null); do
+            dir=$($cfg --libdir 2>/dev/null || true)
+            if [ -n "$dir" ] && [ -d "$dir" ]; then
+              touch /tmp/dummy.o
+              ar rcs /tmp/libPolly.a /tmp/dummy.o
+              sudo cp -n /tmp/libPolly.a "$dir/libPolly.a" 2>/dev/null || true
+              sudo cp -n /tmp/libPolly.a "$dir/libPollyISL.a" 2>/dev/null || true
+            fi
+          done
+
+          for libdir in $(find /usr/lib* -name "libLLVM*.so*" -exec dirname {} \; 2>/dev/null | sort -u); do
+            touch /tmp/dummy.o
+            ar rcs /tmp/libPolly.a /tmp/dummy.o
+            sudo cp -n /tmp/libPolly.a "$libdir/libPolly.a" 2>/dev/null || true
+            sudo cp -n /tmp/libPolly.a "$libdir/libPollyISL.a" 2>/dev/null || true
+          done
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
