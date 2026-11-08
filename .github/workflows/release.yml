@@ -1,0 +1,295 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (optional, e.g. v0.1.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            target_key: linux-gnu-x86_64
+            yukic_asset: yukic-linux-gnu-x86_64
+            yukino_asset: yukino-linux-gnu-x86_64
+            use_cross: false
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            target_key: linux-musl-x86_64
+            yukic_asset: yukic-linux-musl-x86_64
+            yukino_asset: yukino-linux-musl-x86_64
+            use_cross: true
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            target_key: linux-gnu-aarch64
+            yukic_asset: yukic-linux-gnu-aarch64
+            yukino_asset: yukino-linux-gnu-aarch64
+            use_cross: true
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            target_key: linux-musl-aarch64
+            yukic_asset: yukic-linux-musl-aarch64
+            yukino_asset: yukino-linux-musl-aarch64
+            use_cross: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            target_key: windows-msvc-x86_64
+            yukic_asset: yukic-windows-msvc-x86_64.exe
+            yukino_asset: yukino-windows-msvc-x86_64.exe
+            use_cross: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ~/.cargo/bin
+          gh release download -R cross-rs/cross --pattern "cross-x86_64-unknown-linux-musl.tar.gz" -O - | tar -xz -C ~/.cargo/bin
+          chmod +x ~/.cargo/bin/cross
+
+      - name: Build release binaries (Unix)
+        if: "!contains(matrix.target, 'windows')"
+        env:
+          YUKINO_RELEASEBUILD: "1"
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --bin yukic --bin yukino
+          else
+            cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
+          fi
+
+      - name: Prepare assets and checksums (Unix)
+        if: "!contains(matrix.target, 'windows')"
+        run: |
+          cp target/${{ matrix.target }}/release/yukic ${{ matrix.yukic_asset }}
+          chmod +x ${{ matrix.yukic_asset }}
+          sha256sum ${{ matrix.yukic_asset }} | awk '{print $1}' > ${{ matrix.yukic_asset }}.sha256
+          wc -c < ${{ matrix.yukic_asset }} | tr -d ' ' > ${{ matrix.yukic_asset }}.size
+
+          cp target/${{ matrix.target }}/release/yukino ${{ matrix.yukino_asset }}
+          chmod +x ${{ matrix.yukino_asset }}
+          sha256sum ${{ matrix.yukino_asset }} | awk '{print $1}' > ${{ matrix.yukino_asset }}.sha256
+          wc -c < ${{ matrix.yukino_asset }} | tr -d ' ' > ${{ matrix.yukino_asset }}.size
+
+      - name: Build release binaries (Windows)
+        if: contains(matrix.target, 'windows')
+        env:
+          YUKINO_RELEASEBUILD: "1"
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
+
+      - name: Prepare assets and checksums (Windows)
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: |
+          Copy-Item target/${{ matrix.target }}/release/yukic.exe -Destination ${{ matrix.yukic_asset }}
+          $yukicHash = (Get-FileHash -Algorithm SHA256 ${{ matrix.yukic_asset }}).Hash.ToLower()
+          Set-Content -Path "${{ matrix.yukic_asset }}.sha256" -Value $yukicHash -NoNewline
+          $yukicSize = (Get-Item ${{ matrix.yukic_asset }}).Length
+          Set-Content -Path "${{ matrix.yukic_asset }}.size" -Value $yukicSize -NoNewline
+
+          Copy-Item target/${{ matrix.target }}/release/yukino.exe -Destination ${{ matrix.yukino_asset }}
+          $yukinoHash = (Get-FileHash -Algorithm SHA256 ${{ matrix.yukino_asset }}).Hash.ToLower()
+          Set-Content -Path "${{ matrix.yukino_asset }}.sha256" -Value $yukinoHash -NoNewline
+          $yukinoSize = (Get-Item ${{ matrix.yukino_asset }}).Length
+          Set-Content -Path "${{ matrix.yukino_asset }}.size" -Value $yukinoSize -NoNewline
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: |
+            ${{ matrix.yukic_asset }}
+            ${{ matrix.yukic_asset }}.sha256
+            ${{ matrix.yukic_asset }}.size
+            ${{ matrix.yukino_asset }}
+            ${{ matrix.yukino_asset }}.sha256
+            ${{ matrix.yukino_asset }}.size
+          retention-days: 1
+
+  publish:
+    name: Publish Release Assets & lacie.toml
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Determine release tag, version and version_number
+        id: ver
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+
+          NUM=$(git tag --sort=creatordate | grep -nx "${TAG}" | cut -d: -f1)
+          if [ -z "$NUM" ] || [ "$NUM" -le 0 ]; then
+            NUM=$(git tag -l | wc -l)
+          fi
+          if [ -z "$NUM" ] || [ "$NUM" -le 0 ]; then
+            NUM=1
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_number=${NUM}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate lacie.toml
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          VERSION_NUMBER="${{ steps.ver.outputs.version_number }}"
+
+          SHA_YUKIC_LINUX_GNU_X86_64=$(tr -d ' \r\n' < artifacts/yukic-linux-gnu-x86_64.sha256)
+          SHA_YUKIC_LINUX_MUSL_X86_64=$(tr -d ' \r\n' < artifacts/yukic-linux-musl-x86_64.sha256)
+          SHA_YUKIC_LINUX_GNU_AARCH64=$(tr -d ' \r\n' < artifacts/yukic-linux-gnu-aarch64.sha256)
+          SHA_YUKIC_LINUX_MUSL_AARCH64=$(tr -d ' \r\n' < artifacts/yukic-linux-musl-aarch64.sha256)
+          SHA_YUKIC_WINDOWS_MSVC_X86_64=$(tr -d ' \r\n' < artifacts/yukic-windows-msvc-x86_64.exe.sha256)
+
+          SIZE_YUKIC_LINUX_GNU_X86_64=$(tr -d ' \r\n' < artifacts/yukic-linux-gnu-x86_64.size)
+          SIZE_YUKIC_LINUX_MUSL_X86_64=$(tr -d ' \r\n' < artifacts/yukic-linux-musl-x86_64.size)
+          SIZE_YUKIC_LINUX_GNU_AARCH64=$(tr -d ' \r\n' < artifacts/yukic-linux-gnu-aarch64.size)
+          SIZE_YUKIC_LINUX_MUSL_AARCH64=$(tr -d ' \r\n' < artifacts/yukic-linux-musl-aarch64.size)
+          SIZE_YUKIC_WINDOWS_MSVC_X86_64=$(tr -d ' \r\n' < artifacts/yukic-windows-msvc-x86_64.exe.size)
+
+          SHA_YUKINO_LINUX_GNU_X86_64=$(tr -d ' \r\n' < artifacts/yukino-linux-gnu-x86_64.sha256)
+          SHA_YUKINO_LINUX_MUSL_X86_64=$(tr -d ' \r\n' < artifacts/yukino-linux-musl-x86_64.sha256)
+          SHA_YUKINO_LINUX_GNU_AARCH64=$(tr -d ' \r\n' < artifacts/yukino-linux-gnu-aarch64.sha256)
+          SHA_YUKINO_LINUX_MUSL_AARCH64=$(tr -d ' \r\n' < artifacts/yukino-linux-musl-aarch64.sha256)
+          SHA_YUKINO_WINDOWS_MSVC_X86_64=$(tr -d ' \r\n' < artifacts/yukino-windows-msvc-x86_64.exe.sha256)
+
+          SIZE_YUKINO_LINUX_GNU_X86_64=$(tr -d ' \r\n' < artifacts/yukino-linux-gnu-x86_64.size)
+          SIZE_YUKINO_LINUX_MUSL_X86_64=$(tr -d ' \r\n' < artifacts/yukino-linux-musl-x86_64.size)
+          SIZE_YUKINO_LINUX_GNU_AARCH64=$(tr -d ' \r\n' < artifacts/yukino-linux-gnu-aarch64.size)
+          SIZE_YUKINO_LINUX_MUSL_AARCH64=$(tr -d ' \r\n' < artifacts/yukino-linux-musl-aarch64.size)
+          SIZE_YUKINO_WINDOWS_MSVC_X86_64=$(tr -d ' \r\n' < artifacts/yukino-windows-msvc-x86_64.exe.size)
+
+          cat << EOF > artifacts/lacie.toml
+          [workspace]
+          author = "shareui <shareui@proton.me>"
+          version = "${VERSION}"
+          version_number = ${VERSION_NUMBER}
+          source_code = "https://github.com/yukitsuri/shareui"
+          links = ["https://github.com/yukitsuri/shareui"]
+
+          [packages."de.shareui.yukic"]
+          name = "yukic"
+
+          [packages."de.shareui.yukic".binaries."linux-gnu-x86_64"]
+          file = "yukic-linux-gnu-x86_64"
+          size = ${SIZE_YUKIC_LINUX_GNU_X86_64}
+          sha256 = "${SHA_YUKIC_LINUX_GNU_X86_64}"
+
+          [packages."de.shareui.yukic".binaries."linux-musl-x86_64"]
+          file = "yukic-linux-musl-x86_64"
+          size = ${SIZE_YUKIC_LINUX_MUSL_X86_64}
+          static = true
+          sha256 = "${SHA_YUKIC_LINUX_MUSL_X86_64}"
+
+          [packages."de.shareui.yukic".binaries."linux-gnu-aarch64"]
+          file = "yukic-linux-gnu-aarch64"
+          size = ${SIZE_YUKIC_LINUX_GNU_AARCH64}
+          sha256 = "${SHA_YUKIC_LINUX_GNU_AARCH64}"
+
+          [packages."de.shareui.yukic".binaries."linux-musl-aarch64"]
+          file = "yukic-linux-musl-aarch64"
+          size = ${SIZE_YUKIC_LINUX_MUSL_AARCH64}
+          static = true
+          sha256 = "${SHA_YUKIC_LINUX_MUSL_AARCH64}"
+
+          [packages."de.shareui.yukic".binaries."windows-msvc-x86_64"]
+          file = "yukic-windows-msvc-x86_64.exe"
+          size = ${SIZE_YUKIC_WINDOWS_MSVC_X86_64}
+          sha256 = "${SHA_YUKIC_WINDOWS_MSVC_X86_64}"
+
+          [packages."de.shareui.yukino"]
+          name = "yukino"
+
+          [packages."de.shareui.yukino".binaries."linux-gnu-x86_64"]
+          file = "yukino-linux-gnu-x86_64"
+          size = ${SIZE_YUKINO_LINUX_GNU_X86_64}
+          sha256 = "${SHA_YUKINO_LINUX_GNU_X86_64}"
+
+          [packages."de.shareui.yukino".binaries."linux-musl-x86_64"]
+          file = "yukino-linux-musl-x86_64"
+          size = ${SIZE_YUKINO_LINUX_MUSL_X86_64}
+          static = true
+          sha256 = "${SHA_YUKINO_LINUX_MUSL_X86_64}"
+
+          [packages."de.shareui.yukino".binaries."linux-gnu-aarch64"]
+          file = "yukino-linux-gnu-aarch64"
+          size = ${SIZE_YUKINO_LINUX_GNU_AARCH64}
+          sha256 = "${SHA_YUKINO_LINUX_GNU_AARCH64}"
+
+          [packages."de.shareui.yukino".binaries."linux-musl-aarch64"]
+          file = "yukino-linux-musl-aarch64"
+          size = ${SIZE_YUKINO_LINUX_MUSL_AARCH64}
+          static = true
+          sha256 = "${SHA_YUKINO_LINUX_MUSL_AARCH64}"
+
+          [packages."de.shareui.yukino".binaries."windows-msvc-x86_64"]
+          file = "yukino-windows-msvc-x86_64.exe"
+          size = ${SIZE_YUKINO_WINDOWS_MSVC_X86_64}
+          sha256 = "${SHA_YUKINO_WINDOWS_MSVC_X86_64}"
+          EOF
+
+      - name: Publish Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/yukic-linux-gnu-x86_64
+            artifacts/yukic-linux-musl-x86_64
+            artifacts/yukic-linux-gnu-aarch64
+            artifacts/yukic-linux-musl-aarch64
+            artifacts/yukic-windows-msvc-x86_64.exe
+            artifacts/yukino-linux-gnu-x86_64
+            artifacts/yukino-linux-musl-x86_64
+            artifacts/yukino-linux-gnu-aarch64
+            artifacts/yukino-linux-musl-aarch64
+            artifacts/yukino-windows-msvc-x86_64.exe
+            artifacts/lacie.toml
+          tag_name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
