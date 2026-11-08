@@ -6,6 +6,7 @@ use yukic_ast::stmt::{Block, StmtKind};
 
 use crate::region::RegionManager;
 use crate::registry::TypeRegistry;
+use yukic_types::Type;
 
 pub fn fun_needs_local_region(
     fun: &FunDecl,
@@ -123,16 +124,45 @@ fn call_returns_regional_type(callee: &Expr, args: &[Expr], registry: &TypeRegis
         _ => None,
     };
     if let Some(id_name) = name {
+        if matches!(
+            id_name,
+            "_internal_region_used"
+                | "_internal_region_cap"
+                | "_internal_region_reset"
+                | "_internal_export"
+                | "region_used"
+                | "region_cap"
+                | "region_reset"
+                | "export"
+                | "raw_args"
+        ) {
+            return true;
+        }
         if id_name == "cast" && args.len() >= 2 && is_regional_cast_target(&args[1]) {
             return true;
         }
         let mangled = registry.resolve_fun_symbol(id_name, args.len());
+        let fn_full_ty = registry
+            .fn_types
+            .get(id_name)
+            .or_else(|| mangled.as_ref().and_then(|m| registry.fn_types.get(m)));
+        if let Some(Type::Fn { params, ret, is_cfun }) = fn_full_ty {
+            if !is_cfun {
+                if RegionManager::is_regional_type(ret) {
+                    return true;
+                }
+                if params.iter().any(|p| {
+                    (p.is_ref && RegionManager::is_regional_type(&p.ty))
+                        || matches!(&p.ty, Type::Ref { inner, .. } if RegionManager::is_regional_type(inner))
+                }) {
+                    return true;
+                }
+            }
+        }
         let fn_ty = registry
             .functions
             .get(id_name)
-            .or_else(|| mangled.as_ref().and_then(|m| registry.functions.get(m)))
-            .or_else(|| registry.fn_types.get(id_name))
-            .or_else(|| mangled.as_ref().and_then(|m| registry.fn_types.get(m)));
+            .or_else(|| mangled.as_ref().and_then(|m| registry.functions.get(m)));
         if let Some(ret_ty) = fn_ty {
             if RegionManager::is_regional_type(ret_ty) {
                 return true;
@@ -144,6 +174,23 @@ fn call_returns_regional_type(callee: &Expr, args: &[Expr], registry: &TypeRegis
 
 fn method_call_returns_regional_type(method_name: &str, registry: &TypeRegistry) -> bool {
     let suffix = format!("::{method_name}");
+    for (fn_name, fn_ty) in &registry.fn_types {
+        if fn_name.ends_with(&suffix) || fn_name.contains(&format!("::{method_name}_")) {
+            if let Type::Fn { params, ret, is_cfun } = fn_ty {
+                if !is_cfun {
+                    if RegionManager::is_regional_type(ret) {
+                        return true;
+                    }
+                    if params.iter().any(|p| {
+                        (p.is_ref && RegionManager::is_regional_type(&p.ty))
+                            || matches!(&p.ty, Type::Ref { inner, .. } if RegionManager::is_regional_type(inner))
+                    }) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
     for (fn_name, ret_ty) in &registry.functions {
         if (fn_name.ends_with(&suffix) || fn_name.contains(&format!("::{method_name}_")))
             && RegionManager::is_regional_type(ret_ty)

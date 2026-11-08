@@ -812,7 +812,7 @@ impl<'ctx> IntrinsicManager<'ctx> {
             return self.cast_float64_to_ptr(builder, val.into_float_value());
         }
 
-        if (src_ty.is_numeric() || *src_ty == Type::Char || *src_ty == Type::Bool || matches!(src_ty, Type::Ptr(_)))
+        if (src_ty.is_numeric() || *src_ty == Type::Char || *src_ty == Type::Bool || matches!(src_ty, Type::Ptr(_) | Type::TypeVar(_)))
             && *target_ty == Type::String
         {
             let reg = region_ptr.ok_or("string conversion requires active destination region")?;
@@ -1082,7 +1082,7 @@ impl<'ctx> IntrinsicManager<'ctx> {
                 ("yukino_rt_float64_to_string", extended.into())
             }
             Type::Float64 => ("yukino_rt_float64_to_string", val.into()),
-            Type::Ptr(_) => ("yukino_rt_ptr_to_string", val.into()),
+            Type::Ptr(_) | Type::TypeVar(_) => ("yukino_rt_ptr_to_string", val.into()),
             Type::Bool => ("yukino_rt_bool_to_string", val.into()),
             _ => return Err(format!("cannot convert `{src_ty}` to string")),
         };

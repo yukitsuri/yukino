@@ -1,6 +1,6 @@
-public load .utils: cast, assert, assert_eq, assert_ne, CastError, AssertionError, AssertEqualError
-public load .panic: panic
-public load .process: exit, args, raw_args
-public load .mem: ptr_of, from_raw_parts, region_used, region_cap, region_reset, export, persistent, Arena, MemoryError
-public load .slices: IndexError
-public load .macro: typeof, file, line, col, cfg, compile_error, compile_print, include_str, include_bytes, hostenv, yukienv, is_lib_connected, get_features, get_profileconfig, get_target, get_yukic_version
+public load .utils
+public load .panic
+public load .process
+public load .mem
+public load .slices
+public load .macro

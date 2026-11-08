@@ -556,6 +556,31 @@ fn test_relative_import_declarations() {
 }
 
 #[test]
+fn test_relative_import_keyword_ident_module() {
+    let src = "public load .panic; load .panic: panic; public load .init; load .get; load .set;";
+    let (module, diags) = parse_code(src);
+    assert!(diags.is_empty(), "diags: {diags:?}");
+    assert_eq!(module.items.len(), 5);
+    match &module.items[0].kind {
+        ItemKind::Import(imp) => {
+            assert_eq!(imp.path.prefix, PathPrefix::Relative(0));
+            assert_eq!(imp.path.segments.len(), 1);
+            assert!(matches!(&imp.path.segments[0].pattern, yukic_ast::ImportPattern::Exact(id) if id.name == "panic"));
+        }
+        other => panic!("expected Import, found {other:?}"),
+    }
+    match &module.items[1].kind {
+        ItemKind::Import(imp) => {
+            assert_eq!(imp.path.prefix, PathPrefix::Relative(0));
+            assert_eq!(imp.path.segments.len(), 1);
+            assert!(matches!(&imp.path.segments[0].pattern, yukic_ast::ImportPattern::Exact(id) if id.name == "panic"));
+            assert!(imp.symbols.is_some());
+        }
+        other => panic!("expected Import, found {other:?}"),
+    }
+}
+
+#[test]
 fn test_load_without_symbols_treats_as_wildcard() {
     let src = "load std.platformio; load std.platformio!;";
     let (module, diags) = parse_code(src);

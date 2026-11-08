@@ -63,6 +63,21 @@ impl<'a> TokenStream<'a> {
         check(&self.peek_at(k).kind)
     }
 
+    pub fn is_ident_token(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Ident(_)
+                | TokenKind::Init
+                | TokenKind::Get
+                | TokenKind::Set
+                | TokenKind::Panic
+        )
+    }
+
+    pub fn check_ident(&self) -> bool {
+        Self::is_ident_token(&self.peek().kind)
+    }
+
     pub fn eat_kind(&mut self, check: impl Fn(&TokenKind<'a>) -> bool) -> bool {
         if self.check_kind(check) {
             self.bump();

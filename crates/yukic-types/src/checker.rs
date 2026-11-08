@@ -521,11 +521,28 @@ impl TypeChecker {
     }
 
     fn check_fun(&mut self, decl: &FunDecl) {
+        let is_intrinsic_stub = decl.attrs.iter().any(|a| {
+            a.is("internal_cast_impl")
+                || a.is("internal_ptr_of_impl")
+                || a.is("internal_macro_impl")
+        });
+        if is_intrinsic_stub {
+            return;
+        }
+
         let prev_fn = self.current_fn_name.replace(decl.name.name.clone());
-        let ret = decl
+        let generic_map: std::collections::HashMap<String, Type> = decl
+            .generics
+            .iter()
+            .map(|g| (g.name.name.clone(), Type::TypeVar(g.name.name.clone())))
+            .collect();
+        let mut ret = decl
             .return_type
             .as_ref()
             .map_or(Type::Void, |t| self.resolve_type_node(t));
+        if !generic_map.is_empty() {
+            ret = ret.substitute(&generic_map);
+        }
         self.current_return_type = Some(ret.clone());
         self.env.push_scope();
 
@@ -534,6 +551,9 @@ impl TypeChecker {
                 .ty
                 .as_ref()
                 .map_or(Type::Infer(0), |t| self.resolve_type_node(t));
+            if !generic_map.is_empty() {
+                param_ty = param_ty.substitute(&generic_map);
+            }
             if param.is_variadic && !matches!(param_ty, Type::Array(_)) {
                 param_ty = Type::Array(Box::new(param_ty));
             }
@@ -2417,7 +2437,7 @@ impl TypeChecker {
         }
         let arg = &args[0];
         let ty = self.infer_expr(arg)?;
-        if !matches!(ty, Type::Struct(_)) {
+        if !matches!(ty, Type::Struct(_) | Type::TypeVar(_) | Type::Infer(_)) {
             let diag = Diagnostic::error(
                 ErrorCode::E0401,
                 format!("`panic` expects a struct error payload, found `{}`", ty),
@@ -2685,7 +2705,12 @@ impl TypeChecker {
             }
         }
         if let Type::Ptr(inner) = ptr_ty {
-            if *inner == Type::Uint8 && args.len() == 2 && (name == "from_raw_parts" || name.starts_with("string")) {
+            if *inner == Type::Uint8
+                && args.len() == 2
+                && (name == "from_raw_parts"
+                    || name == "_internal_slice_from_raw_parts"
+                    || name.starts_with("string"))
+            {
                 Ok(Type::String)
             } else if *inner == Type::Uint8 && args.len() == 3 {
                 Ok(Type::Bytes)

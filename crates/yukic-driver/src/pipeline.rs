@@ -935,6 +935,10 @@ fn collect_connected_libs(
     if let Some(val) = manifest {
         collect_manifest_libs(val, target.as_str(), &mut libs);
     }
+    let includes = load_includes_from_manifest(manifest);
+    if includes.iter().any(|b| b == "core") && !libs.iter().any(|l| l == "core") {
+        libs.push("core".to_string());
+    }
     libs
 }
 
@@ -1721,8 +1725,12 @@ fn run_type_check_pass(
     source_map: &SourceMap,
     emitter: &mut DiagnosticEmitter,
     target: TargetTriple,
+    has_core: bool,
 ) {
     let mut checker = TypeChecker::with_target(target);
+    if has_core {
+        checker.env.register_core_builtins();
+    }
     populate_imported_signatures(resolver, loaded_modules, &mut checker);
 
     if let Err(diags) = checker.check_module(ast) {
@@ -2302,6 +2310,7 @@ fn compile_ykn_file(
     let alias_map = collect_alias_map(&resolver);
     yukic_ast::substitute_module_aliases(&mut combined_ast, &alias_map);
 
+    let has_core = macro_cfg.is_lib_connected("core");
     run_type_check_pass(
         &combined_ast,
         &resolver,
@@ -2309,6 +2318,7 @@ fn compile_ykn_file(
         &source_map,
         &mut emitter,
         target,
+        has_core,
     );
     if emitter.has_errors() {
         return Err(DriverError::FrontendValidation(emitter.error_count()));

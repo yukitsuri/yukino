@@ -1228,7 +1228,7 @@ impl TokenStream<'_> {
 
     fn parse_import_pattern(&mut self) -> ImportPattern {
         if self.eat_kind(|k| matches!(k, TokenKind::Star)) {
-            if self.check_kind(|k| matches!(k, TokenKind::Ident(_))) {
+            if self.check_ident() {
                 let id = self.parse_ident_node();
                 ImportPattern::Suffix(id)
             } else {
@@ -1272,7 +1272,7 @@ impl TokenStream<'_> {
 
         let mut segments = Vec::new();
         if matches!(prefix, PathPrefix::Relative(_))
-            && self.check_kind(|k| matches!(k, TokenKind::Ident(_) | TokenKind::Star))
+            && (self.check_ident() || self.check_kind(|k| matches!(k, TokenKind::Star)))
         {
             segments.push(self.parse_import_path_segment());
         }

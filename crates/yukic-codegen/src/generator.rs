@@ -418,10 +418,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok(());
         }
 
-        let ret_ty = fun
+        let generic_map: std::collections::HashMap<String, Type> = fun
+            .generics
+            .iter()
+            .map(|g| (g.name.name.clone(), Type::TypeVar(g.name.name.clone())))
+            .collect();
+
+        let mut ret_ty = fun
             .return_type
             .as_ref()
             .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+        if !generic_map.is_empty() {
+            ret_ty = ret_ty.substitute(&generic_map);
+        }
         let llvm_ret = self.llvm_return_type(&ret_ty)?;
 
         let mut param_types = Vec::new();
@@ -433,6 +442,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ty
                     .as_ref()
                     .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                if !generic_map.is_empty() {
+                    pty = pty.substitute(&generic_map);
+                }
                 if param.is_variadic && !matches!(pty, Type::Array(_)) {
                     pty = Type::Array(Box::new(pty));
                 }
@@ -1170,10 +1182,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             return self.compile_main_fun(fun);
         }
 
-        let ret_ty = fun
+        let generic_map: std::collections::HashMap<String, Type> = fun
+            .generics
+            .iter()
+            .map(|g| (g.name.name.clone(), Type::TypeVar(g.name.name.clone())))
+            .collect();
+
+        let mut ret_ty = fun
             .return_type
             .as_ref()
             .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+        if !generic_map.is_empty() {
+            ret_ty = ret_ty.substitute(&generic_map);
+        }
         let llvm_ret = self.llvm_return_type(&ret_ty)?;
 
         let mut param_types = Vec::new();
@@ -1185,6 +1206,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ty
                     .as_ref()
                     .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
+                if !generic_map.is_empty() {
+                    pty = pty.substitute(&generic_map);
+                }
                 if param.is_variadic && !matches!(pty, Type::Array(_)) {
                     pty = Type::Array(Box::new(pty));
                 }
@@ -1255,6 +1279,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             false,
         )
         .with_panic_strategy(&self.panic_strategy);
+        body_compiler.generic_map = generic_map;
         body_compiler.setup_params(&fun.params, has_dest)?;
         body_compiler.compile_block(&fun.body)?;
 

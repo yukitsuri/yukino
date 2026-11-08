@@ -316,7 +316,7 @@ define i32 @fn_test_pipeline(i32 %x) {
 
     // 4. Test .ykn -> .a
     let ykn_path = out_dir.join("math.ykn");
-    fs::write(&ykn_path, "fun calc(x: int32) -> int32 { space }").expect("write ykn");
+    fs::write(&ykn_path, "fun calc(x: int32) -> int32 { return x }").expect("write ykn");
 
     let ykn_static_out = out_dir.join("libmath.a");
     let mut config_ykn = DriverConfig::new(ykn_path.to_string_lossy().to_string())

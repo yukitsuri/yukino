@@ -219,6 +219,12 @@ impl SemanticContracts {
             return true;
         }
 
+        if matches!(src, Type::TypeVar(_) | Type::Infer(_) | Type::Error)
+            || matches!(target, Type::TypeVar(_) | Type::Infer(_) | Type::Error)
+        {
+            return true;
+        }
+
         // numeric conversions
         if src.is_numeric() && target.is_numeric() {
             return true;

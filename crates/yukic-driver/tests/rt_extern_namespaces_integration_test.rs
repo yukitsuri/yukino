@@ -29,8 +29,8 @@ externc {
 }
 
 fun main() {
-    set str_num = rt::cast(123, "string")
-    set t = rt::typeof!(str_num)
+    set str_num = cast(123, "string")
+    set t = typeof!(str_num)
     set c_res = extern::abs(-42)
 }
 "#,

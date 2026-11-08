@@ -91,7 +91,7 @@ fun main() {
 }
 
 #[test]
-fn test_array_alloc_rejects_unsized_slice_without_eq() {
+fn test_array_alloc_unsized_slice_without_eq_defaults_to_empty() {
     let (dir, input, output) = setup_test_dir("unsized-no-eq");
     fs::write(
         dir.join("yuki.toml"),
@@ -114,13 +114,8 @@ fun main() {
         .with_emit(EmitKind::LlvmIr);
     config.output_file = Some(output.to_string_lossy().into_owned());
 
-    let result = run_compiler_driver(&config);
-    assert!(result.is_err(), "dynamic slice without length or '=' must fail to compile");
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("aborting due to"),
-        "error must abort compilation: {err_msg}"
-    );
+    run_compiler_driver(&config).expect("dynamic slice without initializer must compile");
+    assert!(output.exists(), "llvm ir file must be emitted");
 
     let _ = fs::remove_dir_all(&dir);
 }

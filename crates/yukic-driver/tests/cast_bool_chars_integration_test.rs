@@ -38,11 +38,6 @@ fun main() {
     // 3. string <-> char[]
     set chars = cast("hello", "char[]")
     set back_str = cast(chars, "string")
-
-    // 4. rt::cast namespace
-    set rt_str = rt::cast(true, "string")
-    set rt_chars = rt::cast("world", "char[]")
-    set rt_back = rt::cast(rt_chars, "string")
 }
 "#,
     )

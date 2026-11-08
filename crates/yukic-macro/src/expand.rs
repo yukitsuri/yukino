@@ -38,6 +38,7 @@ impl<'a> AstExpander<'a> {
             Some(timeout) => MacroRunnerClient::with_timeout(timeout),
             None => MacroRunnerClient::new(),
         };
+        let all_macros_imported = config.is_lib_connected("core");
         Self {
             table: MacroTable::new(),
             config,
@@ -47,7 +48,7 @@ impl<'a> AstExpander<'a> {
             tracked_files: Vec::new(),
             runner_client,
             imported_macros: std::collections::HashSet::new(),
-            all_macros_imported: false,
+            all_macros_imported,
             direct_internal_access: false,
         }
     }
@@ -592,6 +593,54 @@ impl<'a> AstExpander<'a> {
             ExprKind::For { iter, body, .. } => {
                 self.expand_expr(iter, depth);
                 self.expand_block(body);
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.expand_expr(cond, depth);
+                self.expand_block(body);
+            }
+            ExprKind::Loop { body, .. } => {
+                self.expand_block(body);
+            }
+            ExprKind::Switch { target, arms } => {
+                self.expand_expr(target, depth);
+                for arm in arms {
+                    if let Some(g) = &mut arm.guard {
+                        self.expand_expr(g, depth);
+                    }
+                    self.expand_block(&mut arm.body);
+                }
+            }
+            ExprKind::StructInit(_, fields) => {
+                for field in fields {
+                    self.expand_expr(&mut field.value, depth);
+                }
+            }
+            ExprKind::TupleInit(items) => {
+                for item in items {
+                    self.expand_expr(item, depth);
+                }
+            }
+            ExprKind::MapInit(pairs) => {
+                for (k, v) in pairs {
+                    self.expand_expr(k, depth);
+                    self.expand_expr(v, depth);
+                }
+            }
+            ExprKind::FieldAccess(target, _) => {
+                self.expand_expr(target, depth);
+            }
+            ExprKind::IndexAccess(target, idx) => {
+                self.expand_expr(target, depth);
+                self.expand_expr(idx, depth);
+            }
+            ExprKind::SliceAccess(target, start, end, _) => {
+                self.expand_expr(target, depth);
+                if let Some(s) = start {
+                    self.expand_expr(s, depth);
+                }
+                if let Some(e) = end {
+                    self.expand_expr(e, depth);
+                }
             }
             ExprKind::Ref { expr, .. } | ExprKind::NamedArg(_, expr) => {
                 self.expand_expr(expr, depth);

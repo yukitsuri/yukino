@@ -72,6 +72,7 @@ pub struct BodyCompiler<'a, 'ctx> {
     pub expected_expr_ty: Option<BasicTypeEnum<'ctx>>,
     pub expected_sem_ty: Option<Type>,
     pub expected_fixed_array_size: Option<usize>,
+    pub generic_map: HashMap<String, Type>,
 }
 
 impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
@@ -127,6 +128,7 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             expected_expr_ty: None,
             expected_sem_ty: None,
             expected_fixed_array_size: None,
+            generic_map: HashMap::new(),
         }
     }
 
@@ -757,6 +759,13 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 .ty
                 .as_ref()
                 .map(|t| self.registry.canonicalize_type(&ast_type_to_type(t)));
+            if let Some(t) = sem_ty {
+                if !self.generic_map.is_empty() {
+                    sem_ty = Some(t.substitute(&self.generic_map));
+                } else {
+                    sem_ty = Some(t);
+                }
+            }
             if param.is_variadic {
                 if let Some(t) = sem_ty {
                     sem_ty = Some(if matches!(t, Type::Array(_)) {
@@ -826,6 +835,13 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 .ty
                 .as_ref()
                 .map(|t| self.registry.canonicalize_type(&ast_type_to_type(t)));
+            if let Some(t) = sem_ty {
+                if !self.generic_map.is_empty() {
+                    sem_ty = Some(t.substitute(&self.generic_map));
+                } else {
+                    sem_ty = Some(t);
+                }
+            }
             if param.is_variadic {
                 if let Some(t) = sem_ty {
                     sem_ty = Some(if matches!(t, Type::Array(_)) {

@@ -309,6 +309,14 @@ impl TypeEnv {
                 is_cfun: false,
             },
         );
+        self.functions.insert(
+            "from_raw_parts".to_string(),
+            FnSig {
+                params: vec![TypeParam::value(Type::Infer(0)), TypeParam::value(Type::Int64)],
+                ret: Type::Infer(0),
+                is_cfun: false,
+            },
+        );
     }
 
     pub fn push_scope(&mut self) {
