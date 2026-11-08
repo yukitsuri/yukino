@@ -19,6 +19,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install LLVM dependencies
+        run: |
+          sudo apt-get update
+          if command -v llvm-config >/dev/null 2>&1; then
+            LLVM_VER=$(llvm-config --version | cut -d. -f1)
+            sudo apt-get install -y "libpolly-${LLVM_VER}-dev" || sudo apt-get install -y libpolly-dev || true
+          else
+            sudo apt-get install -y libpolly-dev || true
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
