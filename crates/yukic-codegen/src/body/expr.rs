@@ -3147,7 +3147,11 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     }
                 }
                 Type::Class(name) => {
-                    if let Some(layout) = self.registry.classes.get(&name) {
+                    let layout_opt = self.registry.classes.get(&name).or_else(|| {
+                        let short = name.rsplit("::").next().unwrap_or(&name);
+                        self.registry.classes.get(short)
+                    });
+                    if let Some(layout) = layout_opt {
                         return layout.fields.iter().position(|(f, _)| f == field_name).map(|i| i + 1);
                     }
                 }
@@ -4010,7 +4014,11 @@ pub(crate) fn deduce_closure_expr_type(
             let target_ty = deduce_closure_expr_type(target, locals, bc);
             match target_ty {
                 Some(Type::Class(ref cname)) => {
-                    if let Some(layout) = bc.registry.classes.get(cname) {
+                    let layout_opt = bc.registry.classes.get(cname).or_else(|| {
+                        let short = cname.rsplit("::").next().unwrap_or(cname);
+                        bc.registry.classes.get(short)
+                    });
+                    if let Some(layout) = layout_opt {
                         if let Some((_, fty)) = layout.fields.iter().find(|(n, _)| n == &field.name) {
                             return Some(fty.clone());
                         }

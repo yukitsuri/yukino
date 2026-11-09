@@ -734,7 +734,10 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 layout.fields.iter().find(|(f, _)| f == field_name).map(|(_, ty)| ty.clone())
             }
             Type::Class(name) => {
-                let layout = self.registry.classes.get(&name)?;
+                let layout = self.registry.classes.get(&name).or_else(|| {
+                    let short = name.rsplit("::").next().unwrap_or(&name);
+                    self.registry.classes.get(short)
+                })?;
                 layout.fields.iter().find(|(f, _)| f == field_name).map(|(_, ty)| ty.clone())
             }
             _ => None,
