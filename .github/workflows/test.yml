@@ -19,10 +19,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Workaround missing LLVM Polly library
+      - name: Install dependencies (LLVM, lld, Polly)
         run: |
           sudo apt-get update
-          sudo apt-get install -y 'libpolly-*-dev' || true
+          sudo apt-get install -y lld 'libpolly-*-dev' || true
+
+          if ! command -v ld.lld >/dev/null 2>&1; then
+            for candidate in $(which ld.lld-20 ld.lld-19 ld.lld-18 ld.lld-17 ld.lld-16 2>/dev/null) $(find /usr/lib/llvm-*/bin/ld.lld 2>/dev/null); do
+              if [ -x "$candidate" ]; then
+                sudo ln -sf "$candidate" /usr/local/bin/ld.lld
+                break
+              fi
+            done
+          fi
 
           for cfg in $(which llvm-config llvm-config-18 llvm-config-19 llvm-config-17 llvm-config-16 2>/dev/null); do
             dir=$($cfg --libdir 2>/dev/null || true)
