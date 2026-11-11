@@ -352,14 +352,34 @@ impl<'a, 'ctx> TypeLowerer<'a, 'ctx> {
     }
 
     pub fn class_instance_type(&self, name: &str) -> Result<StructType<'ctx>, String> {
+        let short = name.rsplit("::").next().unwrap_or(name);
         let full_name = format!("class.{name}");
-        if let Some(existing) = self.context.get_struct_type(&full_name) {
-            return Ok(existing);
+        let short_name = format!("class.{short}");
+        if let Some(existing) = self
+            .context
+            .get_struct_type(&full_name)
+            .or_else(|| self.context.get_struct_type(&short_name))
+        {
+            if !existing.is_opaque() {
+                return Ok(existing);
+            }
         }
-        let st = self.context.opaque_struct_type(&full_name);
+        let st = self
+            .context
+            .get_struct_type(&full_name)
+            .unwrap_or_else(|| self.context.opaque_struct_type(&full_name));
+        if !st.is_opaque() {
+            return Ok(st);
+        }
         let mut fields = vec![self.ptr_type().into()]; // vtable ptr at index 0
 
-        if let Some(layout) = self.registry.classes.get(name) {
+        let layout_opt = self
+            .registry
+            .classes
+            .get(name)
+            .or_else(|| self.registry.classes.get(short));
+
+        if let Some(layout) = layout_opt {
             for (_, field_ty) in &layout.fields {
                 fields.push(self.lower_type(field_ty)?);
             }

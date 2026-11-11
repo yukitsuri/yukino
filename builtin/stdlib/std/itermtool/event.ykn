@@ -193,6 +193,19 @@ public fun read_event() -> Event {
         return event_key(key_char(char_s, true, false, false))
     }
 
+    if c == 28 {
+        return event_key(key_char("\\", true, false, false))
+    }
+    if c == 29 {
+        return event_key(key_char("]", true, false, false))
+    }
+    if c == 30 {
+        return event_key(key_char("^", true, false, false))
+    }
+    if c == 31 {
+        return event_key(key_char("7", true, false, false))
+    }
+
     if c >= 33 && c <= 126 {
         set char_s = byte_to_str(cast(c, "uint8"))
         return event_key(key_char(char_s, false, false, false))
