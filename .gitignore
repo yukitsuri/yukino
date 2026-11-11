@@ -12,3 +12,6 @@ result
 **/yuki-work/
 builtin/stdlib/target/
 target/
+
+# testing (will be opened soon)
+docs/LLM/ 
