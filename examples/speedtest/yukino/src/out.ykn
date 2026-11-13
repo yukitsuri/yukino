@@ -11,6 +11,7 @@ externc {
     cfun write(fd: int32, buf: ptr<uint8>, count: int64) -> int64;
 }
 
+#[inline_always]
 fun fmt_u64(val_in: uint64, ref ~dst: bytes, offset: int64, ref ~tmp: bytes) -> int64 {
     set v: uint64 = val_in
     set n: int64 = 0
@@ -28,6 +29,7 @@ fun fmt_u64(val_in: uint64, ref ~dst: bytes, offset: int64, ref ~tmp: bytes) -> 
     return n
 }
 
+#[inline_always]
 fun fmt_line(ref ~dst: bytes, offset: int64, index: uint64, value: uint64, ref ~tmp: bytes) -> int64 {
     set n: int64 = fmt_u64(index, ref ~dst, offset, ref ~tmp)
     rewrite dst[offset + n] = 32u8
@@ -37,6 +39,7 @@ fun fmt_line(ref ~dst: bytes, offset: int64, index: uint64, value: uint64, ref ~
     return n + 1
 }
 
+#[region::capacity(65536)]
 public fun out_buf() -> uint64 {
     set r = init Rng(RNG_SEED)
     set buf = alloc_u8(OUT_BUF_SIZE)
@@ -58,6 +61,7 @@ public fun out_buf() -> uint64 {
     return res
 }
 
+#[region::capacity(4096)]
 public fun out_line() -> uint64 {
     set r = init Rng(RNG_SEED)
     set line = alloc_u8(MAX_LINE_BYTES)

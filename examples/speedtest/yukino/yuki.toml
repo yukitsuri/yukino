@@ -19,7 +19,7 @@ strip_unused = true
 opt_level = 3
 lto = true
 debug_assertions = false
-panic_strategy = "unwind"
+panic_strategy = "abort"
 strip = true
 function_sections = true
 
