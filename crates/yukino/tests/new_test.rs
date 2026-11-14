@@ -11,12 +11,34 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn bin_path() -> PathBuf {
-    let mut p = std::env::current_exe().expect("current exe");
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
+    if let Ok(p) = std::env::var("YUKINO") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return pb;
+        }
     }
-    p.join("yukino")
+    if let Some(cargo_bin) = std::env::var_os("CARGO_BIN_EXE_yukino") {
+        let pb = PathBuf::from(cargo_bin);
+        if pb.is_file() {
+            return pb;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for d in exe.ancestors().take(7) {
+            let candidate = d.join("yukino");
+            if candidate.is_file() {
+                return candidate;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let win_candidate = d.join("yukino.exe");
+                if win_candidate.is_file() {
+                    return win_candidate;
+                }
+            }
+        }
+    }
+    PathBuf::from("yukino")
 }
 
 #[test]
