@@ -1,0 +1,36 @@
+load std.io: println
+load core.utils: cast
+
+fun evaluate_score(score: int32) -> string {
+    // switch uses pattern -> { ... } or pattern -> expr, with optional 'if' guards and 'else ->' default
+    return switch score {
+        100 -> "Perfect score"
+        s if s >= 80 -> "Distinction"
+        s if s >= 50 -> "Passed"
+        else -> "Failed"
+    }
+}
+
+fun main() {
+    // Variable declaration with set, mutation with rewrite
+    set counter: int32 = 10
+    rewrite counter += 5
+    println("Counter: " + cast(counter, "string"))
+
+    // Pattern matching via switch
+    set evaluation = evaluate_score(85)
+    println("Evaluation: " + evaluation)
+
+    // for loop works over numeric ranges (0..n or 0..=n). Slice indexing is used to iterate collections.
+    set numbers: int32[] = [1, 2, 3, 4, 5]
+    set total: int32 = 0
+    for i in 0..numbers.len() {
+        rewrite total += numbers[i]
+    }
+    println("Total: " + cast(total, "string"))
+
+    // Anonymous functions / closures always start with 'fun'
+    set double_fn = fun(x: int32) => x * 2
+    set doubled = double_fn(21)
+    println("Doubled: " + cast(doubled, "string"))
+}

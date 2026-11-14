@@ -104,6 +104,15 @@ set str_val: string = cast(small, "string")
 | `cfun(...)` | `ptr<void>` | Conversion of C ABI function pointer to generic pointer |
 | `bytes` | `string` | UTF-8 validated string creation from byte buffer |
 | `string` | `bytes` | Byte slice view of string buffer without copying |
+| `bytes` | `uint8[]` | Seamless zero-cost slice descriptor `{ ptr, len, cap }` reinterpretation without allocation or data copy (O(1)) |
+| `uint8[]` | `bytes` | Zero-cost conversion of dynamic `uint8[]` array into `bytes` buffer (O(1)) |
+
+```yukino
+// Conversion between bytes and uint8[]:
+set raw_bytes: bytes = cast("Hello", "bytes")
+set u8_slice: uint8[] = cast(raw_bytes, "uint8[]")
+set restored_bytes: bytes = cast(u8_slice, "bytes")
+```
 
 ### 2.3 Assertions: assert, assert_eq, assert_ne
 

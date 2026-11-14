@@ -51,4 +51,11 @@ public class HashSet<T> {
     public fun remove_i64(val: int64) -> bool {
         return yukistd_set_del_i64(this.handle, val)
     }
+
+    public fun destroy() {
+        if this.handle != null {
+            yukistd_set_free(this.handle)
+            rewrite this.handle = null
+        }
+    }
 }

@@ -406,7 +406,17 @@ loop {
 
 #### 3. Iteration loop: for
 
-The `for` loop is used for iterating over numeric ranges. Iterating over arrays and other collections is not supported in the current compiler implementation (compilation error: unsupported iterator in for loop):
+The `for` loop is used for iterating over numeric ranges. Direct iteration over collections (`for item in array`) is not supported by the current compiler implementation (compilation error: `unsupported iterator in for loop`). The canonical way to iterate over arrays and slices in Yukino is iterating over the index range `0..arr.len()`:
+
+```yukino
+set fruits: string[] = ["apple", "banana", "pear"]
+
+// Iterate over array elements by index:
+for i in 0..fruits.len() {
+    set item = fruits[i]
+    println("${i}: ${item}")
+}
+```
 
 - **Half-open range `start..end`**: the range `[start, end)`, excluding the final value `end`:
   ```yukino

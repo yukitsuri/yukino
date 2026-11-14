@@ -1,0 +1,103 @@
+public class PriorityQueue<T> {
+    items: int64[]
+    is_max: bool
+
+    public fun init(is_max: bool = true) {
+        rewrite this.items = []
+        rewrite this.is_max = is_max
+    }
+
+    public fun push(val: int64) {
+        this.items.push(val)
+        this.sift_up(this.items.len() - 1)
+    }
+
+    public fun pop() -> int64? {
+        set n = this.items.len()
+        if n == 0 {
+            return null
+        }
+        set root = this.items[0]
+        set last = this.items[n - 1]
+        rewrite this.items[0] = last
+        this.items.pop()
+        if this.items.len() > 1 {
+            this.sift_down(0)
+        }
+        return root
+    }
+
+    #[inline_always]
+    public fun peek() -> int64? {
+        if this.items.is_empty() {
+            return null
+        }
+        return this.items[0]
+    }
+
+    #[inline_always]
+    public fun len() -> int64 {
+        return this.items.len()
+    }
+
+    #[inline_always]
+    public fun is_empty() -> bool {
+        return this.items.is_empty()
+    }
+
+    #[inline_always]
+    public fun clear() {
+        this.items.clear()
+    }
+
+    #[inline_always]
+    public fun to_array() -> int64[] {
+        return this.items.cp()
+    }
+
+    fun is_better(a: int64, b: int64) -> bool {
+        if this.is_max {
+            return a > b
+        }
+        return a < b
+    }
+
+    fun sift_up(index: int64) {
+        set i = index
+        while i > 0 {
+            set parent = (i - 1) / 2
+            if this.is_better(this.items[i], this.items[parent]) {
+                set tmp = this.items[i]
+                rewrite this.items[i] = this.items[parent]
+                rewrite this.items[parent] = tmp
+                rewrite i = parent
+            } else {
+                break
+            }
+        }
+    }
+
+    fun sift_down(index: int64) {
+        set n = this.items.len()
+        set i = index
+        while true {
+            set left = 2 * i + 1
+            set right = 2 * i + 2
+            set target = i
+            if left < n && this.is_better(this.items[left], this.items[target]) {
+                rewrite target = left
+            }
+            if right < n && this.is_better(this.items[right], this.items[target]) {
+                rewrite target = right
+            }
+            if target != i {
+                set tmp = this.items[i]
+                rewrite this.items[i] = this.items[target]
+                rewrite this.items[target] = tmp
+                rewrite i = target
+            } else {
+                break
+            }
+        }
+    }
+}

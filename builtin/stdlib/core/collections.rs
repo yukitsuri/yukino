@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, LinkedList, VecDeque};
 
 use crate::strings::YukinoString;
 
@@ -76,15 +76,12 @@ pub extern "C" fn yukistd_map_get(
     let map = unsafe { &*m };
     match map.str_map.get(k.as_ref()) {
         Some(val) => {
-            MAP_STR_BUF.with(|buf_cell| {
-                let mut buf = buf_cell.borrow_mut();
-                buf.clear();
-                buf.extend_from_slice(val.as_bytes());
-                if !out_len.is_null() {
-                    unsafe { *out_len = buf.len() as i64; }
+            if !out_len.is_null() {
+                unsafe {
+                    *out_len = val.len() as i64;
                 }
-                buf.as_ptr()
-            })
+            }
+            val.as_ptr()
         }
         None => {
             if !out_len.is_null() {
@@ -425,4 +422,333 @@ pub extern "C" fn yukistd_deque_clear(d: *mut YukinoDeque) {
     }
     let deque = unsafe { &mut *d };
     deque.i64_deque.clear();
+}
+
+#[derive(Default)]
+pub struct YukinoLinkedList {
+    i64_list: LinkedList<i64>,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_new() -> *mut YukinoLinkedList {
+    Box::into_raw(Box::new(YukinoLinkedList::default()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_free(l: *mut YukinoLinkedList) {
+    if !l.is_null() {
+        drop(unsafe { Box::from_raw(l) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_push_back(l: *mut YukinoLinkedList, val: i64) {
+    if l.is_null() {
+        return;
+    }
+    let list = unsafe { &mut *l };
+    list.i64_list.push_back(val);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_push_front(l: *mut YukinoLinkedList, val: i64) {
+    if l.is_null() {
+        return;
+    }
+    let list = unsafe { &mut *l };
+    list.i64_list.push_front(val);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_pop_front(
+    l: *mut YukinoLinkedList,
+    out_found: *mut bool,
+) -> i64 {
+    if l.is_null() {
+        if !out_found.is_null() {
+            unsafe { *out_found = false; }
+        }
+        return 0;
+    }
+    let list = unsafe { &mut *l };
+    match list.i64_list.pop_front() {
+        Some(val) => {
+            if !out_found.is_null() {
+                unsafe { *out_found = true; }
+            }
+            val
+        }
+        None => {
+            if !out_found.is_null() {
+                unsafe { *out_found = false; }
+            }
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_pop_back(
+    l: *mut YukinoLinkedList,
+    out_found: *mut bool,
+) -> i64 {
+    if l.is_null() {
+        if !out_found.is_null() {
+            unsafe { *out_found = false; }
+        }
+        return 0;
+    }
+    let list = unsafe { &mut *l };
+    match list.i64_list.pop_back() {
+        Some(val) => {
+            if !out_found.is_null() {
+                unsafe { *out_found = true; }
+            }
+            val
+        }
+        None => {
+            if !out_found.is_null() {
+                unsafe { *out_found = false; }
+            }
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_peek_front(
+    l: *mut YukinoLinkedList,
+    out_found: *mut bool,
+) -> i64 {
+    if l.is_null() {
+        if !out_found.is_null() {
+            unsafe { *out_found = false; }
+        }
+        return 0;
+    }
+    let list = unsafe { &*l };
+    match list.i64_list.front() {
+        Some(&val) => {
+            if !out_found.is_null() {
+                unsafe { *out_found = true; }
+            }
+            val
+        }
+        None => {
+            if !out_found.is_null() {
+                unsafe { *out_found = false; }
+            }
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_peek_back(
+    l: *mut YukinoLinkedList,
+    out_found: *mut bool,
+) -> i64 {
+    if l.is_null() {
+        if !out_found.is_null() {
+            unsafe { *out_found = false; }
+        }
+        return 0;
+    }
+    let list = unsafe { &*l };
+    match list.i64_list.back() {
+        Some(&val) => {
+            if !out_found.is_null() {
+                unsafe { *out_found = true; }
+            }
+            val
+        }
+        None => {
+            if !out_found.is_null() {
+                unsafe { *out_found = false; }
+            }
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_len(l: *mut YukinoLinkedList) -> i64 {
+    if l.is_null() {
+        return 0;
+    }
+    let list = unsafe { &*l };
+    list.i64_list.len() as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_linked_list_clear(l: *mut YukinoLinkedList) {
+    if l.is_null() {
+        return;
+    }
+    let list = unsafe { &mut *l };
+    list.i64_list.clear();
+}
+
+#[repr(C)]
+pub struct YukinoIntrusiveNode {
+    pub prev: *mut YukinoIntrusiveNode,
+    pub next: *mut YukinoIntrusiveNode,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_node_init(node: *mut YukinoIntrusiveNode) {
+    if node.is_null() {
+        return;
+    }
+    unsafe {
+        (*node).prev = node;
+        (*node).next = node;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_new() -> *mut YukinoIntrusiveNode {
+    let node = Box::into_raw(Box::new(YukinoIntrusiveNode {
+        prev: std::ptr::null_mut(),
+        next: std::ptr::null_mut(),
+    }));
+    unsafe {
+        (*node).prev = node;
+        (*node).next = node;
+    }
+    node
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_free(head: *mut YukinoIntrusiveNode) {
+    if !head.is_null() {
+        drop(unsafe { Box::from_raw(head) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_node_is_linked(node: *mut YukinoIntrusiveNode) -> bool {
+    if node.is_null() {
+        return false;
+    }
+    unsafe { (*node).next != node && !(*node).next.is_null() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_is_empty(head: *mut YukinoIntrusiveNode) -> bool {
+    if head.is_null() {
+        return true;
+    }
+    unsafe { (*head).next == head }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_len(head: *mut YukinoIntrusiveNode) -> i64 {
+    if head.is_null() {
+        return 0;
+    }
+    let mut count = 0i64;
+    unsafe {
+        let mut curr = (*head).next;
+        while curr != head && !curr.is_null() {
+            count += 1;
+            curr = (*curr).next;
+        }
+    }
+    count
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_push_back(
+    head: *mut YukinoIntrusiveNode,
+    node: *mut YukinoIntrusiveNode,
+) {
+    if head.is_null() || node.is_null() {
+        return;
+    }
+    unsafe {
+        let prev = (*head).prev;
+        (*node).next = head;
+        (*node).prev = prev;
+        (*prev).next = node;
+        (*head).prev = node;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_push_front(
+    head: *mut YukinoIntrusiveNode,
+    node: *mut YukinoIntrusiveNode,
+) {
+    if head.is_null() || node.is_null() {
+        return;
+    }
+    unsafe {
+        let next = (*head).next;
+        (*node).prev = head;
+        (*node).next = next;
+        (*next).prev = node;
+        (*head).next = node;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_pop_front(
+    head: *mut YukinoIntrusiveNode,
+) -> *mut YukinoIntrusiveNode {
+    if head.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let first = (*head).next;
+        if first == head || first.is_null() {
+            return std::ptr::null_mut();
+        }
+        let next = (*first).next;
+        (*head).next = next;
+        (*next).prev = head;
+        (*first).prev = first;
+        (*first).next = first;
+        first
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_pop_back(
+    head: *mut YukinoIntrusiveNode,
+) -> *mut YukinoIntrusiveNode {
+    if head.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let last = (*head).prev;
+        if last == head || last.is_null() {
+            return std::ptr::null_mut();
+        }
+        let prev = (*last).prev;
+        (*head).prev = prev;
+        (*prev).next = head;
+        (*last).prev = last;
+        (*last).next = last;
+        last
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yukistd_intrusive_list_remove(node: *mut YukinoIntrusiveNode) {
+    if node.is_null() {
+        return;
+    }
+    unsafe {
+        let prev = (*node).prev;
+        let next = (*node).next;
+        if !prev.is_null() {
+            (*prev).next = next;
+        }
+        if !next.is_null() {
+            (*next).prev = prev;
+        }
+        (*node).prev = node;
+        (*node).next = node;
+    }
 }

@@ -1,0 +1,111 @@
+public struct IntrusiveNode {
+    prev: ptr<IntrusiveNode>
+    next: ptr<IntrusiveNode>
+}
+
+cfun yukistd_intrusive_node_init(node: ptr<IntrusiveNode>)
+cfun yukistd_intrusive_node_is_linked(node: ptr<IntrusiveNode>) -> bool
+cfun yukistd_intrusive_list_new() -> ptr<IntrusiveNode>
+cfun yukistd_intrusive_list_free(head: ptr<IntrusiveNode>)
+cfun yukistd_intrusive_list_is_empty(head: ptr<IntrusiveNode>) -> bool
+cfun yukistd_intrusive_list_len(head: ptr<IntrusiveNode>) -> int64
+cfun yukistd_intrusive_list_push_back(head: ptr<IntrusiveNode>, node: ptr<IntrusiveNode>)
+cfun yukistd_intrusive_list_push_front(head: ptr<IntrusiveNode>, node: ptr<IntrusiveNode>)
+cfun yukistd_intrusive_list_pop_front(head: ptr<IntrusiveNode>) -> ptr<IntrusiveNode>
+cfun yukistd_intrusive_list_pop_back(head: ptr<IntrusiveNode>) -> ptr<IntrusiveNode>
+cfun yukistd_intrusive_list_remove(node: ptr<IntrusiveNode>)
+
+public fun intrusive_node_init(node: ptr<IntrusiveNode>) {
+    yukistd_intrusive_node_init(node)
+}
+
+public fun intrusive_node_is_linked(node: ptr<IntrusiveNode>) -> bool {
+    return yukistd_intrusive_node_is_linked(node)
+}
+
+public fun intrusive_list_push_back(head: ptr<IntrusiveNode>, node: ptr<IntrusiveNode>) {
+    yukistd_intrusive_list_push_back(head, node)
+}
+
+public fun intrusive_list_push_front(head: ptr<IntrusiveNode>, node: ptr<IntrusiveNode>) {
+    yukistd_intrusive_list_push_front(head, node)
+}
+
+public fun intrusive_list_pop_front(head: ptr<IntrusiveNode>) -> ptr<IntrusiveNode>? {
+    set p = yukistd_intrusive_list_pop_front(head)
+    if p == null { return null }
+    return p
+}
+
+public fun intrusive_list_pop_back(head: ptr<IntrusiveNode>) -> ptr<IntrusiveNode>? {
+    set p = yukistd_intrusive_list_pop_back(head)
+    if p == null { return null }
+    return p
+}
+
+public fun intrusive_list_remove(node: ptr<IntrusiveNode>) {
+    yukistd_intrusive_list_remove(node)
+}
+
+public fun intrusive_list_len(head: ptr<IntrusiveNode>) -> int64 {
+    return yukistd_intrusive_list_len(head)
+}
+
+public fun intrusive_list_is_empty(head: ptr<IntrusiveNode>) -> bool {
+    return yukistd_intrusive_list_is_empty(head)
+}
+
+public class IntrusiveList {
+    head: ptr<IntrusiveNode>
+
+    public fun init() {
+        rewrite this.head = yukistd_intrusive_list_new()
+    }
+
+    #[inline]
+    public fun push_back(node: ptr<IntrusiveNode>) {
+        yukistd_intrusive_list_push_back(this.head, node)
+    }
+
+    #[inline]
+    public fun push_front(node: ptr<IntrusiveNode>) {
+        yukistd_intrusive_list_push_front(this.head, node)
+    }
+
+    #[inline]
+    public fun pop_front() -> ptr<IntrusiveNode>? {
+        set p = yukistd_intrusive_list_pop_front(this.head)
+        if p == null { return null }
+        return p
+    }
+
+    #[inline]
+    public fun pop_back() -> ptr<IntrusiveNode>? {
+        set p = yukistd_intrusive_list_pop_back(this.head)
+        if p == null { return null }
+        return p
+    }
+
+    #[inline_always]
+    public fun len() -> int64 {
+        return yukistd_intrusive_list_len(this.head)
+    }
+
+    #[inline_always]
+    public fun is_empty() -> bool {
+        return yukistd_intrusive_list_is_empty(this.head)
+    }
+
+    #[inline]
+    public fun clear() {
+        yukistd_intrusive_node_init(this.head)
+    }
+
+    #[inline]
+    public fun destroy() {
+        if this.head != null {
+            yukistd_intrusive_list_free(this.head)
+            rewrite this.head = null
+        }
+    }
+}

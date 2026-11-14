@@ -1,0 +1,50 @@
+load std.io: println
+load core.utils: cast
+
+public struct QueryError {
+    message: string
+    code: int32
+}
+
+fun find_user_name(id: int32) -> string? {
+    if id == 1 {
+        return "Alice"
+    } elif id == 2 {
+        return "Bob"
+    }
+    // Logical absence: return null, never dummy sentinel values like "" or -1
+    return null
+}
+
+fun parse_positive_id(raw: string) -> int32 {
+    set parsed = cast(raw, "int32")
+    if parsed <= 0 {
+        // Runtime failure: always panic with a typed struct
+        panic(QueryError {
+            message: "User ID must be positive integer",
+            code: 400,
+        })
+    }
+    return parsed
+}
+
+fun main() {
+    // 1. Handling optional values (T?) with null coalescing '??'
+    set user_opt = find_user_name(99)
+    set display_name = user_opt ?? "Anonymous User"
+    println("User name: " + display_name)
+
+    // 2. Exception handling with sus / catch / finally
+    sus {
+        println("Attempting to parse invalid ID...")
+        set invalid_id = parse_positive_id("-5")
+        println("Parsed ID: " + cast(invalid_id, "string"))
+    } catch e: QueryError {
+        // Never leave catch empty! Always inspect errkind or error fields
+        println("Caught QueryError: " + e.message + " (code " + cast(e.code, "string") + ")")
+    } catch {
+        println("Caught unexpected error: " + errkind)
+    } finally {
+        println("Cleaned up request context in finally block")
+    }
+}

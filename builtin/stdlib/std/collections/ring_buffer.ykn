@@ -1,0 +1,95 @@
+public class RingBuffer<T> {
+    buffer: int64[]
+    capacity: int64
+    head: int64
+    tail: int64
+    count: int64
+
+    public fun init(capacity: int64 = 16) {
+        set c: int64 = if capacity > 0 { capacity } else { 16 }
+        rewrite this.capacity = c
+        rewrite this.head = 0
+        rewrite this.tail = 0
+        rewrite this.count = 0
+        rewrite this.buffer = []
+        set i: int64 = 0
+        while i < c {
+            this.buffer.push(0)
+            rewrite i = i + 1
+        }
+    }
+
+    public fun push(val: int64) -> bool {
+        if this.count == this.capacity {
+            return false
+        }
+        rewrite this.buffer[this.tail] = val
+        rewrite this.tail = (this.tail + 1) % this.capacity
+        rewrite this.count = this.count + 1
+        return true
+    }
+
+    public fun push_overwrite(val: int64) {
+        if this.count == this.capacity {
+            rewrite this.head = (this.head + 1) % this.capacity
+            rewrite this.count = this.count - 1
+        }
+        rewrite this.buffer[this.tail] = val
+        rewrite this.tail = (this.tail + 1) % this.capacity
+        rewrite this.count = this.count + 1
+    }
+
+    public fun pop() -> int64? {
+        if this.count == 0 {
+            return null
+        }
+        set val = this.buffer[this.head]
+        rewrite this.head = (this.head + 1) % this.capacity
+        rewrite this.count = this.count - 1
+        return val
+    }
+
+    public fun peek() -> int64? {
+        if this.count == 0 {
+            return null
+        }
+        return this.buffer[this.head]
+    }
+
+    #[inline_always]
+    public fun len() -> int64 {
+        return this.count
+    }
+
+    #[inline_always]
+    public fun cap() -> int64 {
+        return this.capacity
+    }
+
+    #[inline_always]
+    public fun is_empty() -> bool {
+        return this.count == 0
+    }
+
+    #[inline_always]
+    public fun is_full() -> bool {
+        return this.count == this.capacity
+    }
+
+    public fun clear() {
+        rewrite this.head = 0
+        rewrite this.tail = 0
+        rewrite this.count = 0
+    }
+
+    public fun to_array() -> int64[] {
+        set res: int64[] = []
+        set i: int64 = 0
+        while i < this.count {
+            set idx = (this.head + i) % this.capacity
+            res.push(this.buffer[idx])
+            rewrite i = i + 1
+        }
+        return res
+    }
+}

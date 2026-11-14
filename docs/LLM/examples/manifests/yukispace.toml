@@ -1,0 +1,19 @@
+# Universal Workspace Manifest (Monorepo)
+[workspace]
+members = [
+    "libs/math_core",
+    "libs/net_kit",
+    "apps/server",
+    "apps/cli"
+]
+
+[workspace.build]
+# Shared native C libraries and build flags linked across all members:
+# syslibs = ["pthread", "dl", "m"]
+# static = ["libs/native/libsqlite3.a"]
+
+# Virtual inline packages (lightweight modules without separate lib.toml)
+[members.fast_hash]
+source = "libs/fast_hash/lib.ykn"
+output = "static"
+includes = ["core"]
