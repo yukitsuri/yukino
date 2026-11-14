@@ -830,6 +830,8 @@ fn is_builtin_or_config_attribute(attr: &AttributeNode) -> bool {
             | "ignore_warn"
             | "warns_ignore"
             | "stable"
+            | "fast_math"
+            | "no_region"
     )
 }
 

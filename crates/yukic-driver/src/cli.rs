@@ -233,6 +233,15 @@ pub struct Args {
     #[arg(long = "lto", help = "Enable link-time optimization")]
     pub lto: bool,
 
+    #[arg(long = "cpu", value_name = "CPU", help = "Target CPU architecture (e.g. native, generic, x86-64-v3)")]
+    pub cpu: Option<String>,
+
+    #[arg(long = "target-features", value_name = "FEATURES", help = "Target CPU features list (e.g. +avx2,+fma)")]
+    pub target_features: Option<String>,
+
+    #[arg(long = "fast-math", help = "Enable fast-math optimizations on floating point operations")]
+    pub fast_math: bool,
+
     #[arg(long = "strip", help = "Strip symbols from output binary")]
     pub strip: bool,
 

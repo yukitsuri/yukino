@@ -22,8 +22,9 @@ pub use body::*;
 pub use cabi::*;
 pub use cgu::{
     CodegenUnit, CompiledCgu, compile_modules_parallel, compile_units_parallel,
-    compile_units_parallel_with_overrides, estimate_item_weight, partition_module,
-    partition_module_by_sources, partition_module_with_custom,
+    compile_units_parallel_advanced, compile_units_parallel_with_overrides,
+    estimate_item_weight, partition_module, partition_module_by_sources,
+    partition_module_with_custom,
 };
 pub use closure::*;
 pub use context::init_llvm_targets;

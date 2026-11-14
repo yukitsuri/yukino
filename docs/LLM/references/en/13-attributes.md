@@ -24,7 +24,9 @@ Compiler attributes in Yukino are declarative metadata attached to program eleme
    3.2 [Inlining control: #[inline], #[inline_always], #[no_inline]](#32-inlining-control-inline-inline_always-no_inline)  
    3.3 [Profiling and flow hints: #[cold], #[noreturn]](#33-profiling-and-flow-hints-cold-noreturn)  
    3.4 [Name mangling control: #[mangle], #[!mangle]](#34-name-mangling-control-mangle-mangle)  
-   3.5 [C ABI calling convention (thunk functions): #[thunk]](#35-c-abi-calling-convention-thunk-functions-thunk)
+   3.5 [C ABI calling convention (thunk functions): #[thunk]](#35-c-abi-calling-convention-thunk-functions-thunk)  
+   3.6 [Region elision control: #[no_region]](#36-region-elision-control-no_region)  
+   3.7 [Fast floating-point arithmetic: #[fast_math]](#37-fast-floating-point-arithmetic-fast_math)
 4. [Built-in testing attributes](#4-built-in-testing-attributes)  
    4.1 [Marking tests: #[test]](#41-marking-tests-test)  
    4.2 [Expecting a panic: #[should_panic]](#42-expecting-a-panic-should_panic)  
@@ -392,6 +394,41 @@ fun main() {
     join(h2)
 }
 ```
+
+### 3.6 Region elision control: #[no_region]
+
+Instructs the compiler to eliminate the function's local region prologue (`yukino_region_init`) and epilogue (`yukino_region_destroy`), while preserving normal read and write access to caller memory (unlike `#[stable]`, which marks the function as `memory(none)`).
+
+This attribute is ideal for performance-critical functions that modify slices or structures in place via mutable references (`ref ~`) or perform numeric computations:
+
+```yukino
+#[no_region]
+public fun scale_elements(ref ~arr: float32[], factor: float32) {
+    for i in 0..arr.len() {
+        rewrite arr[i] = arr[i] * factor
+    }
+}
+```
+
+Can also be used as a module-level inner attribute (`#![no_region]`) to apply to all functions declared in the file.
+
+### 3.7 Fast floating-point arithmetic: #[fast_math]
+
+Enables aggressive floating-point optimizations (LLVM FastMath flags: `contract`, `nnan`, `ninf`, `nsz`, `afn`, `reassoc`) on all arithmetic instructions inside the annotated function.
+
+This unlocks:
+- Automatic generation of Fused Multiply-Add (FMA) instructions (`vfmadd213sd` / `vfmadd213ss` on x86-64 with AVX2/FMA, or `fmla` on ARM64 NEON);
+- Aggressive loop vectorization of floating-point sums and dot products by permitting reassociation;
+- Elimination of redundant IEEE-754 NaN and infinity checks in hot mathematical loops.
+
+```yukino
+#[fast_math]
+public fun compute_fma(a: float64, b: float64, c: float64) -> float64 {
+    return a * b + c
+}
+```
+
+Can also be enabled globally for the entire project in `yuki.toml` under `[config.release]` via `fast_math = true`, or per-file with the inner attribute `#![fast_math]`.
 
 ---
 

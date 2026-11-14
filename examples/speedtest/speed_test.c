@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+static int resolveYukinoBin(char *out, size_t cap);
+
 enum {
     maxLangs = 8,
     maxTests = 32,
@@ -96,9 +98,7 @@ static const Lang langs[] = {
     {"kotlin", "\033[92m", "command -v kotlinc && command -v java", NULL,
      "kotlinc kotlin/*.kt -include-runtime -d build/kotlin/out.jar -Xno-param-assertions -Xno-call-assertions -Xno-receiver-assertions",
      {"java", "-XX:+UseSerialGC", "-Xmx1g", "-jar", "build/kotlin/out.jar", NULL}},
-    {"yukino", "\033[38;5;117m", "command -v ${YUKINO:-yukino-dbg} >/dev/null 2>&1 || command -v yukino",
-     "YKN=\"${YUKINO:-yukino-dbg}\"; command -v \"$YKN\" >/dev/null 2>&1 || YKN=yukino; cd yukino && \"$YKN\" build release --no-out && rm -rf yuki-work/local/build yuki-work/local/cache",
-     "YKN=\"${YUKINO:-yukino-dbg}\"; command -v \"$YKN\" >/dev/null 2>&1 || YKN=yukino; cd yukino && \"$YKN\" build release --no-out && mkdir -p ../build/yukino && cp yuki-work/local/build/release/*/*/* ../build/yukino/bin",
+    {"yukino", "\033[38;5;117m", NULL, NULL, NULL,
      {"build/yukino/bin", NULL}},
 };
 
@@ -151,7 +151,7 @@ static void enterRoot(const char *argv0) {
 }
 
 static int shell(const char *cmd, const char *log) {
-    char full[cmdCap + PATH_MAX + 16];
+    char full[cmdCap + 2 * PATH_MAX + 32];
     snprintf(full, sizeof full, "(%s) >%s 2>&1", cmd, log);
     return system(full);
 }
@@ -159,19 +159,39 @@ static int shell(const char *cmd, const char *log) {
 static void buildLang(int l) {
     char cmd[cmdCap];
     char log[PATH_MAX];
-    snprintf(cmd, sizeof cmd, "(%s) >/dev/null 2>&1", langs[l].probe);
-    if (system(cmd) != 0) {
-        langState[l] = langMissing;
-        return;
+    char yknBin[PATH_MAX];
+    char warmBuf[cmdCap + PATH_MAX];
+    char buildBuf[cmdCap + PATH_MAX];
+    const char *warmCmd = langs[l].warm;
+    const char *buildCmd = langs[l].build;
+    if (strcmp(langs[l].name, "yukino") == 0) {
+        if (!resolveYukinoBin(yknBin, sizeof yknBin)) {
+            clearProgress();
+            exit(1);
+        }
+        snprintf(warmBuf, sizeof warmBuf,
+                 "cd yukino && \"%s\" build release --no-out && rm -rf yuki-work/local/build yuki-work/local/cache",
+                 yknBin);
+        snprintf(buildBuf, sizeof buildBuf,
+                 "cd yukino && \"%s\" build release --no-out && mkdir -p ../build/yukino && cp yuki-work/local/build/release/*/*/* ../build/yukino/bin",
+                 yknBin);
+        warmCmd = warmBuf;
+        buildCmd = buildBuf;
+    } else {
+        snprintf(cmd, sizeof cmd, "(%s) >/dev/null 2>&1", langs[l].probe);
+        if (system(cmd) != 0) {
+            langState[l] = langMissing;
+            return;
+        }
     }
     snprintf(cmd, sizeof cmd, "rm -rf build/%s && mkdir -p build/%s", langs[l].name, langs[l].name);
     if (system(cmd) != 0) return;
     if (strcmp(langs[l].name, "yukino") == 0) system("rm -rf yukino/yuki-work/local/build yukino/yuki-work/local/cache");
     snprintf(log, sizeof log, "build/%s/build.log", langs[l].name);
     progress("build", langs[l].name);
-    if (langs[l].warm != NULL) shell(langs[l].warm, "/dev/null");
+    if (warmCmd != NULL) shell(warmCmd, "/dev/null");
     double start = nowSec();
-    int rc = shell(langs[l].build, log);
+    int rc = shell(buildCmd, log);
     if (rc == 0 && strcmp(langs[l].name, "yukino") == 0) {
         FILE *f = fopen(log, "r");
         if (f != NULL) {
@@ -664,5 +684,22 @@ int main(int argc, char **argv) {
     }
     printNotes();
     printYukinoTop();
+    return 0;
+}
+
+static int resolveYukinoBin(char *out, size_t cap) {
+    const char *env = getenv("YUKINO_BIN");
+    if (env != NULL && env[0] == '/' && access(env, X_OK) == 0) {
+        snprintf(out, cap, "%s", env);
+        return 1;
+    }
+    if (system("command -v yukino >/dev/null 2>&1") == 0) {
+        snprintf(out, cap, "yukino");
+        return 1;
+    }
+    fprintf(stderr,
+        "error: 'yukino' binary not found in PATH and YUKINO_BIN is not set or invalid\n"
+        "running benchmarks on a debug build (e.g. yukino-dbg) will produce worse results\n"
+        "please install release yukino or set YUKINO_BIN to its absolute path\n");
     return 0;
 }

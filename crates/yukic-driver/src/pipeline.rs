@@ -10,7 +10,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use yukic_borrow::BorrowChecker;
-use yukic_codegen::{compile_units_parallel_with_overrides, partition_module_with_custom};
+use yukic_codegen::{compile_units_parallel_advanced, partition_module_with_custom};
 use yukic_dce::DeadCodeEliminator;
 use yukic_diagnostics::{ColorChoice, DiagnosticEmitter};
 use yukic_lexer::Lexer;
@@ -28,8 +28,8 @@ use yukic_types::{FnSig, Type, TypeChecker, TypeParam, ast_type_to_type};
 use crate::DriverConfig;
 use crate::cli::{EmitKind, OutputType};
 use crate::emitter::{
-    create_target_machine_for_driver, emit_asm_file, emit_cgus_parallel, emit_object_file,
-    format_emit_progress, format_source_cgu, reloc_mode_for,
+    create_target_machine_for_driver_advanced, emit_asm_file, emit_cgus_parallel_advanced,
+    emit_object_file, format_emit_progress, format_source_cgu, reloc_mode_for,
 };
 use crate::error::DriverError;
 use crate::header::{
@@ -105,10 +105,19 @@ fn compile_ll_file(
     yukic_codegen::embed_artifact_version_metadata(&module, &context);
 
     let reloc = reloc_mode_for(config.output_type);
-    let machine = create_target_machine_for_driver(target, config.opt_level, Some(reloc))?;
+    let machine = create_target_machine_for_driver_advanced(
+        target,
+        config.opt_level,
+        Some(reloc),
+        config.cpu.as_deref(),
+        config.target_features.as_deref(),
+    )?;
 
     if config.opt_level != OptLevel::O0 {
-        let opt_cfg = PipelineConfig::new(config.opt_level, LtoKind::None);
+        let lto_kind = if config.lto { LtoKind::Thin } else { LtoKind::None };
+        let mut opt_cfg = PipelineConfig::new(config.opt_level, lto_kind);
+        opt_cfg.target_cpu = config.cpu.clone();
+        opt_cfg.target_features = config.target_features.clone();
         run_pipeline(&module, &machine, &opt_cfg)
             .map_err(|e| DriverError::OptFailed(e.to_string()))?;
     }
@@ -2030,13 +2039,14 @@ fn run_backend_pipeline(
         })
         .collect();
 
-    let mut compiled = compile_units_parallel_with_overrides(
+    let mut compiled = compile_units_parallel_advanced(
         ast,
         foreign_modules,
         target,
         units,
         &config.panic_strategy,
         config.function_sections,
+        config.fast_math,
         imported_overrides,
     )
     .map_err(DriverError::CodegenFailed)?;
@@ -2070,7 +2080,10 @@ fn run_backend_pipeline(
         cgu_sources.push(vec![PathBuf::from(&config.input_file)]);
     }
 
-    let opt_config = PipelineConfig::new(config.opt_level, LtoKind::None);
+    let lto_kind = if config.lto { LtoKind::Thin } else { LtoKind::None };
+    let mut opt_config = PipelineConfig::new(config.opt_level, lto_kind);
+    opt_config.target_cpu = config.cpu.clone();
+    opt_config.target_features = config.target_features.clone();
     let optimized = optimize_cgus_parallel(
         compiled,
         target,
@@ -2107,7 +2120,13 @@ fn run_backend_pipeline(
             .create_module_from_ir(mem_buf)
             .map_err(|e| DriverError::CodegenFailed(e.to_string()))?;
         let reloc = reloc_mode_for(config.output_type);
-        let machine = create_target_machine_for_driver(target, config.opt_level, Some(reloc))?;
+        let machine = create_target_machine_for_driver_advanced(
+            target,
+            config.opt_level,
+            Some(reloc),
+            config.cpu.as_deref(),
+            config.target_features.as_deref(),
+        )?;
         emit_asm_file(&module, &machine, &out_path)?;
         let cgu_str = format_source_cgu(
             Some(&config.input_file),
@@ -2133,7 +2152,7 @@ fn run_backend_pipeline(
         Some(config.profile_name.as_deref().unwrap_or("default"))
     };
     let cgu_extra_hashes = compute_cgu_extra_hashes(config, &cgu_sources, loaded_modules);
-    let obj_paths = emit_cgus_parallel(
+    let obj_paths = emit_cgus_parallel_advanced(
         &optimized,
         target,
         config.opt_level,
@@ -2144,6 +2163,8 @@ fn run_backend_pipeline(
         Some(&config.input_file),
         Some(&cgu_sources),
         Some(&cgu_extra_hashes),
+        config.cpu.as_deref(),
+        config.target_features.as_deref(),
         |thread_id, event| {
             println!("{}", format_emit_progress(thread_id, &event));
         },

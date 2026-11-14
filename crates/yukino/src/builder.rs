@@ -1117,6 +1117,17 @@ fn build_yukic_command(p: &YukicCommandParams) -> Command {
     if p.profile_cfg.lto_enabled() {
         cmd.arg("--lto");
     }
+    if let Some(cpu) = &p.profile_cfg.cpu {
+        cmd.arg("--cpu").arg(cpu);
+    }
+    if let Some(features) = &p.profile_cfg.features {
+        if !features.is_empty() {
+            cmd.arg("--target-features").arg(features.join(","));
+        }
+    }
+    if p.profile_cfg.fast_math == Some(true) {
+        cmd.arg("--fast-math");
+    }
     if p.profile_cfg.strip_enabled() {
         cmd.arg("--strip");
     }

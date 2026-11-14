@@ -12,7 +12,10 @@ pub use error::OptError;
 pub use level::OptLevel;
 pub use lto::{LtoKind, write_bitcode_to_memory, write_bitcode_to_path};
 pub use parallel::{OptProgressEvent, OptimizedCgu, format_opt_progress, optimize_cgus_parallel};
-pub use pipeline::{PipelineConfig, create_target_machine, run_pipeline};
+pub use pipeline::{
+    PipelineConfig, create_target_machine, create_target_machine_advanced,
+    resolve_target_cpu_and_features, run_pipeline,
+};
 
 use inkwell::module::Module;
 use inkwell::targets::TargetMachine;
@@ -32,7 +35,14 @@ impl Optimizer {
     pub fn config(&self) -> &PipelineConfig { &self.config }
 
     pub fn optimize(&self, module: &Module, target: TargetTriple) -> Result<(), OptError> {
-        let machine = create_target_machine(target, self.config.level, None, None)?;
+        let machine = create_target_machine_advanced(
+            target,
+            self.config.level,
+            None,
+            None,
+            self.config.target_cpu.as_deref(),
+            self.config.target_features.as_deref(),
+        )?;
         self.optimize_with_machine(module, &machine)
     }
 

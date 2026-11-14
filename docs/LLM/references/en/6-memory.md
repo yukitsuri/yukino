@@ -746,6 +746,7 @@ fun worker_thread() {
 | Object must outlive call stack or be sent to background thread | Function `persistent(val)` or method `val.persistent()` | `return persistent(config)` / `return data.persistent()` |
 | Need to profile region memory consumption or reset the frame | Functions `region_used`, `region_cap`, `region_reset` | `set used = region_used()` |
 | The function performs intensive batch allocations | The `#[region::capacity(N)]` attribute | `#[region::capacity(1048576)] fun worker()` |
+| Need to eliminate local region prologue while mutating external state | The `#[no_region]` attribute | `#[no_region] fun scale(ref ~arr: int32[])` |
 | Need to close a file, free a socket, or release a lock | `defer { ... }` | `defer { unlock(mutex) }` |
 
 ---

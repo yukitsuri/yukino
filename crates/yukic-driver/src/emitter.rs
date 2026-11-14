@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
 use inkwell::targets::{FileType, RelocMode, TargetMachine};
-use yukic_opt::{OptLevel, OptimizedCgu, create_target_machine};
+use yukic_opt::{OptLevel, OptimizedCgu};
 use yukic_target::TargetTriple;
 
 use crate::cgu_cache::CguCacheManifest;
@@ -185,7 +185,17 @@ pub fn create_target_machine_for_driver(
     opt_level: OptLevel,
     reloc: Option<RelocMode>,
 ) -> Result<TargetMachine, DriverError> {
-    create_target_machine(target, opt_level, reloc, None).map_err(|e| {
+    create_target_machine_for_driver_advanced(target, opt_level, reloc, None, None)
+}
+
+pub fn create_target_machine_for_driver_advanced(
+    target: TargetTriple,
+    opt_level: OptLevel,
+    reloc: Option<RelocMode>,
+    cpu: Option<&str>,
+    features: Option<&str>,
+) -> Result<TargetMachine, DriverError> {
+    yukic_opt::create_target_machine_advanced(target, opt_level, reloc, None, cpu, features).map_err(|e| {
         DriverError::TargetMachineCreation(target.spec().triple.to_string(), e.to_string())
     })
 }
@@ -226,17 +236,30 @@ fn emit_single_cgu_object(
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: RelocMode,
+    target_cpu: Option<&str>,
+    target_features: Option<&str>,
     out_path: &Path,
 ) -> Result<(), DriverError> {
-    let context = Context::create();
-    let mem_buf = MemoryBuffer::create_from_memory_range_copy(cgu.ll_ir.as_bytes(), &cgu.name);
-    let module = context
-        .create_module_from_ir(mem_buf)
-        .map_err(|e| DriverError::CodegenFailed(format!("{}: {}", cgu.name, e)))?;
-
-    let machine = create_target_machine_for_driver(target, opt_level, Some(reloc))?;
     let tmp_path = out_path.with_extension(format!("o.tmp.{}", std::process::id()));
-    emit_object_file(&module, &machine, &tmp_path)?;
+    if let Some(bitcode) = &cgu.bitcode {
+        fs::write(&tmp_path, bitcode)
+            .map_err(|e| DriverError::EmissionFailed(tmp_path.clone(), e.to_string()))?;
+    } else {
+        let context = Context::create();
+        let mem_buf = MemoryBuffer::create_from_memory_range_copy(cgu.ll_ir.as_bytes(), &cgu.name);
+        let module = context
+            .create_module_from_ir(mem_buf)
+            .map_err(|e| DriverError::CodegenFailed(format!("{}: {}", cgu.name, e)))?;
+
+        let machine = create_target_machine_for_driver_advanced(
+            target,
+            opt_level,
+            Some(reloc),
+            target_cpu,
+            target_features,
+        )?;
+        emit_object_file(&module, &machine, &tmp_path)?;
+    }
     fs::rename(&tmp_path, out_path)
         .map_err(|e| DriverError::EmissionFailed(out_path.to_path_buf(), e.to_string()))
 }
@@ -341,6 +364,8 @@ fn emit_pending_cgus_worker_pool<F>(
     num_threads: usize,
     source_file: Option<&str>,
     cgu_sources: Option<&[Vec<PathBuf>]>,
+    target_cpu: Option<&str>,
+    target_features: Option<&str>,
     on_progress: &F,
 ) -> Result<Vec<PathBuf>, DriverError>
 where
@@ -381,7 +406,15 @@ where
 
                     let start = std::time::Instant::now();
                     let out_path = output_dir.join(format!("{}.o", cgu.name));
-                    emit_single_cgu_object(cgu, target, opt_level, reloc, &out_path)?;
+                    emit_single_cgu_object(
+                        cgu,
+                        target,
+                        opt_level,
+                        reloc,
+                        target_cpu,
+                        target_features,
+                        &out_path,
+                    )?;
                     let duration = start.elapsed().as_secs_f32();
                     let sources = resolve_sources_for_cgu(cgu_idx, cgu_sources, source_file);
                     let cgu_str = format_cgu_summary(
@@ -438,6 +471,42 @@ pub fn emit_cgus_parallel<F>(
 where
     F: Fn(usize, EmitProgressEvent) + Sync + Send,
 {
+    emit_cgus_parallel_advanced(
+        cgus,
+        target,
+        opt_level,
+        reloc,
+        output_dir,
+        num_threads,
+        cache_profile,
+        source_file,
+        cgu_sources,
+        cgu_extra_hashes,
+        None,
+        None,
+        on_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_cgus_parallel_advanced<F>(
+    cgus: &[OptimizedCgu],
+    target: TargetTriple,
+    opt_level: OptLevel,
+    reloc: RelocMode,
+    output_dir: &Path,
+    num_threads: usize,
+    cache_profile: Option<&str>,
+    source_file: Option<&str>,
+    cgu_sources: Option<&[Vec<PathBuf>]>,
+    cgu_extra_hashes: Option<&[Vec<String>]>,
+    target_cpu: Option<&str>,
+    target_features: Option<&str>,
+    on_progress: F,
+) -> Result<Vec<PathBuf>, DriverError>
+where
+    F: Fn(usize, EmitProgressEvent) + Sync + Send,
+{
     if cgus.is_empty() {
         return Ok(Vec::new());
     }
@@ -471,6 +540,8 @@ where
             num_threads,
             source_file,
             cgu_sources,
+            target_cpu,
+            target_features,
             &on_progress,
         )?;
 

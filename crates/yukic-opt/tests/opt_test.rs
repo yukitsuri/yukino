@@ -89,6 +89,18 @@ fn test_target_machine_creation_all_targets() {
 }
 
 #[test]
+fn test_resolve_target_cpu_and_features() {
+    let host = TargetTriple::host();
+    let (cpu, _feat) = yukic_opt::resolve_target_cpu_and_features(host, Some("native"), None);
+    assert!(!cpu.is_empty());
+    assert_ne!(cpu, "generic");
+
+    let (generic_cpu, feat_empty) = yukic_opt::resolve_target_cpu_and_features(host, None, None);
+    assert_eq!(generic_cpu, "generic");
+    assert!(feat_empty.is_empty());
+}
+
+#[test]
 fn test_new_pass_manager_pipelines() {
     let context = Context::create();
     let levels = [

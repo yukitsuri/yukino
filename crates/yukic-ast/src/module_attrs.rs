@@ -4,7 +4,7 @@ use crate::attr::AttributeNode;
 use crate::item::{Item, ItemKind, Module};
 
 /// Module-level attributes propagated to every function-like declaration of the file.
-const PROPAGATED_ATTRIBUTES: [&str; 8] = [
+const PROPAGATED_ATTRIBUTES: [&str; 10] = [
     "deprecated",
     "stable",
     "inline",
@@ -13,6 +13,8 @@ const PROPAGATED_ATTRIBUTES: [&str; 8] = [
     "inline_always",
     "cold",
     "noreturn",
+    "fast_math",
+    "no_region",
 ];
 
 /// Mutually exclusive inlining hints; any of them on a declaration overrides the file-level one.

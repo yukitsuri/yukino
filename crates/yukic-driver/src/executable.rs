@@ -87,6 +87,21 @@ fn append_target_flags(args: &mut Vec<String>, target: TargetTriple, config: &Dr
         args.push("relro".to_string());
         args.push("-z".to_string());
         args.push("now".to_string());
+        args.push("--icf=all".to_string());
+    }
+    if config.lto {
+        let opt_str = match config.opt_level {
+            yukic_opt::OptLevel::O0 => "0",
+            yukic_opt::OptLevel::O1 => "1",
+            yukic_opt::OptLevel::O2 => "2",
+            yukic_opt::OptLevel::O3 => "3",
+            yukic_opt::OptLevel::Os => "s",
+            yukic_opt::OptLevel::Oz => "z",
+        };
+        args.push(format!("--plugin-opt=O{opt_str}"));
+        if let Some(cpu) = &config.cpu {
+            args.push(format!("--plugin-opt=-mcpu={cpu}"));
+        }
     }
     if spec.os == OperatingSystem::Windows {
         args.push("--subsystem".to_string());
@@ -158,6 +173,11 @@ fn build_msvc_executable_linker_args(
 
     args.push(format!("/OUT:{}", output_path.to_string_lossy()));
     args.push("/SUBSYSTEM:CONSOLE".to_string());
+    args.push("/OPT:REF".to_string());
+    args.push("/OPT:ICF".to_string());
+    if config.lto {
+        args.push("/LTCG".to_string());
+    }
 
     for obj in objects {
         args.push(obj.to_string_lossy().to_string());
