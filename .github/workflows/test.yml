@@ -63,5 +63,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build compiler binary
+        run: cargo build --bin yukic
+
       - name: Run cargo test for workspace
         run: cargo test --workspace
+        env:
+          YUKIC: ${{ github.workspace }}/target/debug/yukic

@@ -2386,13 +2386,12 @@ fn compile_ykn_file(
     if uses_std && stdlib_included {
         if final_config.emit == EmitKind::Bin && final_config.output_type != OutputType::Static {
             let (project_dir, _) = resolve_project_dirs(input_path, final_config.manifest_path.as_deref());
-            if let Ok(stdlib) = crate::ensure_stdlib_for(Some(&project_dir), target) {
-                if !final_config.link_archives.contains(&stdlib.std_archive) {
-                    final_config.link_archives.push(stdlib.std_archive);
-                }
-                if !final_config.link_archives.contains(&stdlib.core_archive) {
-                    final_config.link_archives.push(stdlib.core_archive);
-                }
+            let stdlib = crate::ensure_stdlib_for(Some(&project_dir), target)?;
+            if !final_config.link_archives.contains(&stdlib.std_archive) {
+                final_config.link_archives.push(stdlib.std_archive);
+            }
+            if !final_config.link_archives.contains(&stdlib.core_archive) {
+                final_config.link_archives.push(stdlib.core_archive);
             }
         }
         if !final_config.connected_libs.iter().any(|l| l == "std") {
@@ -2420,18 +2419,17 @@ fn compile_ykn_file(
 
     if uses_macrosdk && macrosdk_included {
         let (project_dir, _) = resolve_project_dirs(input_path, final_config.manifest_path.as_deref());
-        if let Ok(macrosdk) = crate::ensure_macrosdk_for(Some(&project_dir), target) {
-            if final_config.emit == EmitKind::Bin && final_config.output_type != OutputType::Static {
-                if !final_config.link_archives.contains(&macrosdk.sdk_archive) {
-                    final_config.link_archives.push(macrosdk.sdk_archive);
-                }
-                if !final_config.link_archives.contains(&macrosdk.core_archive) {
-                    final_config.link_archives.push(macrosdk.core_archive);
-                }
+        let macrosdk = crate::ensure_macrosdk_for(Some(&project_dir), target)?;
+        if final_config.emit == EmitKind::Bin && final_config.output_type != OutputType::Static {
+            if !final_config.link_archives.contains(&macrosdk.sdk_archive) {
+                final_config.link_archives.push(macrosdk.sdk_archive);
             }
-            if !final_config.connected_libs.iter().any(|l| l == "macrosdk") {
-                final_config.connected_libs.push("macrosdk".to_string());
+            if !final_config.link_archives.contains(&macrosdk.core_archive) {
+                final_config.link_archives.push(macrosdk.core_archive);
             }
+        }
+        if !final_config.connected_libs.iter().any(|l| l == "macrosdk") {
+            final_config.connected_libs.push("macrosdk".to_string());
         }
     } else {
         final_config.link_archives.retain(|a| {
