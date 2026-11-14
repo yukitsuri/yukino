@@ -97,6 +97,12 @@ impl Default for BuildOptions {
 
 #[allow(clippy::collapsible_if)]
 pub fn resolve_compiler_exe() -> PathBuf {
+    if let Ok(p) = std::env::var("YUKIC") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return pb;
+        }
+    }
     if let Some(cargo_bin) = std::env::var_os("CARGO_BIN_EXE_yukic") {
         let p = PathBuf::from(cargo_bin);
         if p.is_file() {
@@ -107,24 +113,22 @@ pub fn resolve_compiler_exe() -> PathBuf {
         let is_dbg = exe
             .file_name()
             .is_some_and(|n| n.to_string_lossy().contains("-dbg"));
-        if let Some(dir) = exe.parent() {
-            for d in [Some(dir), dir.parent()].into_iter().flatten() {
-                let candidates: &[&str] = if is_dbg {
-                    &["yukic-dbg", YUKIC_NAME, "yukic"]
-                } else {
-                    &[YUKIC_NAME, "yukic", "yukic-dbg"]
-                };
-                for name in candidates {
-                    let candidate = d.join(name);
-                    if candidate.is_file() {
-                        return candidate;
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        let win_candidate = d.join(format!("{name}.exe"));
-                        if win_candidate.is_file() {
-                            return win_candidate;
-                        }
+        for d in exe.ancestors().take(7) {
+            let candidates: &[&str] = if is_dbg {
+                &["yukic-dbg", YUKIC_NAME, "yukic"]
+            } else {
+                &[YUKIC_NAME, "yukic", "yukic-dbg"]
+            };
+            for name in candidates {
+                let candidate = d.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let win_candidate = d.join(format!("{name}.exe"));
+                    if win_candidate.is_file() {
+                        return win_candidate;
                     }
                 }
             }

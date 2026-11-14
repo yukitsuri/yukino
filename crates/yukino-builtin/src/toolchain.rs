@@ -74,19 +74,17 @@ pub fn yukic_path() -> PathBuf {
                 return exe;
             }
         }
-        if let Some(dir) = exe.parent() {
-            for d in [Some(dir), dir.parent(), dir.parent().and_then(|p| p.parent())].into_iter().flatten() {
-                for name in ["yukic-dbg", "yukic"] {
-                    let candidate = d.join(name);
-                    if candidate.is_file() {
-                        return candidate;
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        let win_candidate = d.join(format!("{name}.exe"));
-                        if win_candidate.is_file() {
-                            return win_candidate;
-                        }
+        for d in exe.ancestors().take(7) {
+            for name in ["yukic-dbg", "yukic"] {
+                let candidate = d.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let win_candidate = d.join(format!("{name}.exe"));
+                    if win_candidate.is_file() {
+                        return win_candidate;
                     }
                 }
             }
