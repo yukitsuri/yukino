@@ -1,6 +1,6 @@
 # Module std.collections
 
-The `std.collections` module provides a comprehensive suite of algorithms, utilities, and data structures for working with slices, arrays, and specialized containers: search routines, functional transformations, in-place slice mutation, string joining, dynamic list `List<T>`, hash table `HashMap<K, V>`, hash set `HashSet<T>`, double-ended queue `Deque<T>`, and FIFO queue `Queue<T>`.
+The `std.collections` module provides a comprehensive suite of algorithms, utilities, and data structures for working with slices, arrays, and specialized containers: search routines, functional transformations, in-place slice mutation, string joining, dynamic list `List<T>`, hash table `HashMap<K, V>`, hash set `HashSet<T>`, double-ended queue `Deque<T>`, FIFO queue `Queue<T>`, doubly linked list `LinkedList<T>`, intrusive list `IntrusiveList`, LIFO stack `Stack<T>`, circular buffer `RingBuffer<T>`, and priority queue `PriorityQueue<T>`.
 
 ---
 
@@ -14,14 +14,22 @@ load std.collections
 
 All public components of `std.collections` are loaded into the current scope:
 
-- **Error structures:**
-  - `ListIndexError` — index out of bounds error (code `1`).
+- **Data and Error Structures:**
+  - `ListIndexError` — index out of bounds error (code `1`);
+  - `IntrusiveNode` — intrusive list node with `prev` and `next` pointers.
 - **Containers (Classes):**
   - `List<T>` — dynamically resizable array list;
   - `HashMap<K, V>` — hash-table-backed key-value store;
   - `HashSet<T>` — hash-table-backed set of unique elements;
   - `Deque<T>` — double-ended queue supporting insertion and removal at both ends;
-  - `Queue<T>` — first-in, first-out (FIFO) queue.
+  - `Queue<T>` — first-in, first-out (FIFO) queue;
+  - `LinkedList<T>` — doubly linked list with $O(1)$ operations on both ends;
+  - `IntrusiveList` — zero-allocation intrusive doubly linked list;
+  - `Stack<T>` — last-in, first-out (LIFO) stack;
+  - `RingBuffer<T>` — fixed-capacity circular buffer without heap reallocations;
+  - `PriorityQueue<T>` — binary heap (Max-Heap / Min-Heap) priority queue.
+- **Intrusive Functions:**
+  - `intrusive_node_init`, `intrusive_node_is_linked`, `intrusive_list_push_back`, `intrusive_list_push_front`, `intrusive_list_pop_front`, `intrusive_list_pop_back`, `intrusive_list_remove`, `intrusive_list_len`, `intrusive_list_is_empty`.
 - **Search and Verification Functions:**
   - `acontains`, `acontains_str`, `aindex_of`, `aindex_of_str`, `afind`.
 - **Functional Transformations:**
@@ -56,6 +64,20 @@ public struct ListIndexError {
 
 - `message` — human-readable error description (`"list index out of bounds"`).
 - `code` — numerical error code: `1`.
+
+### 3.2 IntrusiveNode
+
+Base node structure for intrusive doubly linked lists. Can be embedded directly inside user-defined structures or used as a standalone node.
+
+```yukino
+public struct IntrusiveNode {
+    prev: ptr<IntrusiveNode>
+    next: ptr<IntrusiveNode>
+}
+```
+
+- `prev` — raw pointer to previous node in the list.
+- `next` — raw pointer to next node in the list.
 
 ---
 
@@ -412,15 +434,390 @@ fun clear()
 ```
 Removes all elements from the queue. This function never panics.
 
+#### destroy
+```yukino
+fun destroy()
+```
+Releases the internal heap memory of the queue. This function never panics.
+
 ```yukino
 load std.collections.queue: Queue
 load std.io: println
 
 set q = init Queue<int64>()
+defer {
+    q.destroy()
+}
 q.push(1)
 q.push(2)
 set val = q.pop() ?? 0
 println("Dequeued: ${val}")
+```
+
+### 4.6 LinkedList<T>
+
+Doubly linked list supporting $O(1)$ constant time insertion and removal at both the front and back.
+
+```yukino
+public class LinkedList<T>
+```
+
+#### push_back
+```yukino
+fun push_back(val: int64)
+```
+Inserts `val` at the back of the linked list. This function never panics.
+
+#### push_front
+```yukino
+fun push_front(val: int64)
+```
+Inserts `val` at the front of the linked list. This function never panics.
+
+#### pop_front
+```yukino
+fun pop_front() -> int64?
+```
+Removes and returns the front element, or returns `null` if empty. This function never panics.
+
+#### pop_back
+```yukino
+fun pop_back() -> int64?
+```
+Removes and returns the back element, or returns `null` if empty. This function never panics.
+
+#### peek_front
+```yukino
+fun peek_front() -> int64?
+```
+Inspects the front element without removing it, or returns `null` if empty. This function never panics.
+
+#### peek_back
+```yukino
+fun peek_back() -> int64?
+```
+Inspects the back element without removing it, or returns `null` if empty. This function never panics.
+
+#### len
+```yukino
+fun len() -> int64
+```
+Returns the number of elements in the linked list. This function never panics.
+
+#### is_empty
+```yukino
+fun is_empty() -> bool
+```
+Returns `true` if the list contains no elements, otherwise `false`. This function never panics.
+
+#### clear
+```yukino
+fun clear()
+```
+Removes all elements from the linked list. This function never panics.
+
+#### destroy
+```yukino
+fun destroy()
+```
+Releases the underlying native descriptor of the list. This function never panics.
+
+```yukino
+load std.collections.linked_list: LinkedList
+load std.io: println
+
+set ll = init LinkedList<int64>()
+defer {
+    ll.destroy()
+}
+ll.push_back(20)
+ll.push_front(10)
+set first = ll.pop_front() ?? 0
+println("First: ${first}")
+```
+
+### 4.7 IntrusiveList
+
+Zero-allocation intrusive doubly linked list. Nodes (`IntrusiveNode`) are embedded directly into elements rather than allocated separately.
+
+```yukino
+public class IntrusiveList
+```
+
+#### push_back
+```yukino
+fun push_back(node: ptr<IntrusiveNode>)
+```
+Appends `node` to the end of the intrusive list. This function never panics.
+
+#### push_front
+```yukino
+fun push_front(node: ptr<IntrusiveNode>)
+```
+Prepends `node` to the beginning of the intrusive list. This function never panics.
+
+#### pop_front
+```yukino
+fun pop_front() -> ptr<IntrusiveNode>?
+```
+Removes and returns the front node, or returns `null` if empty. This function never panics.
+
+#### pop_back
+```yukino
+fun pop_back() -> ptr<IntrusiveNode>?
+```
+Removes and returns the back node, or returns `null` if empty. This function never panics.
+
+#### len
+```yukino
+fun len() -> int64
+```
+Computes and returns the length of the list by traversing the circular sentinel chain. This function never panics.
+
+#### is_empty
+```yukino
+fun is_empty() -> bool
+```
+Returns `true` if the list is empty, otherwise `false`. This function never panics.
+
+#### clear
+```yukino
+fun clear()
+```
+Resets sentinel links back to the empty state. This function never panics.
+
+#### destroy
+```yukino
+fun destroy()
+```
+Releases the sentinel head node. This function never panics.
+
+```yukino
+load std.collections.intrusive: IntrusiveList, IntrusiveNode
+load core.mem: ptr_of
+load std.io: println
+
+set list = init IntrusiveList()
+defer {
+    list.destroy()
+}
+set node = IntrusiveNode { prev: null, next: null }
+list.push_back(ptr_of(node))
+println("Length: " + cast(list.len(), "string"))
+```
+
+### 4.8 Stack<T>
+
+LIFO (Last-In, First-Out) stack container optimized for top-of-stack push and pop operations.
+
+```yukino
+public class Stack<T>
+```
+
+#### push
+```yukino
+fun push(val: int64)
+```
+Pushes `val` onto the top of the stack. This function never panics.
+
+#### pop
+```yukino
+fun pop() -> int64?
+```
+Pops and returns the top element, or returns `null` if empty. This function never panics.
+
+#### peek
+```yukino
+fun peek() -> int64?
+```
+Returns the top element without removing it, or returns `null` if empty. This function never panics.
+
+#### len
+```yukino
+fun len() -> int64
+```
+Returns the number of elements in the stack. This function never panics.
+
+#### is_empty
+```yukino
+fun is_empty() -> bool
+```
+Returns `true` if the stack is empty, otherwise `false`. This function never panics.
+
+#### clear
+```yukino
+fun clear()
+```
+Clears all elements from the stack. This function never panics.
+
+#### to_array
+```yukino
+fun to_array() -> int64[]
+```
+Returns a copy of all stack elements as an `int64[]` array. This function never panics.
+
+```yukino
+load std.collections.stack: Stack
+load std.io: println
+
+set s = init Stack<int64>()
+s.push(10)
+s.push(20)
+set top = s.pop() ?? 0
+println("Top: ${top}")
+```
+
+### 4.9 RingBuffer<T>
+
+Fixed-capacity circular FIFO buffer requiring zero heap reallocations during operation.
+
+```yukino
+public class RingBuffer<T>
+```
+
+#### init
+```yukino
+fun init(capacity: int64 = 16)
+```
+Initializes ring buffer with specified fixed capacity (defaults to 16).
+
+#### push
+```yukino
+fun push(val: int64) -> bool
+```
+Pushes `val` into the buffer. If full, insertion is rejected and returns `false`. Returns `true` on success. This function never panics.
+
+#### push_overwrite
+```yukino
+fun push_overwrite(val: int64)
+```
+Pushes `val` into the buffer, automatically dropping the oldest element if full. This function never panics.
+
+#### pop
+```yukino
+fun pop() -> int64?
+```
+Pops and returns the oldest element in FIFO order, or returns `null` if empty. This function never panics.
+
+#### peek
+```yukino
+fun peek() -> int64?
+```
+Returns the oldest element without removing it, or returns `null` if empty. This function never panics.
+
+#### len
+```yukino
+fun len() -> int64
+```
+Returns the number of elements currently stored in the buffer. This function never panics.
+
+#### cap
+```yukino
+fun cap() -> int64
+```
+Returns the total capacity of the ring buffer. This function never panics.
+
+#### is_empty
+```yukino
+fun is_empty() -> bool
+```
+Returns `true` if the buffer is empty, otherwise `false`. This function never panics.
+
+#### is_full
+```yukino
+fun is_full() -> bool
+```
+Returns `true` if the buffer is full, otherwise `false`. This function never panics.
+
+#### clear
+```yukino
+fun clear()
+```
+Clears the ring buffer by resetting head and tail offsets. This function never panics.
+
+#### to_array
+```yukino
+fun to_array() -> int64[]
+```
+Returns an array of current buffer elements in FIFO order from oldest to newest. This function never panics.
+
+```yukino
+load std.collections.ring_buffer: RingBuffer
+load std.io: println
+
+set rb = init RingBuffer<int64>(4)
+rb.push(100)
+rb.push(200)
+set item = rb.pop() ?? 0
+println("Popped: ${item}")
+```
+
+### 4.10 PriorityQueue<T>
+
+Binary Heap priority queue supporting Max-Heap (largest element prioritized) and Min-Heap (smallest element prioritized).
+
+```yukino
+public class PriorityQueue<T>
+```
+
+#### init
+```yukino
+fun init(is_max: bool = true)
+```
+Creates priority queue. If `is_max` is `true` (default), acts as a Max-Heap. When `false`, acts as a Min-Heap.
+
+#### push
+```yukino
+fun push(val: int64)
+```
+Inserts `val` with logarithmic $O(\log n)$ sift-up rebalancing. This function never panics.
+
+#### pop
+```yukino
+fun pop() -> int64?
+```
+Pops the highest priority element with logarithmic $O(\log n)$ sift-down rebalancing, or returns `null` if empty. This function never panics.
+
+#### peek
+```yukino
+fun peek() -> int64?
+```
+Returns the highest priority element in $O(1)$ without removing it, or returns `null` if empty. This function never panics.
+
+#### len
+```yukino
+fun len() -> int64
+```
+Returns the number of elements in the heap. This function never panics.
+
+#### is_empty
+```yukino
+fun is_empty() -> bool
+```
+Returns `true` if the priority queue is empty, otherwise `false`. This function never panics.
+
+#### clear
+```yukino
+fun clear()
+```
+Removes all elements from the heap. This function never panics.
+
+#### to_array
+```yukino
+fun to_array() -> int64[]
+```
+Returns a copy of the underlying heap array. This function never panics.
+
+```yukino
+load std.collections.priority_queue: PriorityQueue
+load std.io: println
+
+set pq = init PriorityQueue<int64>(true)
+pq.push(10)
+pq.push(50)
+pq.push(20)
+set max_val = pq.pop() ?? 0
+println("Max: ${max_val}")
 ```
 
 ---

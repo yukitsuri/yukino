@@ -7,6 +7,7 @@ static SPECTRAL_N: int64 = 1500
 static SPECTRAL_ITERS: int32 = 10
 static SPECTRAL_SCALE: float64 = 1000000.0
 
+#[inline_always]
 fun multiply(ref a: uint32[], ref b: uint32[], ref ~c: uint32[]) {
     for i in 0..MAT_N {
         set i_offset: int64 = i * MAT_N

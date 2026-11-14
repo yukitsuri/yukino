@@ -18,22 +18,37 @@ class Table {
         rewrite this.vals = alloc_u64(MAP_SIZE)
     }
 
+    #[inline_always]
     fun put(key: uint64, val: uint64) {
-        set s: int64 = cast((key * MAP_HASH_MUL) >> cast(64 - MAP_BITS, "uint64"), "int64")
-        while this.keys[s] != 0u64 && this.keys[s] != key {
-            rewrite s = (s + 1) & (MAP_SIZE - 1)
+        set keys = this.keys
+        set vals = this.vals
+        set mask: int64 = MAP_SIZE - 1
+        set s: int64 = cast((key * MAP_HASH_MUL) >> 42u64, "int64")
+        while true {
+            set k: uint64 = keys[s]
+            if k == 0u64 || k == key {
+                break
+            }
+            rewrite s = (s + 1) & mask
         }
-        rewrite this.keys[s] = key
-        rewrite this.vals[s] = val
+        rewrite keys[s] = key
+        rewrite vals[s] = val
     }
 
+    #[inline_always]
     fun lookup(key: uint64) -> uint64 {
-        set s: int64 = cast((key * MAP_HASH_MUL) >> cast(64 - MAP_BITS, "uint64"), "int64")
-        while this.keys[s] != 0u64 {
-            if this.keys[s] == key {
+        set keys = this.keys
+        set mask: int64 = MAP_SIZE - 1
+        set s: int64 = cast((key * MAP_HASH_MUL) >> 42u64, "int64")
+        while true {
+            set k: uint64 = keys[s]
+            if k == 0u64 {
+                return MAP_MISSING
+            }
+            if k == key {
                 return this.vals[s]
             }
-            rewrite s = (s + 1) & (MAP_SIZE - 1)
+            rewrite s = (s + 1) & mask
         }
         return MAP_MISSING
     }
@@ -44,6 +59,7 @@ class Table {
     }
 }
 
+#[region::capacity(4096)]
 public fun hashmap_test() -> uint64 {
     set table = init Table()
     set r = init Rng(RNG_SEED)

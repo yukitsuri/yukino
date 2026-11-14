@@ -332,6 +332,29 @@ pub fn compile_units_parallel_with_overrides(
     function_sections: bool,
     imported_overrides: &HashMap<String, String>,
 ) -> Result<Vec<CompiledCgu>, String> {
+    compile_units_parallel_advanced(
+        ast,
+        foreign_modules,
+        target,
+        units,
+        panic_strategy,
+        function_sections,
+        false,
+        imported_overrides,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compile_units_parallel_advanced(
+    ast: &AstModule,
+    foreign_modules: &[AstModule],
+    target: TargetTriple,
+    units: Vec<CodegenUnit>,
+    panic_strategy: &str,
+    function_sections: bool,
+    fast_math: bool,
+    imported_overrides: &HashMap<String, String>,
+) -> Result<Vec<CompiledCgu>, String> {
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(units.len());
         for unit in units {
@@ -340,7 +363,8 @@ pub fn compile_units_parallel_with_overrides(
                 let mut codegen =
                     crate::generator::CodeGenerator::new(&context, &unit.name, target)
                         .with_panic_strategy(panic_strategy)
-                        .with_function_sections(function_sections);
+                        .with_function_sections(function_sections)
+                        .with_fast_math(fast_math);
                 codegen.register_ast_types(ast);
                 codegen.register_vtable_layouts(ast);
                 for fmod in foreign_modules {

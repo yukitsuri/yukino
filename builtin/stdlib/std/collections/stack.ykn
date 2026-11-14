@@ -1,0 +1,44 @@
+public class Stack<T> {
+    items: int64[]
+
+    #[inline_always]
+    public fun init() {
+        rewrite this.items = []
+    }
+
+    #[inline_always]
+    public fun push(val: int64) {
+        this.items.push(val)
+    }
+
+    #[inline_always]
+    public fun pop() -> int64? {
+        return this.items.pop()
+    }
+
+    #[inline_always]
+    public fun peek() -> int64? {
+        if this.items.is_empty() { return null }
+        return this.items[this.items.len() - 1]
+    }
+
+    #[inline_always]
+    public fun len() -> int64 {
+        return this.items.len()
+    }
+
+    #[inline_always]
+    public fun is_empty() -> bool {
+        return this.items.is_empty()
+    }
+
+    #[inline_always]
+    public fun clear() {
+        this.items.clear()
+    }
+
+    #[inline_always]
+    public fun to_array() -> int64[] {
+        return this.items.cp()
+    }
+}

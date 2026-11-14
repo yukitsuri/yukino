@@ -57,6 +57,7 @@ class Tree {
         rewrite this.val = alloc_u32(MEM_TREE_NODES)
     }
 
+    #[inline_always]
     fun sum(node: uint32) -> uint64 {
         if node == NO_CHILD {
             return 0u64
@@ -72,6 +73,7 @@ class Tree {
     }
 }
 
+#[region::capacity(4096)]
 public fun mem_tree() -> uint64 {
     set tree = init Tree()
     for i in 0..MEM_TREE_NODES {

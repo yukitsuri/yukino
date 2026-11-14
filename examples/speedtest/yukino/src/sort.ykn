@@ -5,6 +5,7 @@ static SORT_COUNT: int64 = 3000000
 static INSERTION_CUTOFF: int64 = 16
 static SORT_STRIDE: int64 = 1009
 
+#[inline_always]
 fun insertion_sort(ref ~a: uint32[], lo: int64, hi: int64) {
     for i in (lo + 1)..(hi + 1) {
         set v: uint32 = a[i]
@@ -50,6 +51,7 @@ fun quick_sort(ref ~a: uint32[], lo_in: int64, hi_in: int64) {
     insertion_sort(ref ~a, lo, hi)
 }
 
+#[region::capacity(4096)]
 public fun sort_test() -> uint64 {
     set keys = alloc_u32(SORT_COUNT)
     set r = init Rng(RNG_SEED)

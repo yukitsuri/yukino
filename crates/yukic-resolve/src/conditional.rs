@@ -514,7 +514,7 @@ pub fn classify_attribute(attr: &AttributeNode) -> AttributeCategory {
             | "inline_always" | "inline_never" | "test" | "should_panic" | "ignore"
             | "timeout_ms" | "deprecated" | "ignore_warn" | "warns_ignore" | "thunk"
             | "direct_internal_access" | "internal_cast_impl" | "internal_ptr_of_impl"
-            | "internal_macro_impl" => {
+            | "internal_macro_impl" | "fast_math" | "no_region" => {
                 AttributeCategory::Builtin
             }
             _ => AttributeCategory::Unknown,
@@ -632,6 +632,8 @@ fn validate_attribute(
                     | "inline_always"
                     | "cold"
                     | "noreturn"
+                    | "fast_math"
+                    | "no_region"
                     | "ignore_warn"
                     | "warns_ignore"
                     | "direct_internal_access"
@@ -716,7 +718,7 @@ fn validate_builtin_attribute(attr: &AttributeNode, usage: AttributeUse) -> Resu
             }
             require_fun(&name, usage, true)?;
         }
-        "no_inline" | "cold" | "noreturn" | "inline_always" | "inline_never" => {
+        "no_inline" | "cold" | "noreturn" | "inline_always" | "inline_never" | "fast_math" | "no_region" => {
             require_fun(&name, usage, false)?;
         }
         "thunk" => {

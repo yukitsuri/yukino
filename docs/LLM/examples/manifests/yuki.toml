@@ -1,0 +1,21 @@
+# Executable Application Manifest
+[bin]
+name = "my_app"
+version = "0.1.0"
+source = "src/main.ykn"
+includes = ["core", "stdlib"]
+
+[libs.runtime]
+# External dependencies resolved from Git, local path, or registry:
+# utils = { path = "../utils" }
+# net_kit = { git = "https://github.com/shareui/net_kit", branch = "main" }
+
+[config.debug]
+opt = 0
+debug_info = true
+panic_strategy = "unwind" # unwind (stack unwinding with sus/catch) or abort (instant termination)
+
+[config.release]
+opt = 3
+lto = true
+panic_strategy = "abort"

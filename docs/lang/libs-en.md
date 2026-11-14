@@ -23,6 +23,7 @@ This section lists libraries maintained and developed by the team at [yukitsuri]
 [shareui/buildtool](https://github.com/shareui/buildtool): Compiles C/C++/Rust in a Yukino project.  
 [shareui/clarity](https://github.com/shareui/clarity): A library for the declarative definition of CLI interfaces.  
 [homewatcha/cryonet](https://github.com/homewatcha/cryonet): Lightweight web framework and HTTP/HTTPS server for the Yukino programming language.  
+[shareui/siesta](https://github.com/shareui/siesta): Declarative TUI library.
 
 ---
 

@@ -11,37 +11,41 @@ fun rol(x: uint32, n: uint32) -> uint32 {
 }
 
 #[inline_always]
-fun quarter(ref ~s: uint32[], a: int64, b: int64, c: int64, d: int64) {
-    rewrite s[a] = s[a] + s[b]
-    rewrite s[d] = rol(s[d] ^ s[a], 16u32)
-    rewrite s[c] = s[c] + s[d]
-    rewrite s[b] = rol(s[b] ^ s[c], 12u32)
-    rewrite s[a] = s[a] + s[b]
-    rewrite s[d] = rol(s[d] ^ s[a], 8u32)
-    rewrite s[c] = s[c] + s[d]
-    rewrite s[b] = rol(s[b] ^ s[c], 7u32)
-}
-
-#[inline_always]
 fun chacha_block(ref input: uint32[], ref ~out: uint32[]) {
     for i in 0..CHACHA_WORDS {
         rewrite out[i] = input[i]
     }
     for r in 0..CHACHA_DOUBLE_ROUNDS {
-        quarter(ref ~out, 0, 4, 8, 12)
-        quarter(ref ~out, 1, 5, 9, 13)
-        quarter(ref ~out, 2, 6, 10, 14)
-        quarter(ref ~out, 3, 7, 11, 15)
-        quarter(ref ~out, 0, 5, 10, 15)
-        quarter(ref ~out, 1, 6, 11, 12)
-        quarter(ref ~out, 2, 7, 8, 13)
-        quarter(ref ~out, 3, 4, 9, 14)
+        rewrite out[0] = out[0] + out[4]; rewrite out[12] = rol(out[12] ^ out[0], 16u32); rewrite out[8] = out[8] + out[12]; rewrite out[4] = rol(out[4] ^ out[8], 12u32)
+        rewrite out[0] = out[0] + out[4]; rewrite out[12] = rol(out[12] ^ out[0], 8u32); rewrite out[8] = out[8] + out[12]; rewrite out[4] = rol(out[4] ^ out[8], 7u32)
+
+        rewrite out[1] = out[1] + out[5]; rewrite out[13] = rol(out[13] ^ out[1], 16u32); rewrite out[9] = out[9] + out[13]; rewrite out[5] = rol(out[5] ^ out[9], 12u32)
+        rewrite out[1] = out[1] + out[5]; rewrite out[13] = rol(out[13] ^ out[1], 8u32); rewrite out[9] = out[9] + out[13]; rewrite out[5] = rol(out[5] ^ out[9], 7u32)
+
+        rewrite out[2] = out[2] + out[6]; rewrite out[14] = rol(out[14] ^ out[2], 16u32); rewrite out[10] = out[10] + out[14]; rewrite out[6] = rol(out[6] ^ out[10], 12u32)
+        rewrite out[2] = out[2] + out[6]; rewrite out[14] = rol(out[14] ^ out[2], 8u32); rewrite out[10] = out[10] + out[14]; rewrite out[6] = rol(out[6] ^ out[10], 7u32)
+
+        rewrite out[3] = out[3] + out[7]; rewrite out[15] = rol(out[15] ^ out[3], 16u32); rewrite out[11] = out[11] + out[15]; rewrite out[7] = rol(out[7] ^ out[11], 12u32)
+        rewrite out[3] = out[3] + out[7]; rewrite out[15] = rol(out[15] ^ out[3], 8u32); rewrite out[11] = out[11] + out[15]; rewrite out[7] = rol(out[7] ^ out[11], 7u32)
+
+        rewrite out[0] = out[0] + out[5]; rewrite out[15] = rol(out[15] ^ out[0], 16u32); rewrite out[10] = out[10] + out[15]; rewrite out[5] = rol(out[5] ^ out[10], 12u32)
+        rewrite out[0] = out[0] + out[5]; rewrite out[15] = rol(out[15] ^ out[0], 8u32); rewrite out[10] = out[10] + out[15]; rewrite out[5] = rol(out[5] ^ out[10], 7u32)
+
+        rewrite out[1] = out[1] + out[6]; rewrite out[12] = rol(out[12] ^ out[1], 16u32); rewrite out[11] = out[11] + out[12]; rewrite out[6] = rol(out[6] ^ out[11], 12u32)
+        rewrite out[1] = out[1] + out[6]; rewrite out[12] = rol(out[12] ^ out[1], 8u32); rewrite out[11] = out[11] + out[12]; rewrite out[6] = rol(out[6] ^ out[11], 7u32)
+
+        rewrite out[2] = out[2] + out[7]; rewrite out[13] = rol(out[13] ^ out[2], 16u32); rewrite out[8] = out[8] + out[13]; rewrite out[7] = rol(out[7] ^ out[8], 12u32)
+        rewrite out[2] = out[2] + out[7]; rewrite out[13] = rol(out[13] ^ out[2], 8u32); rewrite out[8] = out[8] + out[13]; rewrite out[7] = rol(out[7] ^ out[8], 7u32)
+
+        rewrite out[3] = out[3] + out[4]; rewrite out[14] = rol(out[14] ^ out[3], 16u32); rewrite out[9] = out[9] + out[14]; rewrite out[4] = rol(out[4] ^ out[9], 12u32)
+        rewrite out[3] = out[3] + out[4]; rewrite out[14] = rol(out[14] ^ out[3], 8u32); rewrite out[9] = out[9] + out[14]; rewrite out[4] = rol(out[4] ^ out[9], 7u32)
     }
     for i in 0..CHACHA_WORDS {
         rewrite out[i] = out[i] + input[i]
     }
 }
 
+#[region::capacity(4096)]
 public fun chacha_test() -> uint64 {
     set st = alloc_u32(CHACHA_WORDS)
     set out = alloc_u32(CHACHA_WORDS)

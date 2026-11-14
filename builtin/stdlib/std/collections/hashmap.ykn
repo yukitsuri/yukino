@@ -27,7 +27,8 @@ public class HashMap<K, V> {
         set out_len: int64 = 0
         set p = yukistd_map_get(this.handle, key.as_ptr(), key.len(), ptr_of(out_len))
         if p == null { return null }
-        return from_raw_parts(p, out_len)
+        set res: string = from_raw_parts(p, out_len)
+        return res.cp()
     }
 
     public fun contains_key(key: string) -> bool {
@@ -67,5 +68,12 @@ public class HashMap<K, V> {
 
     public fun remove_i64(key: int64) -> bool {
         return yukistd_map_del_i64(this.handle, key)
+    }
+
+    public fun destroy() {
+        if this.handle != null {
+            yukistd_map_free(this.handle)
+            rewrite this.handle = null
+        }
     }
 }

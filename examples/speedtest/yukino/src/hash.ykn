@@ -89,6 +89,7 @@ public class Sha256 {
     }
 
     // Write one byte at off into b0..b15 (big-endian).
+    #[inline_always]
     fun set_buf_byte(off: int64, val: uint8) {
         set v: uint32 = cast(val, "uint32")
         if off == 0 {
@@ -223,6 +224,7 @@ public class Sha256 {
     }
 
     // Load a 64-byte block into b0..b15.
+    #[inline_always]
     fun load_block(ref p: bytes, base: int64) {
         rewrite this.b0 = (cast(p[base], "uint32") << 24u32) | (cast(p[base + 1], "uint32") << 16u32) | (cast(p[base + 2], "uint32") << 8u32) | cast(p[base + 3], "uint32")
         rewrite this.b1 = (cast(p[base + 4], "uint32") << 24u32) | (cast(p[base + 5], "uint32") << 16u32) | (cast(p[base + 6], "uint32") << 8u32) | cast(p[base + 7], "uint32")
@@ -578,6 +580,7 @@ public class Sha256 {
     }
 }
 
+#[region::capacity(4096)]
 public fun sha256_test() -> uint64 {
     set buf = make_buf()
     set k = init_sha_k()
@@ -591,6 +594,7 @@ public fun sha256_test() -> uint64 {
     return res
 }
 
+#[region::capacity(4096)]
 public fun crc32_test() -> uint64 {
     set buf = make_buf()
     set table = alloc_u32(256)
@@ -618,6 +622,7 @@ public fun crc32_test() -> uint64 {
     return res
 }
 
+#[region::capacity(4096)]
 public fun fnv_test() -> uint64 {
     set buf = make_buf()
     set h: uint64 = MIX_SEED

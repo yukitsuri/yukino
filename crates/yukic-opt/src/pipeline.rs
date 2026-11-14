@@ -23,6 +23,8 @@ pub struct PipelineConfig {
     pub merge_functions: bool,
     pub verify_each: bool,
     pub debug_logging: bool,
+    pub target_cpu: Option<String>,
+    pub target_features: Option<String>,
 }
 
 impl PipelineConfig {
@@ -38,6 +40,8 @@ impl PipelineConfig {
             merge_functions: is_mergeable,
             verify_each: false,
             debug_logging: false,
+            target_cpu: None,
+            target_features: None,
         }
     }
 }
@@ -48,11 +52,52 @@ impl Default for PipelineConfig {
     }
 }
 
+pub fn resolve_target_cpu_and_features(
+    target: TargetTriple,
+    cpu: Option<&str>,
+    features: Option<&str>,
+) -> (String, String) {
+    let host_triple = TargetTriple::host();
+    let is_host_arch = target.spec().arch == host_triple.spec().arch;
+
+    let (resolved_cpu, host_features) = match cpu {
+        Some("native") if is_host_arch => {
+            let host_cpu = TargetMachine::get_host_cpu_name().to_string();
+            let host_feat = TargetMachine::get_host_cpu_features().to_string();
+            (host_cpu, host_feat)
+        }
+        Some(custom) if !custom.is_empty() && custom != "generic" => {
+            (custom.to_string(), String::new())
+        }
+        _ => ("generic".to_string(), String::new()),
+    };
+
+    let resolved_features = match (host_features.is_empty(), features) {
+        (false, Some(extra)) if !extra.is_empty() => format!("{host_features},{extra}"),
+        (false, _) => host_features,
+        (true, Some(extra)) if !extra.is_empty() => extra.to_string(),
+        _ => String::new(),
+    };
+
+    (resolved_cpu, resolved_features)
+}
+
 pub fn create_target_machine(
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: Option<RelocMode>,
     code_model: Option<CodeModel>,
+) -> Result<TargetMachine, OptError> {
+    create_target_machine_advanced(target, opt_level, reloc, code_model, None, None)
+}
+
+pub fn create_target_machine_advanced(
+    target: TargetTriple,
+    opt_level: OptLevel,
+    reloc: Option<RelocMode>,
+    code_model: Option<CodeModel>,
+    cpu: Option<&str>,
+    features: Option<&str>,
 ) -> Result<TargetMachine, OptError> {
     init_llvm_targets();
     let triple_str = target.spec().triple;
@@ -64,8 +109,17 @@ pub fn create_target_machine(
     let reloc_mode = reloc.unwrap_or(RelocMode::Default);
     let model = code_model.unwrap_or(CodeModel::Default);
 
+    let (cpu_name, feat_str) = resolve_target_cpu_and_features(target, cpu, features);
+
     llvm_target
-        .create_target_machine(&inkwell_triple, "generic", "", opt, reloc_mode, model)
+        .create_target_machine(
+            &inkwell_triple,
+            &cpu_name,
+            &feat_str,
+            opt,
+            reloc_mode,
+            model,
+        )
         .ok_or_else(|| OptError::TargetMachineCreationFailed(triple_str.to_string()))
 }
 
@@ -95,7 +149,9 @@ fn build_pass_options(config: &PipelineConfig) -> PassBuilderOptions {
     options.set_loop_vectorization(config.loop_vectorization);
     options.set_loop_slp_vectorization(config.slp_vectorization);
     options.set_loop_unrolling(config.loop_unrolling);
+    options.set_loop_interleaving(config.loop_vectorization);
     options.set_merge_functions(config.merge_functions);
+    options.set_call_graph_profile(matches!(config.level, OptLevel::O2 | OptLevel::O3));
     options.set_verify_each(config.verify_each);
     options.set_debug_logging(config.debug_logging);
     options

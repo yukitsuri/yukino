@@ -62,25 +62,29 @@ pub fn yukic_path() -> PathBuf {
             return pb;
         }
     }
+    if let Some(cargo_bin) = std::env::var_os("CARGO_BIN_EXE_yukic") {
+        let pb = PathBuf::from(cargo_bin);
+        if pb.is_file() {
+            return pb;
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(stem) = exe.file_stem().and_then(|s| s.to_str()) {
-            if stem.starts_with("yukic") {
+            if stem == "yukic" || stem == "yukic-dbg" {
                 return exe;
             }
         }
-        if let Some(dir) = exe.parent() {
-            for d in [Some(dir), dir.parent()].into_iter().flatten() {
-                for name in ["yukic-dbg", "yukic"] {
-                    let candidate = d.join(name);
-                    if candidate.is_file() {
-                        return candidate;
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        let win_candidate = d.join(format!("{name}.exe"));
-                        if win_candidate.is_file() {
-                            return win_candidate;
-                        }
+        for d in exe.ancestors().take(7) {
+            for name in ["yukic-dbg", "yukic"] {
+                let candidate = d.join(name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let win_candidate = d.join(format!("{name}.exe"));
+                    if win_candidate.is_file() {
+                        return win_candidate;
                     }
                 }
             }

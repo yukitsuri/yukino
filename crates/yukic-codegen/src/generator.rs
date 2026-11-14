@@ -54,6 +54,8 @@ pub struct CodeGenerator<'ctx> {
     pub debug: DebugInfoManager<'ctx>,
     pub panic_strategy: String,
     pub function_sections: bool,
+    pub fast_math: bool,
+    pub current_fn_fast_math: bool,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -99,6 +101,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             debug,
             panic_strategy: "unwind".to_string(),
             function_sections: false,
+            fast_math: false,
+            current_fn_fast_math: false,
         }
     }
 
@@ -109,6 +113,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub fn with_function_sections(mut self, enabled: bool) -> Self {
         self.function_sections = enabled;
+        self
+    }
+
+    pub fn with_fast_math(mut self, enabled: bool) -> Self {
+        self.fast_math = enabled;
         self
     }
 
@@ -1011,6 +1020,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
 
+        if local_reg.is_none()
+            && method.body.stmts.len() <= 4
+            && !method.attrs.iter().any(|a| a.is("inline_never") || a.is("cold"))
+        {
+            self.add_fn_attribute(fn_val, "inlinehint");
+        }
+
         let dest_region = if has_dest {
             let dest_arg = fn_val.get_first_param().map(|p| p.into_pointer_value());
             if let Some(dest_p) = dest_arg {
@@ -1021,6 +1037,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
 
+        let is_fast_math = self.fast_math || method.attrs.iter().any(|a| a.is("fast_math"));
         let mut body_compiler = crate::body::BodyCompiler::new(
             self.context,
             &self.builder,
@@ -1038,7 +1055,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             llvm_ret,
             false,
         )
-        .with_panic_strategy(&self.panic_strategy);
+        .with_panic_strategy(&self.panic_strategy)
+        .with_fast_math(is_fast_math);
         body_compiler.current_class = Some(class_name.to_string());
         body_compiler.setup_method_params(
             &method.params,
@@ -1251,6 +1269,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
 
+        if local_reg.is_none()
+            && fun.body.stmts.len() <= 4
+            && !fun.attrs.iter().any(|a| a.is("inline_never") || a.is("cold"))
+        {
+            self.add_fn_attribute(fn_val, "inlinehint");
+        }
+
         let dest_region = if has_dest {
             let dest_arg = fn_val.get_first_param().map(|p| p.into_pointer_value());
             if let Some(dest_p) = dest_arg {
@@ -1261,6 +1286,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
 
+        let is_fast_math = self.fast_math || fun.attrs.iter().any(|a| a.is("fast_math"));
         let mut body_compiler = crate::body::BodyCompiler::new(
             self.context,
             &self.builder,
@@ -1278,7 +1304,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             llvm_ret,
             false,
         )
-        .with_panic_strategy(&self.panic_strategy);
+        .with_panic_strategy(&self.panic_strategy)
+        .with_fast_math(is_fast_math);
         body_compiler.generic_map = generic_map;
         body_compiler.setup_params(&fun.params, has_dest)?;
         body_compiler.compile_block(&fun.body)?;

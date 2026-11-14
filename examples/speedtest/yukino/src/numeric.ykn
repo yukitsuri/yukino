@@ -31,6 +31,7 @@ public fun sieve() -> uint64 {
     return mix(MIX_SEED, count)
 }
 
+#[stable]
 public fun collatz() -> uint64 {
     set best_start: uint64 = 0
     set best_steps: uint64 = 0
@@ -65,6 +66,7 @@ public fun fib_test() -> uint64 {
     return mix(MIX_SEED, fib(FIB_N))
 }
 
+#[stable, inline_always]
 fun solve_queens(cols: uint32, diag_l: uint32, diag_r: uint32, full: uint32) -> uint64 {
     if cols == full {
         return 1u64
@@ -86,6 +88,7 @@ public fun queens() -> uint64 {
     return mix(MIX_SEED, solve_queens(0u32, 0u32, 0u32, full))
 }
 
+#[stable]
 public fun leibniz() -> uint64 {
     set sum: float64 = 0.0
     set sign: float64 = 1.0

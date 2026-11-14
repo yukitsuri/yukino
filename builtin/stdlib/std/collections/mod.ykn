@@ -6,3 +6,8 @@ public load .list: *
 public load .hashmap: *
 public load .hashset: *
 public load .queue: *
+public load .linked_list: *
+public load .intrusive: *
+public load .stack: *
+public load .ring_buffer: *
+public load .priority_queue: *

@@ -9,7 +9,9 @@ use yukic_target::TargetTriple;
 
 use crate::error::OptError;
 use crate::lto::write_bitcode_to_memory;
-use crate::pipeline::{PipelineConfig, create_target_machine, run_pipeline};
+use crate::pipeline::{
+    PipelineConfig, create_target_machine_advanced, run_pipeline,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OptProgressEvent {
@@ -139,7 +141,14 @@ fn optimize_single_cgu(
         .create_module_from_ir(mem_buf)
         .map_err(|e| OptError::PreVerificationFailed(format!("{}: {}", cgu.name, e)))?;
 
-    let machine = create_target_machine(target, config.level, None, None)?;
+    let machine = create_target_machine_advanced(
+        target,
+        config.level,
+        None,
+        None,
+        config.target_cpu.as_deref(),
+        config.target_features.as_deref(),
+    )?;
     run_pipeline(&module, &machine, config)?;
 
     let bitcode = if config.lto.is_enabled() {

@@ -737,6 +737,7 @@ fun worker_thread() {
 | Объект должен пережить текущий стек вызовов или уйти в поток | Функция `persistent(val)` или метод `val.persistent()` | `return persistent(config)` / `return data.persistent()` |
 | Нужно замерить расход памяти региона или сбросить фрейм | Функции `region_used`, `region_cap`, `region_reset` | `set used = region_used()` |
 | Функция выполняет интенсивные пакетные аллокации | Атрибут `#[region::capacity(N)]` | `#[region::capacity(1048576)] fun worker()` |
+| Нужно исключить создание региона при мутации внешнего состояния | Атрибут `#[no_region]` | `#[no_region] fun scale(ref ~arr: int32[])` |
 | Нужно закрыть файл, освободить сокет или отпустить лок | `defer { ... }` | `defer { unlock(mutex) }` |
 
 ---

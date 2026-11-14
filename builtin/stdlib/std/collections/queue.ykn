@@ -72,6 +72,14 @@ public class Deque<T> {
     public fun clear() {
         yukistd_deque_clear(this.handle)
     }
+
+    #[inline]
+    public fun destroy() {
+        if this.handle != null {
+            yukistd_deque_free(this.handle)
+            rewrite this.handle = null
+        }
+    }
 }
 
 public class Queue<T> {
@@ -112,5 +120,13 @@ public class Queue<T> {
     #[inline]
     public fun clear() {
         yukistd_deque_clear(this.handle)
+    }
+
+    #[inline]
+    public fun destroy() {
+        if this.handle != null {
+            yukistd_deque_free(this.handle)
+            rewrite this.handle = null
+        }
     }
 }

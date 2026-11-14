@@ -1,0 +1,86 @@
+load core.mem: ptr_of
+
+cfun yukistd_linked_list_new() -> ptr<uint8>
+cfun yukistd_linked_list_free(l: ptr<uint8>)
+cfun yukistd_linked_list_push_back(l: ptr<uint8>, val: int64)
+cfun yukistd_linked_list_push_front(l: ptr<uint8>, val: int64)
+cfun yukistd_linked_list_pop_front(l: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_linked_list_pop_back(l: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_linked_list_peek_front(l: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_linked_list_peek_back(l: ptr<uint8>, out_found: ptr<bool>) -> int64
+cfun yukistd_linked_list_len(l: ptr<uint8>) -> int64
+cfun yukistd_linked_list_clear(l: ptr<uint8>)
+
+public class LinkedList<T> {
+    handle: ptr<uint8>
+
+    #[inline]
+    public fun init() {
+        rewrite this.handle = yukistd_linked_list_new()
+    }
+
+    #[inline]
+    public fun push_back(val: int64) {
+        yukistd_linked_list_push_back(this.handle, val)
+    }
+
+    #[inline]
+    public fun push_front(val: int64) {
+        yukistd_linked_list_push_front(this.handle, val)
+    }
+
+    #[inline]
+    public fun pop_front() -> int64? {
+        set found: bool = false
+        set val = yukistd_linked_list_pop_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    #[inline]
+    public fun pop_back() -> int64? {
+        set found: bool = false
+        set val = yukistd_linked_list_pop_back(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    #[inline]
+    public fun peek_front() -> int64? {
+        set found: bool = false
+        set val = yukistd_linked_list_peek_front(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    #[inline]
+    public fun peek_back() -> int64? {
+        set found: bool = false
+        set val = yukistd_linked_list_peek_back(this.handle, ptr_of(found))
+        if !found { return null }
+        return val
+    }
+
+    #[inline_always]
+    public fun len() -> int64 {
+        return yukistd_linked_list_len(this.handle)
+    }
+
+    #[inline_always]
+    public fun is_empty() -> bool {
+        return this.len() == 0
+    }
+
+    #[inline]
+    public fun clear() {
+        yukistd_linked_list_clear(this.handle)
+    }
+
+    #[inline]
+    public fun destroy() {
+        if this.handle != null {
+            yukistd_linked_list_free(this.handle)
+            rewrite this.handle = null
+        }
+    }
+}

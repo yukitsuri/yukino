@@ -1,0 +1,45 @@
+load std.io: println
+load core.utils: cast
+load core.mem: Arena
+
+struct Counter {
+    value: int32
+}
+
+fun increment(ref ~c: Counter) {
+    rewrite c.value = c.value + 1
+}
+
+fun print_counter(ref c: Counter) {
+    println("Counter value: " + cast(c.value, "string"))
+}
+
+fun main() {
+    // Affine ownership & borrowing
+    set c = Counter { value: 0 }
+    increment(ref ~c)
+    print_counter(ref c)
+
+    // Defer runs in LIFO order upon scope exit
+    defer {
+        println("Scope exit cleanup finished")
+    }
+
+    // First-class Arena from core.mem
+    set pool = init Arena(65536)
+    defer {
+        pool.destroy()
+    }
+
+    set u = pool.used()
+    println("Arena initial used: " + cast(u, "string"))
+
+    // Scoped region allocation inside arena
+    region(pool) {
+        set message = "Allocated inside arena pool"
+        println(message)
+    }
+
+    pool.reset()
+    println("Arena reset completed")
+}

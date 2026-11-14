@@ -104,6 +104,15 @@ set str_val: string = cast(small, "string")
 | `cfun(...)` | `ptr<void>` | Преобразование указателя на функцию C ABI в нетипизированный указатель |
 | `bytes` | `string` | Валидация UTF-8; создание строки из среза байтов |
 | `string` | `bytes` | Создание среза байт из строки без копирования буфера |
+| `bytes` | `uint8[]` | Бесшовная zero-cost реинтерпретация дескриптора среза `{ ptr, len, cap }` без аллокаций и копирования данных (O(1)) |
+| `uint8[]` | `bytes` | Zero-cost преобразование динамического массива `uint8[]` в `bytes` без накладных расходов (O(1)) |
+
+```yukino
+// Конвертация между bytes и uint8[]:
+set raw_bytes: bytes = cast("Hello", "bytes")
+set u8_slice: uint8[] = cast(raw_bytes, "uint8[]")
+set restored_bytes: bytes = cast(u8_slice, "bytes")
+```
 
 ### 2.3 Утверждения: assert, assert_eq, assert_ne
 

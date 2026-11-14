@@ -73,6 +73,7 @@ pub struct BodyCompiler<'a, 'ctx> {
     pub expected_sem_ty: Option<Type>,
     pub expected_fixed_array_size: Option<usize>,
     pub generic_map: HashMap<String, Type>,
+    pub fast_math: bool,
 }
 
 impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
@@ -129,11 +130,17 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             expected_sem_ty: None,
             expected_fixed_array_size: None,
             generic_map: HashMap::new(),
+            fast_math: false,
         }
     }
 
     pub fn with_panic_strategy(mut self, strategy: impl Into<String>) -> Self {
         self.panic_strategy = strategy.into();
+        self
+    }
+
+    pub fn with_fast_math(mut self, enabled: bool) -> Self {
+        self.fast_math = enabled;
         self
     }
 

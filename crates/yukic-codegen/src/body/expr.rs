@@ -1053,6 +1053,14 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         Ok(val)
     }
 
+    fn apply_fast_math(&self, inst: Option<inkwell::values::InstructionValue<'ctx>>) {
+        if self.fast_math {
+            if let Some(i) = inst {
+                let _ = i.set_fast_math_flags(inkwell::values::FastMathFlags::all());
+            }
+        }
+    }
+
     fn compile_float_binary(
         &self,
         op: BinaryOp,
@@ -1072,35 +1080,73 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         };
         let b = self.builder;
         let val: BasicValueEnum<'ctx> = match op {
-            BinaryOp::Add => b.build_float_add(l, r, "fadd").map_err(|e| e.to_string())?.into(),
-            BinaryOp::Sub => b.build_float_sub(l, r, "fsub").map_err(|e| e.to_string())?.into(),
-            BinaryOp::Mul => b.build_float_mul(l, r, "fmul").map_err(|e| e.to_string())?.into(),
-            BinaryOp::Div => b.build_float_div(l, r, "fdiv").map_err(|e| e.to_string())?.into(),
-            BinaryOp::Rem => b.build_float_rem(l, r, "frem").map_err(|e| e.to_string())?.into(),
-            BinaryOp::Eq => b
-                .build_float_compare(FloatPredicate::OEQ, l, r, "feq")
-                .map_err(|e| e.to_string())?
-                .into(),
-            BinaryOp::NotEq => b
-                .build_float_compare(FloatPredicate::ONE, l, r, "fne")
-                .map_err(|e| e.to_string())?
-                .into(),
-            BinaryOp::Lt => b
-                .build_float_compare(FloatPredicate::OLT, l, r, "flt")
-                .map_err(|e| e.to_string())?
-                .into(),
-            BinaryOp::LtEq => b
-                .build_float_compare(FloatPredicate::OLE, l, r, "fle")
-                .map_err(|e| e.to_string())?
-                .into(),
-            BinaryOp::Gt => b
-                .build_float_compare(FloatPredicate::OGT, l, r, "fgt")
-                .map_err(|e| e.to_string())?
-                .into(),
-            BinaryOp::GtEq => b
-                .build_float_compare(FloatPredicate::OGE, l, r, "fge")
-                .map_err(|e| e.to_string())?
-                .into(),
+            BinaryOp::Add => {
+                let res = b.build_float_add(l, r, "fadd").map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Sub => {
+                let res = b.build_float_sub(l, r, "fsub").map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Mul => {
+                let res = b.build_float_mul(l, r, "fmul").map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Div => {
+                let res = b.build_float_div(l, r, "fdiv").map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Rem => {
+                let res = b.build_float_rem(l, r, "frem").map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Eq => {
+                let res = b
+                    .build_float_compare(FloatPredicate::OEQ, l, r, "feq")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::NotEq => {
+                let res = b
+                    .build_float_compare(FloatPredicate::ONE, l, r, "fne")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Lt => {
+                let res = b
+                    .build_float_compare(FloatPredicate::OLT, l, r, "flt")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::LtEq => {
+                let res = b
+                    .build_float_compare(FloatPredicate::OLE, l, r, "fle")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::Gt => {
+                let res = b
+                    .build_float_compare(FloatPredicate::OGT, l, r, "fgt")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
+            BinaryOp::GtEq => {
+                let res = b
+                    .build_float_compare(FloatPredicate::OGE, l, r, "fge")
+                    .map_err(|e| e.to_string())?;
+                self.apply_fast_math(res.as_instruction());
+                res.into()
+            }
             BinaryOp::Pow => {
                 let pow_fn = if l.get_type() == self.context.f32_type() {
                     self.get_or_declare_pow_f32()
@@ -1300,11 +1346,14 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .build_int_neg(iv, "neg")
                     .map(Into::into)
                     .map_err(|e| e.to_string()),
-                BasicValueEnum::FloatValue(fv) => self
-                    .builder
-                    .build_float_neg(fv, "fneg")
-                    .map(Into::into)
-                    .map_err(|e| e.to_string()),
+                BasicValueEnum::FloatValue(fv) => {
+                    let res = self
+                        .builder
+                        .build_float_neg(fv, "fneg")
+                        .map_err(|e| e.to_string())?;
+                    self.apply_fast_math(res.as_instruction());
+                    Ok(res.into())
+                }
                 _ => Err("cannot negate non-numeric value".to_string()),
             },
             UnaryOp::Not | UnaryOp::BitNot => match val {
