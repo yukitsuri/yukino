@@ -10,6 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 static int resolveYukinoBin(char *out, size_t cap);
 
@@ -62,6 +63,31 @@ typedef struct {
     int bad[maxLangs];
 } Row;
 
+typedef struct {
+    int langIndex;
+    int rank;
+    double val;
+    int bad;
+    int has;
+    char text[32];
+} TopItem;
+
+typedef struct {
+    char title[32];
+    int itemCount;
+    TopItem items[maxLangs];
+} TopCol;
+
+static int getTermWidth(void);
+static int compareTopItems(const void *a, const void *b);
+static void rankTopItems(TopItem *items, int count);
+static void formatItemText(char *buf, size_t cap, double val, Unit unit, int has);
+static void addTopCol(const char *title, const Row *r, Unit unit);
+static void printTopItemCell(const TopItem *item, int colWidth);
+static void printTopSlice(int start, int end, int colWidth, int colGap);
+static void buildTopColumns(void);
+static void printTopTable(void);
+
 static const char *const styleReset = "\033[0m";
 static const char *const styleBold = "\033[1m";
 static const char *const styleDim = "\033[2m";
@@ -112,6 +138,8 @@ static int testSelected[maxTests];
 static int useColor = 0;
 static int runs = defaultRuns;
 static int verbose = 0;
+static TopCol topCols[maxTests * 2 + 16];
+static int topColCount = 0;
 
 static double nowSec(void) {
     struct timespec ts;
@@ -532,23 +560,6 @@ static void printNotes(void) {
     if (bad == 0) printLine(styleGreen, "checksums", "match across languages");
 }
 
-typedef struct {
-    int testIndex;
-    int rank;
-    char result[32];
-} YukinoRank;
-
-static int yukinoTestRank(int t, int ykn, Metric m, double yknVal) {
-    int rank = 1;
-    for (int i = 0; i < langCount; i++) {
-        if (i == ykn || langState[i] != langReady) continue;
-        const Cell *c = &cells[t][i];
-        if (c->status != statusOk && c->status != statusMismatch) continue;
-        if (metricOf(c, m) < yknVal - 1e-9) rank++;
-    }
-    return rank;
-}
-
 static int tableWidth(void) {
     int w = labelWidth + 1;
     int printed = 0;
@@ -567,58 +578,6 @@ static void printDivider(void) {
     for (int i = 0; i < w; i++) putchar('-');
     putchar('\n');
     paint(styleReset);
-}
-
-static int compareYukinoRank(const void *a, const void *b) {
-    const YukinoRank *ra = (const YukinoRank *)a;
-    const YukinoRank *rb = (const YukinoRank *)b;
-    if (ra->rank != rb->rank) return ra->rank - rb->rank;
-    return ra->testIndex - rb->testIndex;
-}
-
-static void printYukinoTop(void) {
-    int ykn = -1;
-    for (int i = 0; i < langCount; i++) {
-        if (strcmp(langs[i].name, "yukino") == 0) {
-            ykn = i;
-            break;
-        }
-    }
-    if (ykn < 0 || langState[ykn] != langReady) return;
-    YukinoRank ranks[maxTests];
-    int count = 0;
-    for (int i = 0; i < testCount; i++) {
-        if (!testSelected[i]) continue;
-        const Cell *cykn = &cells[i][ykn];
-        if (cykn->status == statusNone) continue;
-        Kind kind = testDefs[i].kind;
-        Metric m = kind == kindMem ? metricRss : (kind == kindNop ? metricWall : metricInternal);
-        Unit u = kind == kindMem ? unitMem : unitSec;
-        YukinoRank *r = &ranks[count++];
-        r->testIndex = i;
-        if (cykn->status == statusFail) {
-            r->rank = maxLangs + 1;
-            snprintf(r->result, sizeof r->result, "fail");
-            continue;
-        }
-        double yknVal = metricOf(cykn, m);
-        if (u == unitMem) snprintf(r->result, sizeof r->result, "%.1fM", yknVal);
-        else snprintf(r->result, sizeof r->result, "%.2fs", yknVal);
-        r->rank = yukinoTestRank(i, ykn, m, yknVal);
-    }
-    if (count == 0) return;
-    qsort(ranks, count, sizeof(YukinoRank), compareYukinoRank);
-    printDivider();
-    printTitle("Yukino results (top)");
-    for (int i = 0; i < count; i++) {
-        const YukinoRank *r = &ranks[i];
-        printf("%-*s ", labelWidth, testDefs[r->testIndex].name);
-        paint(r->rank > langCount ? styleRed : langs[ykn].color);
-        if (r->rank == 1) paint(styleBold);
-        if (r->rank > langCount) printf("-. %s\n", r->result);
-        else printf("%d. %s\n", r->rank, r->result);
-        paint(styleReset);
-    }
 }
 
 static int listHas(const char *list, const char *name) {
@@ -683,7 +642,7 @@ int main(int argc, char **argv) {
         printSection("ram", allKinds, metricRss, unitMem);
     }
     printNotes();
-    printYukinoTop();
+    printTopTable();
     return 0;
 }
 
@@ -702,4 +661,196 @@ static int resolveYukinoBin(char *out, size_t cap) {
         "running benchmarks on a debug build (e.g. yukino-dbg) will produce worse results\n"
         "please install release yukino or set YUKINO_BIN to its absolute path\n");
     return 0;
+}
+
+static int getTermWidth(void) {
+    const char *colEnv = getenv("COLUMNS");
+    if (colEnv != NULL) {
+        int w = atoi(colEnv);
+        if (w > 0) return w;
+    }
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+        return ws.ws_col;
+    }
+    return 80;
+}
+
+static int compareTopItems(const void *a, const void *b) {
+    const TopItem *ia = (const TopItem *)a;
+    const TopItem *ib = (const TopItem *)b;
+    if (ia->has != ib->has) return ib->has - ia->has;
+    if (ia->val < ib->val - 1e-9) return -1;
+    if (ia->val > ib->val + 1e-9) return 1;
+    return ia->langIndex - ib->langIndex;
+}
+
+static void rankTopItems(TopItem *items, int count) {
+    int curRank = 1;
+    for (int i = 0; i < count; i++) {
+        if (!items[i].has) {
+            items[i].rank = 0;
+            continue;
+        }
+        if (i > 0 && items[i].val > items[i - 1].val + 1e-9) curRank = i + 1;
+        items[i].rank = curRank;
+    }
+}
+
+static void formatItemText(char *buf, size_t cap, double val, Unit unit, int has) {
+    if (!has) {
+        snprintf(buf, cap, "fail");
+        return;
+    }
+    if (unit == unitSec) snprintf(buf, cap, "%.2fs", val);
+    else if (unit == unitMem) snprintf(buf, cap, "%.1fM", val);
+    else if (unit == unitRatio) snprintf(buf, cap, "%.2fx", val);
+    else if (val >= 1024.0) snprintf(buf, cap, "%.1fM", val / 1024.0);
+    else snprintf(buf, cap, "%.0fK", val);
+}
+
+static void addTopCol(const char *title, const Row *r, Unit unit) {
+    if (topColCount >= (int)(sizeof topCols / sizeof topCols[0])) return;
+    int validCount = 0;
+    for (int l = 0; l < langCount; l++) {
+        if (langState[l] == langReady && r->has[l]) validCount++;
+    }
+    if (validCount == 0) return;
+    TopCol *col = &topCols[topColCount++];
+    snprintf(col->title, sizeof col->title, "%s", title);
+    col->itemCount = 0;
+    for (int l = 0; l < langCount; l++) {
+        if (langState[l] != langReady) continue;
+        TopItem *item = &col->items[col->itemCount++];
+        item->langIndex = l;
+        item->has = r->has[l];
+        item->bad = r->bad[l];
+        item->val = r->has[l] ? r->v[l] : 1e30;
+        formatItemText(item->text, sizeof item->text, r->v[l], unit, r->has[l]);
+    }
+    qsort(col->items, col->itemCount, sizeof(TopItem), compareTopItems);
+    rankTopItems(col->items, col->itemCount);
+}
+
+static void printTopItemCell(const TopItem *item, int colWidth) {
+    char pfx[8];
+    if (item->rank == 0) snprintf(pfx, sizeof pfx, "-. ");
+    else snprintf(pfx, sizeof pfx, "%d. ", item->rank);
+    const char *langName = langs[item->langIndex].name;
+    char sfx[40];
+    snprintf(sfx, sizeof sfx, " (%s)", item->text);
+    int visLen = (int)strlen(pfx) + (int)strlen(langName) + (int)strlen(sfx);
+    fputs(pfx, stdout);
+    paint(item->bad ? styleRed : langs[item->langIndex].color);
+    if (item->rank == 1) paint(styleBold);
+    fputs(langName, stdout);
+    paint(styleReset);
+    fputs(sfx, stdout);
+    for (int i = visLen; i < colWidth; i++) putchar(' ');
+}
+
+static void printTopSlice(int start, int end, int colWidth, int colGap) {
+    for (int c = start; c < end; c++) {
+        paint(styleBold);
+        fputs(topCols[c].title, stdout);
+        paint(styleReset);
+        int pad = colWidth - (int)strlen(topCols[c].title);
+        for (int i = 0; i < pad; i++) putchar(' ');
+        if (c + 1 < end) {
+            for (int i = 0; i < colGap; i++) putchar(' ');
+        }
+    }
+    putchar('\n');
+    int maxRows = 0;
+    for (int c = start; c < end; c++) {
+        if (topCols[c].itemCount > maxRows) maxRows = topCols[c].itemCount;
+    }
+    for (int r = 0; r < maxRows; r++) {
+        for (int c = start; c < end; c++) {
+            if (r < topCols[c].itemCount) {
+                printTopItemCell(&topCols[c].items[r], colWidth);
+            } else {
+                for (int i = 0; i < colWidth; i++) putchar(' ');
+            }
+            if (c + 1 < end) {
+                for (int i = 0; i < colGap; i++) putchar(' ');
+            }
+        }
+        putchar('\n');
+    }
+    putchar('\n');
+}
+
+static void buildTopColumns(void) {
+    topColCount = 0;
+    Row build = {0};
+    Row binSize = {0};
+    for (int l = 0; l < langCount; l++) {
+        if (langState[l] != langReady) continue;
+        build.has[l] = 1;
+        build.v[l] = buildSec[l];
+        struct stat st;
+        const char *art = getArtifactPath(l);
+        if (art != NULL && stat(art, &st) == 0) {
+            binSize.has[l] = 1;
+            binSize.v[l] = (double)st.st_size / 1024.0;
+        }
+    }
+    addTopCol("build", &build, unitSec);
+    addTopCol("bin size", &binSize, unitSize);
+    for (int t = 0; t < testCount; t++) {
+        if (testDefs[t].kind != kindNop || !testSelected[t]) continue;
+        Row start, base;
+        fillRow(&start, t, metricWall);
+        addTopCol("start", &start, unitSec);
+        fillRow(&base, t, metricRss);
+        addTopCol("base ram", &base, unitMem);
+    }
+    for (int t = 0; t < testCount; t++) {
+        if (!testSelected[t] || testDefs[t].kind == kindNop) continue;
+        Row r;
+        Metric m = testDefs[t].kind == kindMem ? metricRss : metricInternal;
+        Unit u = testDefs[t].kind == kindMem ? unitMem : unitSec;
+        fillRow(&r, t, m);
+        addTopCol(testDefs[t].name, &r, u);
+    }
+    Totals tot;
+    memset(&tot, 0, sizeof tot);
+    for (int l = 0; l < langCount; l++) {
+        if (!langComplete(l)) continue;
+        tot.wall.has[l] = tot.cpu.has[l] = tot.io.has[l] = tot.peak.has[l] = 1;
+        addTotals(l, &tot);
+    }
+    addTopCol("peak ram", &tot.peak, unitMem);
+    addTopCol("wall", &tot.wall, unitSec);
+    addTopCol("cpu", &tot.cpu, unitSec);
+    addTopCol("stdout", &tot.io, unitSec);
+    addTopCol("score", &tot.score, unitRatio);
+    if (verbose) {
+        for (int t = 0; t < testCount; t++) {
+            if (!testSelected[t] || testDefs[t].kind == kindNop) continue;
+            char title[48];
+            snprintf(title, sizeof title, "%s ram", testDefs[t].name);
+            Row r;
+            fillRow(&r, t, metricRss);
+            addTopCol(title, &r, unitMem);
+        }
+    }
+}
+
+static void printTopTable(void) {
+    buildTopColumns();
+    if (topColCount == 0) return;
+    printDivider();
+    printTitle("top");
+    int colWidth = 21;
+    int colGap = 2;
+    int termWidth = getTermWidth();
+    int perRow = (termWidth + colGap) / (colWidth + colGap);
+    if (perRow < 1) perRow = 1;
+    for (int i = 0; i < topColCount; i += perRow) {
+        int end = i + perRow;
+        if (end > topColCount) end = topColCount;
+        printTopSlice(i, end, colWidth, colGap);
+    }
 }
