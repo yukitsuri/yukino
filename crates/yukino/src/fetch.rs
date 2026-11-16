@@ -172,10 +172,33 @@ fn resolve_git_dependency(
     let cache_dir = project_dir.join("yuki-work/local/deps/cache");
 
     if !refresh_deps && has_manifest_file(&dest_dir) {
-        if let Some(locked_pkg) = lockfile.find_package(dep_name) {
-            if dep_spec.commit.is_none() || dep_spec.commit == locked_pkg.commit {
-                return Ok((dest_dir, String::new(), locked_pkg.commit.clone()));
+        let current_commit = Command::new("git")
+            .args(["-C"])
+            .arg(&dest_dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string());
+
+        let lock_matches = match lockfile.find_package(dep_name) {
+            Some(locked_pkg) => {
+                if locked_pkg.commit.is_some() {
+                    locked_pkg.commit == current_commit
+                } else {
+                    true
+                }
             }
+            None => true,
+        };
+
+        let spec_matches = match &dep_spec.commit {
+            Some(expected) => current_commit.as_ref() == Some(expected),
+            None => true,
+        };
+
+        if lock_matches && spec_matches {
+            return Ok((dest_dir, String::new(), current_commit));
         }
     }
 
@@ -498,6 +521,39 @@ mod tests {
         assert!(tmp.join("lib.toml").is_file());
         assert!(tmp.join("lib.ykn").is_file());
         assert!(!tmp.join("nested_folder").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_git_dependency_cached_manifest() {
+        let tmp = std::env::temp_dir().join(format!("yukino_git_cache_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let dest = tmp.join("yuki-work/local/deps/mylib");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("lib.toml"), "[lib]\nname = \"mylib\"\n").unwrap();
+
+        let lockfile = Lockfile::new("x86_64-unknown-linux-gnu", "0.1.0", "debug");
+        let dashboard = BuildDashboard::new(1);
+        let spec = DependencySpec {
+            git: Some("https://example.com/repo.git".into()),
+            ..Default::default()
+        };
+
+        let res = resolve_git_dependency(
+            "mylib",
+            "https://example.com/repo.git",
+            &spec,
+            &tmp,
+            0,
+            &dashboard,
+            false,
+            &lockfile,
+        );
+        assert!(res.is_ok());
+        let (dir, _, _) = res.unwrap();
+        assert_eq!(dir, dest);
+        assert!(dest.join("lib.toml").is_file());
 
         let _ = fs::remove_dir_all(&tmp);
     }

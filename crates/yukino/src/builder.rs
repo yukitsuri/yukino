@@ -1290,6 +1290,10 @@ fn collect_reexported_dependencies(
             continue;
         }
 
+        if dep_manifest.is_macro() {
+            continue;
+        }
+
         let is_parent_split = dep_manifest.is_splitnames() || spec.is_splitnames();
         let sub_deps = dep_manifest.runtime_deps(Some(env.target.as_str()));
 
@@ -1590,7 +1594,9 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     let (all_dep_entries, splitnames_map) =
         collect_reexported_dependencies(&dep_entries, &dep_env, &lockfile)?;
 
-    let built_deps = build_runtime_dependencies(&all_dep_entries, &dep_env, &lockfile, threads)?;
+    let mut compile_dep_env = dep_env;
+    compile_dep_env.refresh_deps = false;
+    let built_deps = build_runtime_dependencies(&all_dep_entries, &compile_dep_env, &lockfile, threads)?;
 
     let mut include_dirs = Vec::new();
     let mut macro_runners = Vec::new();

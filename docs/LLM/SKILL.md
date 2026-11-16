@@ -304,6 +304,63 @@ Use the `yukino` CLI for daily project operations:
 - `yukino run`: Build and run binary.
 - `yukino test`: Run automated tests decorated with `#[test]`.
 
+### 5.3 Agentic Tooling & LLM Mode: `yukino-lsp`
+
+The language server binary `yukino-lsp` provides a dedicated standalone CLI mode designed for autonomous agents, LLMs, and CI pipelines without requiring an active editor JSON-RPC session.
+
+> [!IMPORTANT]
+> **LLM Agent Workflow Rule:**
+> When writing, modifying, or diagnosing Yukino code, the LLM must first check if `yukino-lsp` is available in `$PATH` (e.g. `which yukino-lsp`):
+> - **If `yukino-lsp` is present in `$PATH`:** The agent must actively use it to inspect context, verify types and syntax, look up keyword definitions, and format code.
+> - **If `yukino-lsp` is NOT present in `$PATH`:** The agent must proceed autonomously, writing the code carefully according to language rules and running tests/compilations manually (e.g. using `yukino test`, `yukino build`, or `./scripts/test_snippet.py`).
+
+#### Agent CLI Subcommands:
+
+1. **Static Analysis & Diagnostics (`check`):**
+   ```sh
+   # Human-readable diagnostics (prints 'ok' if clean):
+   yukino-lsp check src/main.ykn
+   yukino-lsp check .
+
+   # Machine-readable JSON output for automated agent parsing:
+   yukino-lsp check src/main.ykn --json
+   ```
+   - Checks syntax, type compatibility, undefined symbols, module imports, and compiler lints.
+   - Exits with status `0` on success and `1` if compiler errors are found.
+
+2. **Workspace & Agentic Context Discovery (`context`):**
+   ```sh
+   # Discovers available libraries, stdlib modules, and imported/local symbols:
+   yukino-lsp context src/main.ykn
+   yukino-lsp context src/main.ykn --line 10 --col 4
+   ```
+   - Returns a structured JSON payload containing:
+     - `available_libs`: all workspace and dependency libraries configured in `yuki.toml` / `yukispace.toml`.
+     - `stdlib_modules`: list of all available submodules in standard library (`std.*`).
+     - `local_symbols`: functions, classes, structs, and methods declared within the file with signatures.
+     - `imported_symbols`: all symbols imported via `load` statements along with their originating file paths and complete signatures.
+     - `diagnostics_count`: total number of diagnostics currently detected in the file.
+
+3. **Keyword & Attribute Reference (`doc`):**
+   ```sh
+   yukino-lsp doc "rewrite"
+   yukino-lsp doc "fast_math" --json
+   ```
+   - Instantly retrieves official syntax snippets, usage rules, and behavior for Yukino language constructs (`set`, `rewrite`, `sus`, `catch`, `finally`, `static`, etc.) and compiler attributes (`inline`, `stable`, `fast_math`, `no_region`, `thunk`, etc.).
+
+4. **In-place Code Formatter (`format`):**
+   ```sh
+   yukino-lsp format src/main.ykn
+   ```
+   - Formats the target `.ykn` file in place using canonical 4-space indentation and bracket rules.
+
+5. **Continuous File Watcher (`watch`):**
+   ```sh
+   yukino-lsp watch src/ --delay 300
+   yukino-lsp watch . --json
+   ```
+   - Background watcher that re-checks the target directory only when `.ykn` files are modified, outputting `ok` or updated diagnostics.
+
 ---
 
 ## 6. RAG Navigation Map: Standard Library and Deep Dive
