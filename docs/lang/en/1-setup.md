@@ -2,6 +2,10 @@
 
 This guide covers installing the `yukino` project manager, the `yukic` compiler driver, and building binaries for other platforms.
 
+> [!TIP]
+> **Editor Extensions and LSP:**
+> A complete guide on installing editor extensions (Zed, VS Code) and setting up the language server is available in [Editor Extensions and Yukino LSP](extensions.md).
+
 ## Contents
 
 1. [Supported platforms](#supported-platforms)
@@ -14,6 +18,7 @@ This guide covers installing the `yukino` project manager, the `yukic` compiler 
    - 4.2 [Compiler](#cross-compiling-the-compiler)
    - 4.3 [Runtime](#cross-compiling-the-runtime)
 5. [Verifying the installation](#verifying-the-installation)
+6. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
 
 ## Supported platforms
 
@@ -178,6 +183,10 @@ yukic targets
 ```
 
 If a command is not found, make sure `~/.cargo/bin` or `%USERPROFILE%\.cargo\bin` is in `PATH`.
+
+## Editor extensions (Zed, VS Code)
+
+To configure syntax highlighting, autocompletion, type hints, and code navigation, install the official editor extensions and the `yukino-lsp` language server. Refer to [Editor Extensions and Yukino LSP](extensions.md) for detailed step-by-step instructions.
 
 ---
 
