@@ -2,6 +2,10 @@
 
 This guide covers installing the `yukino` project manager, the `yukic` compiler driver, and building binaries for other platforms.
 
+> [!TIP]
+> **Editor Extensions and LSP:**
+> A complete guide on installing editor extensions (Zed, VS Code) and setting up the language server is available in [Editor Extensions and Yukino LSP](extensions.md).
+
 ## Contents
 
 1. [Supported platforms](#supported-platforms)
@@ -14,6 +18,7 @@ This guide covers installing the `yukino` project manager, the `yukic` compiler 
    - 4.2 [Compiler](#cross-compiling-the-compiler)
    - 4.3 [Runtime](#cross-compiling-the-runtime)
 5. [Verifying the installation](#verifying-the-installation)
+6. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
 
 ## Supported platforms
 
@@ -49,7 +54,7 @@ cd yukino
 nix profile add .#yukino
 ```
 
-Install the debug package with:
+The debug package is installed with:
 
 ```sh
 nix profile add .#yukino-debug
@@ -57,7 +62,7 @@ nix profile add .#yukino-debug
 
 It provides `yukino-dbg` and `yukic-dbg`.
 
-To enter a development shell with all dependencies and environment variables ready:
+To enter the ready development environment with all variables set:
 
 ```sh
 nix develop
@@ -81,7 +86,7 @@ Exact package names depend on your Linux distribution.
 
 #### Environment variables
 
-Before building with Cargo, LLVM and `libclang` paths must be explicitly exported in your shell session:
+Before compiling through Cargo, paths to LLVM and `libclang` must be explicitly exported in your current shell session:
 
 ```sh
 export LLVM_CONFIG=/path/to/llvm-config
@@ -98,30 +103,30 @@ cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yu
 cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
 ```
 
-Cargo installs the binaries into `~/.cargo/bin`:
+Cargo installs binaries to `~/.cargo/bin`:
 
-- `yukino` — the project manager and build tool;
-- `yukic` — the low-level compiler driver.
+- `yukino` — project and build manager;
+- `yukic` — low-level compiler driver.
 
 ## Installing on Windows
 
-For Windows, use the PowerShell script that automatically downloads prebuilt release binaries and configures `PATH`:
+On Windows, use the PowerShell script, which automatically downloads prebuilt binaries of the latest release and adds them to `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/yukitsuri/yukino/main/scripts/wininstall.ps1 | iex
 ```
 
-The script does not require configuring LLVM or compiling from source. If you need to build from source manually via Cargo, ensure LLVM 22 and MSVC/MinGW are installed and the respective LLVM environment variables are set.
+The script does not require manual LLVM configuration or compiling from source. If you need to build from source via Cargo manually, ensure LLVM 22 and MSVC/MinGW are installed and corresponding LLVM environment variables are set.
 
 ## Cross-compilation
 
 ### Cross-compilation requirements
 
-Cross-compilation additionally requires:
+Building for other platforms additionally requires:
 
-- `cargo-zigbuild` and Zig for Linux targets other than the normal host build;
-- Android NDK for Android targets;
-- Target components installed via `rustup target add <target>` if not already present.
+- `cargo-zigbuild` and Zig — for Linux targets different from your host;
+- Android NDK — for Android targets;
+- Rust target components installed via `rustup target add <target>`.
 
 ### Cross-compiling the compiler
 
@@ -133,7 +138,7 @@ cd yukino
 python3 scripts/crossbuild.py
 ```
 
-The script asks you to select one or more targets. Enter `0` to build all targets currently available in `crossbuild.py`:
+The script will prompt you to select targets. Selecting `0` builds all targets supported by `crossbuild.py`:
 
 - `x86_64-pc-windows-gnu`;
 - `x86_64-unknown-linux-gnu`;
@@ -142,7 +147,7 @@ The script asks you to select one or more targets. Enter `0` to build all target
 - `aarch64-unknown-linux-musl`;
 - `aarch64-linux-android`.
 
-Outputs are written to:
+Build outputs are placed in:
 
 ```text
 build/0.1.0/yukino/yukino-<target>
@@ -153,19 +158,19 @@ On Windows, use `py -3` instead of `python3`.
 
 ### Cross-compiling the runtime
 
-The runtime is built separately and produces static `.a` archives only:
+The runtime is built separately and only produces static `.a` archives:
 
 ```sh
 python3 scripts/crossbuild-rt.py
 ```
 
-Outputs are written to:
+Outputs are placed in:
 
 ```text
 build/0.1.0/runtime/<target>.a
 ```
 
-Pass the resulting runtime to `yukic` for a custom target with `--runtime <path>`. A separate runtime is not needed for the host target: `yukic` uses its embedded host runtime.
+Pass this runtime to `yukic` for custom targets via `--runtime <path>`. For the host target, an external runtime archive is not required: `yukic` uses its built-in host runtime.
 
 ## Verifying the installation
 
@@ -178,6 +183,10 @@ yukic targets
 ```
 
 If a command is not found, make sure `~/.cargo/bin` or `%USERPROFILE%\.cargo\bin` is in `PATH`.
+
+## Editor extensions (Zed, VS Code)
+
+To configure syntax highlighting, autocompletion, type hints, and code navigation, install the official editor extensions and the `yukino-lsp` language server. Refer to [Editor Extensions and Yukino LSP](extensions.md) for detailed step-by-step instructions.
 
 ---
 

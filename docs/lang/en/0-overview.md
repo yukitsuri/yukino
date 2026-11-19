@@ -27,7 +27,7 @@ It is important to understand the intended scope of the language:
 
 ### Goals and Philosophy
 
-1. **Maximum Simplicity and Peak Performance**: Zero heavy runtime baggage, no garbage collection pauses, and execution efficiency matching C and C++.
+1. **Maximum Simplicity and Peak Performance**: Zero heavy runtime baggage, no garbage collection pauses, and execution efficiency matching Rust and Zig.
 2. **Conciseness and Elegant Syntax**: Minimal visual noise, intuitive and predictable constructs (`set`, `rewrite`, `switch`, `sus/catch/finally`), freeing code from boilerplate ceremonial clutter.
 3. **Readability, Transparency, and Explicitness over Magic**: No hidden control flow, unexpected allocations, or invisible mutations. The code does exactly what is written. Yukino firmly prioritizes explicitness over implicit magic; consequently, certain language decisions (such as requiring the `fun` keyword for lambdas or explicit `rewrite` for mutations) may intentionally seem slightly more verbose or boilerplate-like at first glance, but this is a deliberate design choice in favor of zero ambiguity, crystal-clear readability, and easy long-term maintenance.
 4. **Minimal Compiler Footprint**: The `yukic` compiler and `yukino` toolchain are built to be lightweight, self-contained, and blazingly fast, without bloated dependency graphs.
