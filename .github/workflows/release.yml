@@ -22,7 +22,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       YUKINO_RELEASEBUILD: "1"
-      CROSS_CONTAINER_OPTS: "-e YUKINO_RELEASEBUILD=1"
     strategy:
       fail-fast: false
       matrix:
@@ -32,45 +31,45 @@ jobs:
             target_key: linux-gnu-x86_64
             yukic_asset: yukic-linux-gnu-x86_64
             yukino_asset: yukino-linux-gnu-x86_64
-            use_cross: false
+            builder: host
 
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             target_key: linux-musl-x86_64
             yukic_asset: yukic-linux-musl-x86_64
             yukino_asset: yukino-linux-musl-x86_64
-            use_cross: true
+            builder: alpine
 
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             target_key: linux-gnu-aarch64
             yukic_asset: yukic-linux-gnu-aarch64
             yukino_asset: yukino-linux-gnu-aarch64
-            use_cross: true
+            builder: host
 
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             target_key: linux-musl-aarch64
             yukic_asset: yukic-linux-musl-aarch64
             yukino_asset: yukino-linux-musl-aarch64
-            use_cross: true
+            builder: alpine
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             target_key: windows-msvc-x86_64
             yukic_asset: yukic-windows-msvc-x86_64.exe
             yukino_asset: yukino-windows-msvc-x86_64.exe
-            use_cross: false
+            builder: windows
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Workaround missing LLVM Polly library (Ubuntu)
-        if: "!contains(matrix.target, 'windows') && !matrix.use_cross"
+      - name: Workaround missing LLVM Polly library (Ubuntu Host)
+        if: matrix.builder == 'host'
         run: |
           sudo apt-get update
-          sudo apt-get install -y 'libpolly-*-dev' || true
+          sudo apt-get install -y llvm lld 'libpolly-*-dev' || true
 
           for cfg in $(which llvm-config llvm-config-18 llvm-config-19 llvm-config-17 llvm-config-16 2>/dev/null); do
             dir=$($cfg --libdir 2>/dev/null || true)
@@ -89,33 +88,55 @@ jobs:
             sudo cp -n /tmp/libPolly.a "$libdir/libPollyISL.a" 2>/dev/null || true
           done
 
+      - name: Install LLVM (Windows)
+        if: matrix.builder == 'windows'
+        shell: pwsh
+        run: |
+          $llvmExe = Join-Path $env:TEMP "llvm-22.1.8-win64.exe"
+          Write-Host "Downloading prebuilt LLVM 22.1.8 for Windows..."
+          Invoke-WebRequest -Uri "https://github.com/misaka00251/llvm-windows-x64/releases/download/v22.1.8/LLVM-22.1.8-win64.exe" -OutFile $llvmExe
+          Write-Host "Extracting LLVM to C:\LLVM..."
+          7z x $llvmExe -oC:\LLVM -y | Out-Null
+          echo "LLVM_SYS_221_PREFIX=C:\LLVM" >> $env:GITHUB_ENV
+          echo "C:\LLVM\bin" >> $env:GITHUB_PATH
+          Write-Host "Configured LLVM_SYS_221_PREFIX=C:\LLVM"
+
       - name: Install Rust toolchain
+        if: matrix.builder != 'alpine'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p ~/.cargo/bin
-          gh release download -R cross-rs/cross --pattern "cross-x86_64-unknown-linux-musl.tar.gz" -O - | tar -xz -C ~/.cargo/bin
-          chmod +x ~/.cargo/bin/cross
-
-      - name: Build release binaries (Unix)
-        if: "!contains(matrix.target, 'windows')"
+      - name: Build release binaries (Host Unix)
+        if: matrix.builder == 'host'
         env:
           YUKINO_RELEASEBUILD: "1"
         run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --bin yukic --bin yukino
-          else
-            cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
-          fi
+          cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
+
+      - name: Build release binaries (Alpine Musl)
+        if: matrix.builder == 'alpine'
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            -e YUKINO_RELEASEBUILD=1 \
+            alpine:edge sh -eux << 'EOF'
+              apk update
+              apk add --no-cache rust cargo llvm-dev clang lld musl-dev libffi-dev zlib-dev zstd-dev libxml2-dev gcc g++ make
+              cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
+              chmod -R a+rw target || true
+          EOF
+
+      - name: Build release binaries (Windows)
+        if: matrix.builder == 'windows'
+        env:
+          YUKINO_RELEASEBUILD: "1"
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
 
       - name: Prepare assets and checksums (Unix)
-        if: "!contains(matrix.target, 'windows')"
+        if: matrix.builder != 'windows'
         run: |
           cp target/${{ matrix.target }}/release/yukic ${{ matrix.yukic_asset }}
           chmod +x ${{ matrix.yukic_asset }}
@@ -127,15 +148,8 @@ jobs:
           sha256sum ${{ matrix.yukino_asset }} | awk '{print $1}' > ${{ matrix.yukino_asset }}.sha256
           wc -c < ${{ matrix.yukino_asset }} | tr -d ' ' > ${{ matrix.yukino_asset }}.size
 
-      - name: Build release binaries (Windows)
-        if: contains(matrix.target, 'windows')
-        env:
-          YUKINO_RELEASEBUILD: "1"
-        run: |
-          cargo build --release --target ${{ matrix.target }} --bin yukic --bin yukino
-
       - name: Prepare assets and checksums (Windows)
-        if: contains(matrix.target, 'windows')
+        if: matrix.builder == 'windows'
         shell: pwsh
         run: |
           Copy-Item target/${{ matrix.target }}/release/yukic.exe -Destination ${{ matrix.yukic_asset }}
