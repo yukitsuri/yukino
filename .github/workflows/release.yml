@@ -134,7 +134,8 @@ jobs:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work -e BUILD_TARGET -e YUKINO_RELEASEBUILD=1 alpine:edge sh -euc '
-            apk add --no-cache build-base curl ca-certificates rustup llvm22-dev llvm22-static zlib-static zstd-static libffi-dev linux-headers
+            apk add --no-cache build-base curl ca-certificates rustup linux-headers \
+              llvm22-dev llvm22-static libffi-dev libxml2-static xz-static zlib-static zstd-static
             rustup-init -y --profile minimal --default-toolchain stable --default-host "$BUILD_TARGET"
             export LLVM_SYS_221_PREFIX=/usr/lib/llvm22
             export PATH="$HOME/.cargo/bin:$LLVM_SYS_221_PREFIX/bin:$PATH"
@@ -142,6 +143,9 @@ jobs:
             test -f "$libstdcpp"
             export LLVM_SYS_SYSTEM_LIBRARY_DIRS="$(dirname "$libstdcpp")"
             llvm-config-22 --version
+            llvm-config-22 --link-static --system-libs
+            # Link the compression libraries required by libxml2 after the LLVM archives.
+            export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=/usr/lib/liblzma.a -C link-arg=/usr/lib/libz.a"
             cargo build --locked --release --target "$BUILD_TARGET" --bin yukic --bin yukino
             for binary in yukic yukino; do
               path="target/$BUILD_TARGET/release/$binary"
