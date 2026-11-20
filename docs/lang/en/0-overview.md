@@ -54,7 +54,7 @@ Please keep these requirements in mind when developing locally, testing, or cont
 ## Contents (please read till the end)
 
 0. [Documentation Overview](0-overview.md) — navigation, reading order, and stability notice.
-1. [Installing the Compiler](1-setup.md) — installing Yukino on Linux and Windows with Nix or Cargo, plus cross-compiling the compiler and runtime.
+1. [Installing the Compiler](1-setup.md) — installing Yukino on Linux and Windows with Lacie, Nix, or Cargo, plus cross-compiling the compiler and runtime.
 2. [Toolchain and Project Structure](2-cli-project.md) — `yukino` CLI commands, `yuki.toml` manifest, dependencies (path, git, tag, branch, commit, link), build profiles, `yuki-work/` workspace, `yuki.lock` lockfile, and `build.ykn` build scripts.
 3. [Basic Syntax, Operators, and Control Flow](3-basics.md) — `set` variables, strict `rewrite` mutation rule, `static` constants, arithmetic and bitwise operators, Pratt precedence table, branching, loops, and `space` stub.
 4. [Type System and Pattern Matching](4-types.md) — primitive and compound types, nullable `T?`, null safety (`??`, `?.`), tagged unions `T1 | T2`, `type` aliases, and `switch` matching.

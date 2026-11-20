@@ -9,16 +9,17 @@ This guide covers installing the `yukino` project manager, the `yukic` compiler 
 ## Contents
 
 1. [Supported platforms](#supported-platforms)
-2. [Installing on Linux](#installing-on-linux)
-   - 2.1 [Nix (recommended)](#nix-recommended)
-   - 2.2 [Manual Cargo build](#manual-cargo-build)
-3. [Installing on Windows](#installing-on-windows)
-4. [Cross-compilation](#cross-compilation)
-   - 4.1 [Cross-compilation requirements](#cross-compilation-requirements)
-   - 4.2 [Compiler](#cross-compiling-the-compiler)
-   - 4.3 [Runtime](#cross-compiling-the-runtime)
-5. [Verifying the installation](#verifying-the-installation)
-6. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
+2. [Installation via Lacie (recommended for all OS)](#installation-via-lacie-recommended-for-all-os)
+3. [Installing on Linux](#installing-on-linux)
+   - 3.1 [Nix](#nix)
+   - 3.2 [Manual Cargo build](#manual-cargo-build)
+4. [Installing on Windows](#installing-on-windows)
+5. [Cross-compilation](#cross-compilation)
+   - 5.1 [Cross-compilation requirements](#cross-compilation-requirements)
+   - 5.2 [Compiler](#cross-compiling-the-compiler)
+   - 5.3 [Runtime](#cross-compiling-the-runtime)
+6. [Verifying the installation](#verifying-the-installation)
+7. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
 
 ## Supported platforms
 
@@ -33,6 +34,31 @@ The compiler supports these target platforms:
 - `aarch64-linux-android`
 
 macOS is not supported yet. Work on macOS support will start as soon as someone with a Mac is available to develop and test it.
+
+## Installation via Lacie (Recommended for all OS)
+
+The recommended and simplest way to install the prebuilt Yukino toolchain on any supported operating system (Linux, Windows) is through the **[Lacie](https://github.com/shareui/lacie)** package manager. It automatically fetches prebuilt binaries, resolves dependencies, configures active binaries in `PATH`, and handles updates without requiring local C or Rust build tools.
+
+### 1. Install Lacie
+
+If Lacie is not yet installed on your system, install it using the official guide:
+- **[Lacie Installation Guide](https://github.com/shareui/lacie/tree/main/docs/install/en.md)**
+
+### 2. Install Yukino Toolchain
+
+To install all Yukino packages (`yukic` compiler driver and `yukino` build toolchain) for tag `v0.1.0` from `yukitsuri/yukino`:
+
+```sh
+lacie add yukitsuri/yukino v0.1.0
+```
+
+> [!TIP]
+> Use `-y` (`--yes`) to approve the installation prompt automatically:
+> ```sh
+> lacie add yukitsuri/yukino v0.1.0 -y
+> ```
+
+After installation completes, `yukino` and `yukic` will be immediately available in your terminal.
 
 ## Installing on Linux
 
