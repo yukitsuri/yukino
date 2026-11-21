@@ -62,7 +62,7 @@ A **Workspace** solves these problems by organizing a **monorepo**:
 
 1. **Atomic Code Changes**: Modifying a library's public API and updating all consumer applications occurs within a single build invocation and a single Git commit.
 2. **Zero Redundancy for C Dependencies**: If three libraries in a workspace require `pthread` or a static archive `libsqlite3.a`, declaring them once in `yukispace.toml` links them across all members.
-3. **Ergonomic Dependency Selection**: External projects can depend on your single Git repository or workspace path, selectively pulling individual member libraries using `package = "member_name"`.
+3. **Ergonomic Dependency Selection**: External projects can depend on your single Git repository or workspace path, selectively pulling individual member libraries using `package = "libs/member_name"`.
 4. **Unified Build Cache**: Shared build artifacts allow object files and archives to be reused between unit tests and executable binaries.
 
 ### 1.3 Workspace Architecture
@@ -222,7 +222,7 @@ Fields in an inline package:
 - `archives`, `objects`, `search_paths`, `system`: Low-level dependencies specific to this inline module.
 - `features`: Feature flags for this inline package.
 
-Inline packages participate in the build system as full members: they can be built individually via `yukino build -p fast_hash` and consumed by other packages via `package = "fast_hash"`.
+Inline packages participate in the build system as full members: they can be built individually via `yukino build -p fast_hash` and consumed by other packages via `package = "libs/fast_hash"`.
 
 ---
 
@@ -237,7 +237,7 @@ When importing workspace members and external libraries in Yukino code, develope
 
 Understanding this distinction:
 - `[libs.runtime.<namespace_key>]` defines the local identifier under which the compiler exposes the library namespace to your source code (`load <namespace_key>`).
-- The `package = "<member_name>"` field is strictly a package manager locator used during resolution to select which package to build from the target workspace or repository.
+- The `package = "libs/<member_name>"` field is strictly a package manager locator used during resolution to select which package to build from the target workspace or repository.
 
 #### Example 1: Matching Names
 
@@ -246,7 +246,7 @@ In your application manifest `apps/my_cli/yuki.toml`:
 ```toml
 [libs.runtime.math_core]
 path = "../../my_workspace"
-package = "math_core"
+package = "libs/math_core"
 ```
 
 In your application source code `apps/my_cli/src/main.ykn`:
@@ -270,11 +270,11 @@ If imports relied on the internal package name, an unresolvable collision would 
 ```toml
 [libs.runtime.engine_utils]
 path = "../vendor/game_engine"
-package = "utils"
+package = "libs/utils"
 
 [libs.runtime.net_utils]
 path = "../vendor/network_stack"
-package = "utils"
+package = "libs/utils"
 ```
 
 In your Yukino code, each package has a completely isolated namespace:
@@ -297,7 +297,7 @@ The `package` field designates which member package of a target workspace to bui
 # Standard form
 [libs.runtime.my_lib1]
 path = "../some_workspace"
-package = "core"
+package = "libs/core"
 
 # sublib alias
 [libs.runtime.my_lib2]
@@ -336,7 +336,7 @@ path = "../../libs/core_lib"
 
 [libs.runtime.hash]
 path = "../../"
-package = "fast_hash" # References an inline workspace package
+package = "libs/fast_hash" # References an inline workspace package
 ```
 
 In source code `apps/my_cli/src/main.ykn`:
@@ -364,7 +364,7 @@ Used for linking projects locally on the same development workstation:
 ```toml
 [libs.runtime.crypto]
 path = "../vendor/monorepo_toolkit"
-package = "crypto_lib"
+package = "libs/crypto_lib"
 ```
 
 Resolution workflow:
@@ -381,19 +381,19 @@ Allows pulling specific libraries from large multi-package Git monorepositories 
 [libs.runtime.render_engine]
 git = "https://github.com/company/game_suite.git"
 branch = "main"
-package = "render_core"
+package = "libs/render_core"
 
 # Pinned to a specific release tag
 [libs.runtime.net_protocol]
 git = "https://github.com/company/game_suite.git"
 tag = "v2.1.0"
-package = "net_driver"
+package = "libs/net_driver"
 
 # Pinned to an exact commit hash
 [libs.runtime.physics]
 git = "https://github.com/company/game_suite.git"
 rev = "8f3e2a1b9c"
-package = "physics2d"
+package = "libs/physics2d"
 ```
 
 Resolution workflow:
@@ -411,7 +411,7 @@ Supports direct download of compressed workspace archives over HTTP/HTTPS:
 [libs.runtime.gui_widgets]
 link = "https://cdn.example.com/releases/desktop_kit-1.4.0.tar.zst"
 sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-package = "widgets"
+package = "libs/widgets"
 ```
 
 Supported archive formats:
@@ -508,11 +508,11 @@ External consumers pulling your repository via Git can selectively consume only 
 # In consumer yuki.toml:
 [libs.runtime.cloud_auth]
 git = "https://github.com/example/cloud_sdk"
-package = "auth"
+package = "libs/auth"
 
 [libs.runtime.cloud_http]
 git = "https://github.com/example/cloud_sdk"
-package = "http"
+package = "libs/http"
 ```
 
 In consumer source code:
@@ -592,7 +592,7 @@ Any workspace member can now reference it:
 # In apps/my_cli/yuki.toml:
 [libs.runtime.b64]
 path = "../../"
-package = "base64"
+package = "libs/base64"
 ```
 
 And import it in Yukino code:
@@ -680,7 +680,7 @@ yukino build -p my_cli --no-default-features
    If package `A` depends on package `B`, package `B` must not depend on package `A`. When circular relationships arise, extract the shared types or interfaces into a common base package `common_types`.
 
 2. **Do Not Conflate Code Namespace with Package Name**:
-   Remember: `load foo` in your Yukino code always references the key alias `foo` defined in your manifest `[libs.runtime]`. The `package = "bar"` selector tells the builder which package to compile from the target repository.
+   Remember: `load foo` in your Yukino code always references the key alias `foo` defined in your manifest `[libs.runtime]`. The `package = "libs/bar"` selector tells the builder which package to compile from the target repository.
 
 3. **Separate Global and Local Native C Dependencies**:
    Place in `[workspace.build]` only C libraries that are universally needed by the majority of members (such as runtime components, threading libraries, or standard databases). If a C library is only used by one package, declare it in that package's local `lib.toml`.
