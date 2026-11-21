@@ -24,6 +24,7 @@ Yukino — это экспериментальный проект одного �
 [shareui/clarity](https://github.com/shareui/clarity): Библиотека для декларативного описания CLI интерфейсов.  
 [homewatcha/cryonet](https://github.com/homewatcha/cryonet): Легковесный веб-фреймворк и HTTP/HTTPS сервер для языка программирования Yukino.  
 [shareui/siesta](https://github.com/shareui/siesta): Библиотека для декларативного описания TUI.
+[shareui/b64min](https://github.com/shareui/b64min): Минималистичная base64 реализация.
 
 ---
 

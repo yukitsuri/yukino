@@ -24,6 +24,7 @@ This section lists libraries maintained and developed by the team at [yukitsuri]
 [shareui/clarity](https://github.com/shareui/clarity): A library for the declarative definition of CLI interfaces.  
 [homewatcha/cryonet](https://github.com/homewatcha/cryonet): Lightweight web framework and HTTP/HTTPS server for the Yukino programming language.  
 [shareui/siesta](https://github.com/shareui/siesta): Declarative TUI library.
+[shareui/b64min](https://github.com/shareui/b64min): Minimalistic base64 implementation.
 
 ---
 
