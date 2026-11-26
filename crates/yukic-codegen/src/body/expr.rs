@@ -37,16 +37,22 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             ExprKind::Ident(ident) => self.compile_ident(ident),
             ExprKind::This | ExprKind::Super => self.compile_ident(&Ident::new("this", expr.span)),
             ExprKind::Path(idents) => {
-                if idents.len() == 2 && idents[0].name == "extern" {
-                    let fn_name = &idents[1].name;
+                if idents.len() == 2
+                    && (idents[0].name == "extern"
+                        || self.registry.is_c_namespace_symbol(&idents[0].name, &idents[1].name))
+                {
+                    let sym_name = &idents[1].name;
                     let c_sym = self
                         .registry
                         .c_symbols
-                        .get(fn_name)
+                        .get(sym_name)
                         .cloned()
-                        .unwrap_or_else(|| fn_name.clone());
+                        .unwrap_or_else(|| sym_name.clone());
                     if let Some(fn_val) = self.module.get_function(&c_sym) {
                         return Ok(fn_val.as_global_value().as_pointer_value().into());
+                    }
+                    if idents[0].name != "extern" {
+                        return self.compile_ident(&Ident::new(sym_name, expr.span));
                     }
                 }
                 if idents.len() == 2 {
@@ -138,7 +144,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
     }
 
-    fn compile_literal(&mut self, lit: &LiteralValue) -> BasicValueEnum<'ctx> {
+    pub(crate) fn compile_literal(&mut self, lit: &LiteralValue) -> BasicValueEnum<'ctx> {
         if let Some(BasicTypeEnum::FloatType(ft)) = self.expected_expr_ty {
             match lit {
                 LiteralValue::Int(v) | LiteralValue::TypedInt(v, _) => return ft.const_float(*v as f64).into(),
@@ -211,6 +217,12 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 .map_err(|e| e.to_string());
         }
         if let Some(global) = self.module.get_global(&ident.name) {
+            if self.inline_statics
+                && global.is_constant()
+                && let Some(init_val) = global.get_initializer()
+            {
+                return Ok(init_val);
+            }
             let bty = BasicTypeEnum::try_from(global.get_value_type())
                 .map_err(|()| format!("invalid global type for '{}'", ident.name))?;
             return self
@@ -541,6 +553,12 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             (BasicValueEnum::IntValue(l), BasicValueEnum::StructValue(s)) => {
                 self.compile_nullable_struct_scalar_cmp(s, l.into(), op)
             }
+            (BasicValueEnum::StructValue(s), BasicValueEnum::FloatValue(r)) => {
+                self.compile_nullable_struct_scalar_cmp(s, r.into(), op)
+            }
+            (BasicValueEnum::FloatValue(l), BasicValueEnum::StructValue(s)) => {
+                self.compile_nullable_struct_scalar_cmp(s, l.into(), op)
+            }
             (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r)) => {
                 let l_st = l.get_type();
                 let r_st = r.get_type();
@@ -643,6 +661,10 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             || (st.count_fields() == 2
                 && st.get_field_type_at_index(0) == Some(self.ptr_type().into())
                 && st.get_field_type_at_index(1) == Some(self.context.i64_type().into()))
+            || (st.count_fields() == 3
+                && st.get_field_type_at_index(0) == Some(self.ptr_type().into())
+                && st.get_field_type_at_index(1) == Some(self.context.i64_type().into())
+                && st.get_field_type_at_index(2) == Some(self.context.i64_type().into()))
     }
 
     fn is_nullable_struct(&self, st: inkwell::types::StructType<'ctx>) -> bool {
@@ -1385,7 +1407,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         Ok(None)
     }
 
-    fn create_entry_alloca(
+    pub(super) fn create_entry_alloca(
         &self,
         ty: BasicTypeEnum<'ctx>,
         name: &str,
@@ -1735,6 +1757,61 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         target: &Expr,
         index: &Expr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let sem = self.expr_semantic_ty(target).or_else(|| {
+            if let ExprKind::Ident(id) = &target.kind {
+                self.lookup_local(&id.name).and_then(|l| l.semantic_ty.clone())
+            } else {
+                None
+            }
+        });
+        let actual_sem = match &sem {
+            Some(Type::Ref { inner, .. }) => Some(inner.as_ref().clone()),
+            other => other.clone(),
+        };
+        if let Some(Type::FixedArray(ref elem_sem, len)) = actual_sem {
+            let elem_sem_ty = elem_sem.as_ref().clone();
+            let index_val = self.compile_expr(index)?;
+            let i64_ty = self.context.i64_type();
+            let idx = self.coerce_type(index_val, i64_ty.into())?.into_int_value();
+            let (elem_llvm_ty, _) = self.elem_type_to_layout(&elem_sem_ty)?;
+            let arr_ptr = match &target.kind {
+                ExprKind::FieldAccess(recv, fld) => self.compile_field_ptr(recv, fld)?.0,
+                ExprKind::Ident(id) if self.lookup_local(&id.name).is_some() => {
+                    self.lookup_local(&id.name).unwrap().ptr
+                }
+                _ => {
+                    let val = self.compile_expr(target)?;
+                    let len_u32 = u32::try_from(len).map_err(|_| "fixed array size overflow".to_string())?;
+                    let arr_ty = elem_llvm_ty.array_type(len_u32);
+                    let tmp = self.create_entry_alloca(arr_ty.into(), "farr_tmp")?;
+                    self.builder.build_store(tmp, val).map_err(|e| e.to_string())?;
+                    tmp
+                }
+            };
+            let elem_ptr = self.intrinsic.emit_raw_elem_ptr(self.builder, arr_ptr, idx, elem_llvm_ty)?;
+            return self
+                .builder
+                .build_load(elem_llvm_ty, elem_ptr, "farr_elem")
+                .map_err(|e| e.to_string());
+        }
+        if let Some(Type::Ptr(ref elem_sem)) = actual_sem {
+            let target_val = self.compile_expr(target)?;
+            let index_val = self.compile_expr(index)?;
+            let i64_ty = self.context.i64_type();
+            let idx = self.coerce_type(index_val, i64_ty.into())?.into_int_value();
+            let (elem_llvm_ty, _) = self.elem_type_to_layout(elem_sem)?;
+            let elem_ptr = self.intrinsic.emit_raw_elem_ptr(
+                self.builder,
+                target_val.into_pointer_value(),
+                idx,
+                elem_llvm_ty,
+            )?;
+            return self
+                .builder
+                .build_load(elem_llvm_ty, elem_ptr, "ptr_elem")
+                .map_err(|e| e.to_string());
+        }
+
         let target_val = self.compile_expr(target)?;
         let index_val = self.compile_expr(index)?;
         if let Some(Type::Class(class_name)) = self.expr_semantic_ty(target) {
@@ -1826,7 +1903,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             Some(t) => t,
             None => &Type::Null,
         };
-        if let Type::Array(elem) = actual {
+        if let Type::Array(elem) | Type::FixedArray(elem, _) = actual {
             return self.elem_type_to_layout(elem);
         }
 
@@ -1946,35 +2023,6 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             .into())
     }
 
-    fn compile_value_equality(
-        &self,
-        l: BasicValueEnum<'ctx>,
-        r: BasicValueEnum<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
-        if l.is_int_value() && r.is_int_value() {
-            let li = l.into_int_value();
-            let ri = r.into_int_value();
-            let lb = li.get_type().get_bit_width();
-            let rb = ri.get_type().get_bit_width();
-            let r_cast = if lb == rb {
-                ri
-            } else {
-                self.builder
-                    .build_int_cast(ri, li.get_type(), "sw_cast")
-                    .map_err(|e| e.to_string())?
-            };
-            self.builder
-                .build_int_compare(IntPredicate::EQ, li, r_cast, "sw_eq")
-                .map_err(|e| e.to_string())
-        } else if l.is_float_value() && r.is_float_value() {
-            self.builder
-                .build_float_compare(FloatPredicate::OEQ, l.into_float_value(), r.into_float_value(), "sw_feq")
-                .map_err(|e| e.to_string())
-        } else {
-            Ok(self.context.bool_type().const_int(1, false))
-        }
-    }
-
     pub(crate) fn compile_enum_instantiation(
         &mut self,
         enum_name: &str,
@@ -2059,7 +2107,8 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             }
             PatternKind::Literal(lit) => {
                 let lit_val = self.compile_literal(lit);
-                self.compile_value_equality(target_val, lit_val)
+                let eq_val = self.compile_binary_values(BinaryOp::Eq, target_val, lit_val)?;
+                self.to_bool(eq_val)
             }
             PatternKind::Variant(opt_enum, var_ident, _) => {
                 let mut found_variant = None;
@@ -2566,13 +2615,65 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         ident: &Ident,
         fields: &[FieldInit],
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let resolved_name = self.registry.resolve_c_namespace_name(&ident.name).to_string();
+
+        if let Some(layout) = self.registry.cstructs.get(&resolved_name).cloned()
+            && layout.is_union
+        {
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+            let union_ty = lowerer.lower_named_cstruct(&resolved_name)?;
+            let alloca = self.create_entry_alloca(union_ty.into(), "cunion_init")?;
+            self.builder
+                .build_store(alloca, union_ty.const_zero())
+                .map_err(|e| e.to_string())?;
+            if let Some(f) = fields.first() {
+                let field_sem_ty = layout
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == &f.name.name)
+                    .map(|(_, ty)| ty.clone());
+                let prev_sem = self.expected_sem_ty.take();
+                self.expected_sem_ty = field_sem_ty.clone();
+                let v = self.compile_expr(&f.value)?;
+                self.expected_sem_ty = prev_sem;
+                let coerced = if let Some(ref fty) = field_sem_ty {
+                    let target_llvm = lowerer.lower_type(fty)?;
+                    self.coerce_type(v, target_llvm)?
+                } else {
+                    v
+                };
+                self.builder.build_store(alloca, coerced).map_err(|e| e.to_string())?;
+            }
+            return self
+                .builder
+                .build_load(union_ty, alloca, "cunion_val")
+                .map_err(|e| e.to_string());
+        }
+
+        let field_sem_map: std::collections::HashMap<String, Type> = self
+            .registry
+            .structs
+            .get(&resolved_name)
+            .map(|l| l.fields.iter().cloned().collect())
+            .or_else(|| {
+                self.registry
+                    .cstructs
+                    .get(&resolved_name)
+                    .map(|l| l.fields.iter().cloned().collect())
+            })
+            .unwrap_or_default();
+
         let mut field_vals = Vec::with_capacity(fields.len());
         for f in fields {
+            let prev_sem = self.expected_sem_ty.take();
+            self.expected_sem_ty = field_sem_map.get(&f.name.name).cloned();
             let v = self.compile_expr(&f.value)?;
+            self.expected_sem_ty = prev_sem;
             field_vals.push((f.name.name.clone(), v));
         }
 
-        let ordered = if let Some(layout) = self.registry.structs.get(&ident.name) {
+        let ordered = if let Some(layout) = self.registry.structs.get(&resolved_name) {
             let mut list = Vec::with_capacity(layout.fields.len());
             for (fname, _) in &layout.fields {
                 if let Some((_, v)) = field_vals.iter().find(|(n, _)| n == fname) {
@@ -2582,7 +2683,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 }
             }
             list
-        } else if let Some(layout) = self.registry.cstructs.get(&ident.name) {
+        } else if let Some(layout) = self.registry.cstructs.get(&resolved_name) {
             // Order cstruct literal fields by declaration order and
             // zero-fill omitted ones so the value matches the C layout.
             let mut list = Vec::with_capacity(layout.fields.len());
@@ -2601,8 +2702,8 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         let types: Vec<BasicTypeEnum<'ctx>> = ordered.iter().map(BasicValueEnum::get_type).collect();
         let struct_ty = self
             .context
-            .get_struct_type(&format!("struct.{}", ident.name))
-            .or_else(|| self.context.get_struct_type(&format!("cstruct.{}", ident.name)))
+            .get_struct_type(&format!("struct.{resolved_name}"))
+            .or_else(|| self.context.get_struct_type(&format!("cstruct.{resolved_name}")))
             .or_else(|| {
                 let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
                 let lowerer = crate::types::TypeLowerer::new(
@@ -2611,13 +2712,13 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     self.target,
                     self.registry,
                 );
-                if self.registry.structs.contains_key(&ident.name) {
-                    match lowerer.lower_type(&Type::Struct(ident.name.clone())) {
+                if self.registry.structs.contains_key(&resolved_name) {
+                    match lowerer.lower_type(&Type::Struct(resolved_name.clone())) {
                         Ok(BasicTypeEnum::StructType(st)) => Some(st),
                         _ => None,
                     }
-                } else if self.registry.cstructs.contains_key(&ident.name) {
-                    match lowerer.lower_type(&Type::Cstruct(ident.name.clone())) {
+                } else if self.registry.cstructs.contains_key(&resolved_name) {
+                    match lowerer.lower_type(&Type::Cstruct(resolved_name.clone())) {
                         Ok(BasicTypeEnum::StructType(st)) => Some(st),
                         _ => None,
                     }
@@ -2643,11 +2744,51 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         Ok(sv.into())
     }
 
+    fn lookup_cunion_field_ty(&self, target: &Expr, field_name: &str) -> Option<Type> {
+        let sem = self.expr_semantic_ty(target)?;
+        let actual = match &sem {
+            Type::Ref { inner, .. } => inner.as_ref(),
+            other => other,
+        };
+        let unwrapped = actual.unwrap_nullable();
+        let name = match unwrapped {
+            Type::Struct(n) | Type::Cstruct(n) => {
+                self.registry.resolve_c_namespace_name(n.as_str()).to_string()
+            }
+            _ => return None,
+        };
+        let layout = self.registry.cstructs.get(&name)?;
+        if !layout.is_union {
+            return None;
+        }
+        layout
+            .fields
+            .iter()
+            .find(|(f, _)| f == field_name)
+            .map(|(_, ty)| ty.clone())
+    }
+
     pub(crate) fn compile_field_ptr(
         &mut self,
         target: &Expr,
         field: &Ident,
     ) -> Result<(PointerValue<'ctx>, BasicTypeEnum<'ctx>), String> {
+        if let Some(union_field_sem) = self.lookup_cunion_field_ty(target, &field.name) {
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+            let field_ty = lowerer.lower_type(&union_field_sem)?;
+            if let Some((_, base)) = self.struct_value_base(target) {
+                return Ok((base, field_ty));
+            }
+            let target_val = self.compile_expr(target)?;
+            if target_val.is_pointer_value() {
+                return Ok((target_val.into_pointer_value(), field_ty));
+            }
+            let tmp = self.create_entry_alloca(target_val.get_type(), "cunion_tmp")?;
+            self.builder.build_store(tmp, target_val).map_err(|e| e.to_string())?;
+            return Ok((tmp, field_ty));
+        }
+
         let idx = self.find_field_index(target, &field.name).unwrap_or(0);
         let field_idx = u32::try_from(idx).map_err(|e| e.to_string())?;
 
@@ -2685,7 +2826,12 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .map_err(|e| e.to_string())?;
                 return Ok((gep, field_ty));
             } else if let Some(Type::Struct(sname)) = actual_ty {
-                let struct_ty = lowerer.lower_named_struct(&sname)?;
+                let resolved_sname = self.registry.resolve_c_namespace_name(sname);
+                let struct_ty = if self.registry.cstructs.contains_key(resolved_sname) {
+                    lowerer.lower_named_cstruct(resolved_sname)?
+                } else {
+                    lowerer.lower_named_struct(resolved_sname)?
+                };
                 let field_ty = struct_ty
                     .get_field_type_at_index(field_idx)
                     .unwrap_or_else(|| self.context.i64_type().into());
@@ -2695,7 +2841,8 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     .map_err(|e| e.to_string())?;
                 return Ok((gep, field_ty));
             } else if let Some(Type::Cstruct(sname)) = actual_ty {
-                let struct_ty = lowerer.lower_named_cstruct(&sname)?;
+                let resolved_sname = self.registry.resolve_c_namespace_name(sname);
+                let struct_ty = lowerer.lower_named_cstruct(resolved_sname)?;
                 let field_ty = struct_ty
                     .get_field_type_at_index(field_idx)
                     .unwrap_or_else(|| self.context.i64_type().into());
@@ -2768,16 +2915,49 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         target: &Expr,
         field: &Ident,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        if let Some(Type::Class(ref cname)) = self.expr_semantic_ty(target) {
-            if self.registry.has_getter(cname, &field.name) {
-                let target_val = self.compile_expr(target)?;
-                let getter_name = format!("__get_{}", field.name);
-                return self.compile_class_instance_method_call_values(
-                    cname,
-                    target_val,
-                    &getter_name,
-                    &[],
-                );
+        if let Some(sem_ty) = self.expr_semantic_ty(target) {
+            let actual_ty = match &sem_ty {
+                Type::Ref { inner, .. } | Type::Shared(inner) | Type::Weak(inner) => inner.as_ref(),
+                other => other,
+            };
+            if let Type::Class(cname) = actual_ty {
+                if self.registry.has_getter(cname, &field.name) {
+                    let target_val = self.compile_expr(target)?;
+                    let getter_name = format!("__get_{}", field.name);
+                    return self.compile_class_instance_method_call_values(
+                        cname,
+                        target_val,
+                        &getter_name,
+                        &[],
+                    );
+                }
+                if let Some((owner_class, _)) = self
+                    .registry
+                    .lookup_class_layout(cname)
+                    .and_then(|l| l.static_fields.get(&field.name).cloned())
+                {
+                    if !matches!(target.kind, ExprKind::Ident(_) | ExprKind::This | ExprKind::Super) {
+                        let _ = self.compile_expr(target)?;
+                    }
+                    let sym_name = crate::registry::TypeRegistry::class_static_global_name(
+                        &owner_class,
+                        &field.name,
+                    );
+                    if let Some(global) = self.module.get_global(&sym_name) {
+                        if self.inline_statics
+                            && global.is_constant()
+                            && let Some(init_val) = global.get_initializer()
+                        {
+                            return Ok(init_val);
+                        }
+                        let bty = BasicTypeEnum::try_from(global.get_value_type())
+                            .map_err(|()| format!("invalid global type for '{sym_name}'"))?;
+                        return self
+                            .builder
+                            .build_load(bty, global.as_pointer_value(), &field.name)
+                            .map_err(|e| e.to_string());
+                    }
+                }
             }
         }
 
@@ -2990,6 +3170,36 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         &mut self,
         elements: &[Expr],
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let expected_fixed_arr = match &self.expected_sem_ty {
+            Some(Type::FixedArray(elem_sem, expected_len)) => {
+                let layout = self.elem_type_to_layout(elem_sem).ok();
+                layout.map(|(llvm_ty, _)| (llvm_ty, (**elem_sem).clone(), *expected_len))
+            }
+            _ => None,
+        };
+        if let Some((elem_llvm_ty, elem_sem, expected_len)) = expected_fixed_arr {
+            let len_u32 = u32::try_from(expected_len)
+                .map_err(|_| format!("fixed array length {expected_len} exceeds LLVM u32 limit"))?;
+            let arr_ty = elem_llvm_ty.array_type(len_u32);
+            let mut arr_val = arr_ty.const_zero();
+            let prev_expected_expr = self.expected_expr_ty;
+            let prev_expected_sem = self.expected_sem_ty.take();
+            for (i, elem) in elements.iter().enumerate() {
+                self.expected_expr_ty = Some(elem_llvm_ty);
+                self.expected_sem_ty = Some(elem_sem.clone());
+                let val = self.compile_expr(elem)?;
+                let coerced = self.coerce_type(val, elem_llvm_ty)?;
+                arr_val = self
+                    .builder
+                    .build_insert_value(arr_val, coerced, i as u32, "farr_init")
+                    .map_err(|e| e.to_string())?
+                    .into_array_value();
+            }
+            self.expected_expr_ty = prev_expected_expr;
+            self.expected_sem_ty = prev_expected_sem;
+            return Ok(arr_val.into());
+        }
+
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         if elements.is_empty() {
@@ -3528,7 +3738,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             generics: Vec::new(),
             params: ast_params,
             return_type: None,
-            body: block,
+            body: Some(block),
             span: body.span,
         };
         self.compile_anonymous_fun(&decl)
@@ -3538,13 +3748,14 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         &mut self,
         fun: &yukic_ast::item::FunDecl,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        let body = fun.body.as_ref().ok_or_else(|| "anonymous function missing body".to_string())?;
         // 1. Analyze free variable captures
         let mut used_idents = std::collections::HashSet::new();
-        for stmt in &fun.body.stmts {
+        for stmt in &body.stmts {
             collect_ident_names_in_stmt(stmt, &mut used_idents);
         }
         let mut local_declared = std::collections::HashSet::new();
-        collect_declared_local_names(&fun.body, &mut local_declared);
+        collect_declared_local_names(body, &mut local_declared);
         for p in &fun.params {
             local_declared.insert(p.name.name.clone());
         }
@@ -3754,7 +3965,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
 
         // Compile body
-        let _ = self.compile_block(&fun.body)?;
+        let _ = self.compile_block(body)?;
 
         // Ensure terminator exists
         if let Some(curr_bb) = self.builder.get_insert_block() {
@@ -3834,19 +4045,21 @@ pub(crate) fn deduce_closure_return_type(
         locals.insert(p.name.name.clone(), ty);
     }
 
-    for stmt in &fun.body.stmts {
-        if let yukic_ast::stmt::StmtKind::Return(Some(expr)) = &stmt.kind {
-            if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
-                if ty != Type::Void {
-                    return Some(ty);
+    if let Some(ref fun_body) = fun.body {
+        for stmt in &fun_body.stmts {
+            if let yukic_ast::stmt::StmtKind::Return(Some(expr)) = &stmt.kind {
+                if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
+                    if ty != Type::Void {
+                        return Some(ty);
+                    }
                 }
             }
         }
-    }
-    if let Some(last_stmt) = fun.body.stmts.last() {
-        if let yukic_ast::stmt::StmtKind::Expr(expr) = &last_stmt.kind {
-            if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
-                return Some(ty);
+        if let Some(last_stmt) = fun_body.stmts.last() {
+            if let yukic_ast::stmt::StmtKind::Expr(expr) = &last_stmt.kind {
+                if let Some(ty) = deduce_closure_expr_type(expr, &locals, bc) {
+                    return Some(ty);
+                }
             }
         }
     }

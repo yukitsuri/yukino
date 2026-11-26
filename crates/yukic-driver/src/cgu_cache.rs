@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use inkwell::targets::RelocMode;
+use inkwell::targets::{CodeModel, RelocMode};
 use serde::{Deserialize, Serialize};
 use yukic_opt::{OptLevel, OptimizedCgu};
 use yukic_target::TargetTriple;
@@ -65,6 +65,24 @@ impl CguCacheManifest {
         reloc: RelocMode,
         extra_dependency_hashes: &[&str],
     ) -> String {
+        Self::compute_cgu_hash_with_code_model(
+            cgu,
+            target,
+            opt_level,
+            reloc,
+            CodeModel::Default,
+            extra_dependency_hashes,
+        )
+    }
+
+    pub fn compute_cgu_hash_with_code_model(
+        cgu: &OptimizedCgu,
+        target: TargetTriple,
+        opt_level: OptLevel,
+        reloc: RelocMode,
+        code_model: CodeModel,
+        extra_dependency_hashes: &[&str],
+    ) -> String {
         let mut hasher = blake3::Hasher::new();
         hasher.update(cgu.name.as_bytes());
         hasher.update(b"\0");
@@ -81,6 +99,16 @@ impl CguCacheManifest {
             RelocMode::DynamicNoPic => "dynamic-no-pic",
         };
         hasher.update(reloc_str.as_bytes());
+        hasher.update(b"\0");
+        let cm_str = match code_model {
+            CodeModel::Default => "default",
+            CodeModel::JITDefault => "jit-default",
+            CodeModel::Small => "small",
+            CodeModel::Kernel => "kernel",
+            CodeModel::Medium => "medium",
+            CodeModel::Large => "large",
+        };
+        hasher.update(cm_str.as_bytes());
         hasher.update(b"\0");
         hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
         for dep in extra_dependency_hashes {

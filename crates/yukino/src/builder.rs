@@ -14,7 +14,10 @@ use crate::features::unify_dependency_features;
 use crate::lockfile::{
     LOCKFILE_REL_PATH, LockedPackage, Lockfile, collect_dir_sources, compute_source_dir_checksum,
 };
-use crate::manifest::{DependencySpec, ProfileConfig, ProjectManifest};
+use crate::manifest::{
+    DependencySpec, ManifestDirective, ProfileConfig, ProjectManifest, ScopedManifestGuard,
+    apply_manifest_directives, parse_manifest_directive_line,
+};
 use crate::project::ProjectError;
 use crate::tracker::ThreadStatus;
 use crate::{VERSION, YUKIC_NAME, should_color};
@@ -49,6 +52,7 @@ pub struct BuildOptions {
     pub no_default_features: bool,
     pub all_features: bool,
     pub package: Option<String>,
+    pub manifest_path: Option<PathBuf>,
     pub run: bool,
     pub run_args: Vec<String>,
     pub no_warns: bool,
@@ -78,6 +82,7 @@ impl Default for BuildOptions {
             no_default_features: false,
             all_features: false,
             package: None,
+            manifest_path: None,
             run: false,
             run_args: Vec::new(),
             no_warns: false,
@@ -204,6 +209,78 @@ struct DepBuildEnv<'a> {
     dashboard: &'a BuildDashboard,
 }
 
+fn apply_profile_flags_to_yukic(
+    cmd: &mut Command,
+    cfg: &ProfileConfig,
+    include_emit: bool,
+    linker_override: Option<&str>,
+) {
+    if cfg.function_sections_enabled() {
+        cmd.arg("--function-sections");
+    } else if cfg.function_sections == Some(false) {
+        cmd.arg("--no-function-sections");
+    }
+    if let Some(mode) = cfg.lto_mode_str() {
+        cmd.arg("--lto-mode").arg(mode);
+    } else if cfg.lto_enabled() {
+        cmd.arg("--lto");
+    }
+    if let Some(cpu) = &cfg.cpu {
+        cmd.arg("--cpu").arg(cpu);
+    }
+    if let Some(features) = &cfg.features {
+        if !features.is_empty() {
+            cmd.arg("--target-features").arg(features.join(","));
+        }
+    }
+    if let Some(reloc) = &cfg.reloc_model {
+        cmd.arg("--reloc-model").arg(reloc);
+    }
+    if let Some(cm) = &cfg.code_model {
+        cmd.arg("--code-model").arg(cm);
+    }
+    if cfg.fast_math == Some(true) {
+        cmd.arg("--fast-math");
+    }
+    if cfg.inline_statics == Some(true) {
+        cmd.arg("--inline-statics");
+    } else if cfg.inline_statics == Some(false) {
+        cmd.arg("--no-inline-statics");
+    }
+    if cfg.debug_assertions == Some(false) {
+        cmd.arg("--no-debug-assertions");
+    } else if cfg.debug_assertions == Some(true) {
+        cmd.arg("--debug-assertions");
+    }
+    if cfg.strip_enabled() {
+        cmd.arg("--strip");
+    }
+    if cfg.strip_unused_enabled() {
+        cmd.arg("--strip-unused");
+    }
+    if let Some(strategy) = &cfg.panic_strategy {
+        cmd.arg("--panic-strategy").arg(strategy);
+    }
+    if include_emit && let Some(emits) = &cfg.emit && !emits.is_empty() {
+        let primary = if emits.iter().any(|e| e == "bin") {
+            "bin"
+        } else {
+            emits[0].as_str()
+        };
+        cmd.arg("--emit").arg(primary);
+        let extras: Vec<&str> = emits
+            .iter()
+            .map(String::as_str)
+            .filter(|e| *e != primary)
+            .collect();
+        if !extras.is_empty() {
+            cmd.arg("--extra-emit").arg(extras.join(","));
+        }
+    }
+    let linker = linker_override.or(cfg.linker.as_deref()).unwrap_or("lld");
+    cmd.arg("--linker").arg(linker);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn invoke_yukic_for_dep(
     compiler: &Path,
@@ -228,7 +305,6 @@ fn invoke_yukic_for_dep(
     cmd.arg("--entry").arg(entry);
     if is_macro {
         cmd.arg("--output-type").arg("app");
-        cmd.arg("--linker").arg("lld");
     } else {
         cmd.arg("--output-type").arg("static");
     }
@@ -256,18 +332,7 @@ fn invoke_yukic_for_dep(
     if no_warns {
         cmd.arg("--no-warns");
     }
-    if cfg.lto_enabled() {
-        cmd.arg("--lto");
-    }
-    if cfg.strip_enabled() {
-        cmd.arg("--strip");
-    }
-    if cfg.strip_unused_enabled() {
-        cmd.arg("--strip-unused");
-    }
-    if let Some(strategy) = &cfg.panic_strategy {
-        cmd.arg("--panic-strategy").arg(strategy);
-    }
+    apply_profile_flags_to_yukic(&mut cmd, cfg, false, if is_macro { Some("lld") } else { None });
     let macro_timeout = crate::config::load_global_macrotimeout();
     cmd.arg("--macro-timeout").arg(macro_timeout.to_string());
 
@@ -320,8 +385,11 @@ pub struct BuiltDependency {
     pub archive: PathBuf,
     pub source_dir: PathBuf,
     pub static_archives: Vec<PathBuf>,
+    pub static_search_paths: Vec<PathBuf>,
     pub system_libs: Vec<String>,
     pub macro_binary: Option<PathBuf>,
+    pub interface: Option<PathBuf>,
+    pub shared_lib: Option<PathBuf>,
 }
 
 fn resolve_dep_source_desc(dep_spec: &DependencySpec) -> String {
@@ -336,55 +404,76 @@ fn resolve_dep_source_desc(dep_spec: &DependencySpec) -> String {
     }
 }
 
+fn append_static_specs(
+    specs: &crate::manifest::StaticLibsSection,
+    base_dir: &Path,
+    archives: &mut Vec<PathBuf>,
+    search_paths: &mut Vec<PathBuf>,
+    system: &mut Vec<String>,
+) {
+    for arch in &specs.archives {
+        let resolved = if arch.is_relative() { base_dir.join(arch) } else { arch.clone() };
+        if !archives.contains(&resolved) {
+            archives.push(resolved);
+        }
+    }
+    for obj in &specs.objects {
+        let resolved = if obj.is_relative() { base_dir.join(obj) } else { obj.clone() };
+        if !archives.contains(&resolved) {
+            archives.push(resolved);
+        }
+    }
+    for sp in &specs.search_paths {
+        let resolved = if sp.is_relative() { base_dir.join(sp) } else { sp.clone() };
+        if !search_paths.contains(&resolved) {
+            search_paths.push(resolved);
+        }
+    }
+    for s in &specs.system {
+        if !system.contains(s) {
+            system.push(s.clone());
+        }
+    }
+}
+
+fn append_workspace_build_specs(
+    host_workspace_path: Option<&Path>,
+    target: TargetTriple,
+    archives: &mut Vec<PathBuf>,
+    search_paths: &mut Vec<PathBuf>,
+    system: &mut Vec<String>,
+) {
+    let Some(ws_path) = host_workspace_path else {
+        return;
+    };
+    let Some(ws_dir) = ws_path.parent() else {
+        return;
+    };
+    if let Ok(Some((ws, _))) = crate::manifest::WorkspaceManifest::load_from_dir(ws_dir) {
+        let ws_manifest = ProjectManifest::Workspace(ws);
+        let ws_specs = ws_manifest.static_libs(Some(target.as_str()));
+        append_static_specs(&ws_specs, ws_dir, archives, search_paths, system);
+    }
+}
+
 fn collect_dep_static_specs(
     dep_manifest: &ProjectManifest,
     dep_dir: &Path,
     target: TargetTriple,
-) -> (Vec<PathBuf>, Vec<String>) {
+) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     let mut archives = Vec::new();
+    let mut search_paths = Vec::new();
+    let mut system = Vec::new();
     let specs = dep_manifest.static_libs(Some(target.as_str()));
-    for arch in specs.archives {
-        let resolved = if arch.is_relative() {
-            dep_dir.join(&arch)
-        } else {
-            arch
-        };
-        archives.push(resolved);
-    }
-    for obj in specs.objects {
-        let resolved = if obj.is_relative() {
-            dep_dir.join(&obj)
-        } else {
-            obj
-        };
-        archives.push(resolved);
-    }
+    append_static_specs(&specs, dep_dir, &mut archives, &mut search_paths, &mut system);
 
     if let Ok(Some((ws, _))) = crate::manifest::WorkspaceManifest::load_from_dir(dep_dir) {
         let ws_manifest = ProjectManifest::Workspace(ws);
         let ws_specs = ws_manifest.static_libs(Some(target.as_str()));
-        for arch in ws_specs.archives {
-            let resolved = if arch.is_relative() { dep_dir.join(&arch) } else { arch };
-            if !archives.contains(&resolved) {
-                archives.push(resolved);
-            }
-        }
-        for obj in ws_specs.objects {
-            let resolved = if obj.is_relative() { dep_dir.join(&obj) } else { obj };
-            if !archives.contains(&resolved) {
-                archives.push(resolved);
-            }
-        }
-        let mut system = specs.system;
-        for s in ws_specs.system {
-            if !system.contains(&s) {
-                system.push(s);
-            }
-        }
-        return (archives, system);
+        append_static_specs(&ws_specs, dep_dir, &mut archives, &mut search_paths, &mut system);
     }
 
-    (archives, specs.system)
+    (archives, search_paths, system)
 }
 
 fn resolve_dep_artifact_path(
@@ -425,6 +514,174 @@ fn resolve_dep_entry_file(dep_dir: &Path, dep_path: &Path, dep_manifest: &Projec
     }
 }
 
+fn resolve_dep_path_rel(base_dir: &Path, project_dir: &Path, raw: &Path) -> PathBuf {
+    if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        let candidate = base_dir.join(raw);
+        if candidate.exists() {
+            candidate
+        } else {
+            project_dir.join(raw)
+        }
+    }
+}
+
+fn find_prebuilt_interface_in_dir(dir: &Path, dep_name: &str) -> Option<PathBuf> {
+    let exact = dir.join(format!("{dep_name}.ykni"));
+    if exact.is_file() {
+        return Some(exact);
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut yknis: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("ykni"))
+            .collect();
+        yknis.sort();
+        return yknis.into_iter().next();
+    }
+    None
+}
+
+fn try_resolve_prebuilt_dependency(
+    dep_name: &str,
+    dep_spec: &DependencySpec,
+    env: &DepBuildEnv,
+) -> Result<Option<(BuiltDependency, LockedPackage)>, ProjectError> {
+    let base_dir = dep_spec.path.as_ref().map_or_else(
+        || env.project_dir.to_path_buf(),
+        |p| {
+            if p.is_relative() {
+                env.project_dir.join(p)
+            } else {
+                p.clone()
+            }
+        },
+    );
+    let auto_dir_prebuilt = dep_spec.path.is_some()
+        && !dep_spec.has_prebuilt_spec()
+        && base_dir.is_dir()
+        && !base_dir.join("lib.toml").is_file()
+        && !base_dir.join("yuki.toml").is_file()
+        && find_prebuilt_interface_in_dir(&base_dir, dep_name).is_some();
+
+    if !dep_spec.has_prebuilt_spec() && !auto_dir_prebuilt {
+        return Ok(None);
+    }
+
+    let iface_path = if let Some(raw_iface) = dep_spec.interface.as_ref().or(dep_spec.prebuilt.as_ref()) {
+        let resolved = resolve_dep_path_rel(&base_dir, env.project_dir, raw_iface);
+        if resolved.is_file() {
+            resolved
+        } else if resolved.is_dir() {
+            find_prebuilt_interface_in_dir(&resolved, dep_name).ok_or_else(|| {
+                ProjectError::Runtime(format!(
+                    "no .ykni interface file found in '{}' for dependency '{dep_name}'",
+                    resolved.display()
+                ))
+            })?
+        } else {
+            return Err(ProjectError::Runtime(format!(
+                "prebuilt interface '{}' for dependency '{dep_name}' not found",
+                resolved.display()
+            )));
+        }
+    } else {
+        find_prebuilt_interface_in_dir(&base_dir, dep_name).ok_or_else(|| {
+            ProjectError::Runtime(format!(
+                "no .ykni interface found for prebuilt dependency '{dep_name}' in '{}'",
+                base_dir.display()
+            ))
+        })?
+    };
+
+    let search_base = iface_path.parent().unwrap_or(&base_dir);
+    let archive_path = if let Some(raw_arch) = &dep_spec.archive {
+        let resolved = resolve_dep_path_rel(search_base, env.project_dir, raw_arch);
+        if !resolved.is_file() {
+            return Err(ProjectError::Runtime(format!(
+                "prebuilt archive '{}' for dependency '{dep_name}' not found",
+                resolved.display()
+            )));
+        }
+        Some(resolved)
+    } else {
+        let cand = search_base.join(format!("lib{dep_name}.a"));
+        cand.is_file().then_some(cand)
+    };
+
+    let shared_path = if let Some(raw_shared) = &dep_spec.shared {
+        let resolved = resolve_dep_path_rel(search_base, env.project_dir, raw_shared);
+        if !resolved.is_file() {
+            return Err(ProjectError::Runtime(format!(
+                "prebuilt shared library '{}' for dependency '{dep_name}' not found",
+                resolved.display()
+            )));
+        }
+        Some(resolved)
+    } else if archive_path.is_none() {
+        let so_name = if cfg!(target_os = "windows") {
+            format!("{dep_name}.dll")
+        } else if cfg!(target_os = "macos") {
+            format!("lib{dep_name}.dylib")
+        } else {
+            format!("lib{dep_name}.so")
+        };
+        let cand = search_base.join(so_name);
+        cand.is_file().then_some(cand)
+    } else {
+        None
+    };
+
+    if let Some(ref arch) = archive_path {
+        yukic_target::validate_binary_compatibility(arch, env.target)
+            .map_err(|e| ProjectError::Runtime(e.to_string()))?;
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    if let Ok(bytes) = fs::read(&iface_path) {
+        hasher.update(&bytes);
+    }
+    if let Some(ref bin) = archive_path.as_ref().or(shared_path.as_ref())
+        && let Ok(bytes) = fs::read(bin)
+    {
+        hasher.update(&bytes);
+    }
+    let checksum = hasher.finalize().to_hex()[..16].to_string();
+
+    if !env.no_lib_log {
+        env.dashboard
+            .log(&format!("    Using prebuilt: {dep_name} ({})", iface_path.display()));
+    }
+
+    let primary_archive = archive_path.unwrap_or_default();
+    let locked_pkg = record_locked_dep(
+        dep_name,
+        "0.0.0",
+        format!("prebuilt+{}", iface_path.display()),
+        checksum,
+        None,
+        dep_spec.features.clone(),
+        "prebuilt",
+    );
+
+    Ok(Some((
+        BuiltDependency {
+            name: dep_name.to_string(),
+            archive: primary_archive,
+            source_dir: PathBuf::new(),
+            static_archives: Vec::new(),
+            static_search_paths: Vec::new(),
+            system_libs: Vec::new(),
+            macro_binary: None,
+            interface: Some(iface_path),
+            shared_lib: shared_path,
+        },
+        locked_pkg,
+    )))
+}
+
 fn build_single_dependency(
     dep_name: &str,
     dep_spec: &DependencySpec,
@@ -432,6 +689,10 @@ fn build_single_dependency(
     thread_id: usize,
     lockfile: &Lockfile,
 ) -> Result<(BuiltDependency, LockedPackage), ProjectError> {
+    if let Some(prebuilt) = try_resolve_prebuilt_dependency(dep_name, dep_spec, env)? {
+        return Ok(prebuilt);
+    }
+
     let (dep_dir, fetch_checksum, commit) = crate::fetch::resolve_dependency_dir(
         dep_name,
         dep_spec,
@@ -442,7 +703,7 @@ fn build_single_dependency(
         lockfile,
     )?;
 
-    let (dep_manifest, dep_path) = ProjectManifest::load_with_package(
+    let (mut dep_manifest, dep_path) = ProjectManifest::load_with_package(
         &dep_dir,
         dep_spec.package.as_deref(),
     )?;
@@ -450,15 +711,15 @@ fn build_single_dependency(
     let is_macro = dep_manifest.is_macro();
     let dep_target = if is_macro { TargetTriple::host() } else { env.target };
 
-    let (chosen_profile, mut dep_cfg) =
+    let (mut chosen_profile, mut dep_cfg) =
         dep_manifest.resolve_inherited_profile(env.app_profile, env.app_profile_cfg);
 
     for (k, v) in env.overrides {
         let _ = dep_cfg.apply_override(k, v);
     }
 
-    let (mut dep_static_archives, mut dep_system_libs) =
-        collect_dep_static_specs(&dep_manifest, &dep_pkg_dir, dep_target);
+    let mut dep_static_archives = Vec::new();
+    let mut dep_system_libs = Vec::new();
 
     let dep_build_deps = dep_manifest.build_deps(Some(dep_target.as_str()));
     let mut dep_build_link_archives = Vec::new();
@@ -488,10 +749,11 @@ fn build_single_dependency(
     }
 
     let dep_build_script = dep_pkg_dir.join("build.ykn");
-    if dep_build_script.is_file() {
+    let dep_manifest_guard = if dep_build_script.is_file() {
         run_build_script(
             &dep_build_script,
             &dep_pkg_dir,
+            &dep_path,
             dep_target,
             &chosen_profile,
             dep_name,
@@ -502,7 +764,32 @@ fn build_single_dependency(
             &mut dep_static_archives,
             &mut dep_system_libs,
             env.dashboard,
-        )?;
+        )?
+    } else {
+        None
+    };
+    if dep_manifest_guard.is_some() {
+        dep_manifest = ProjectManifest::load_file(&dep_path)?.0;
+        let (re_profile, mut re_cfg) =
+            dep_manifest.resolve_inherited_profile(env.app_profile, env.app_profile_cfg);
+        for (k, v) in env.overrides {
+            let _ = re_cfg.apply_override(k, v);
+        }
+        chosen_profile = re_profile;
+        dep_cfg = re_cfg;
+    }
+
+    let (spec_archives, dep_search_paths, spec_systems) =
+        collect_dep_static_specs(&dep_manifest, &dep_pkg_dir, dep_target);
+    for arch in spec_archives {
+        if !dep_static_archives.contains(&arch) {
+            dep_static_archives.push(arch);
+        }
+    }
+    for sys in spec_systems {
+        if !dep_system_libs.contains(&sys) {
+            dep_system_libs.push(sys);
+        }
     }
 
     let (dep_artifact, out_dir) = resolve_dep_artifact_path(
@@ -552,8 +839,11 @@ fn build_single_dependency(
                 archive: dep_artifact.clone(),
                 source_dir: dep_pkg_dir,
                 static_archives: dep_static_archives,
+                static_search_paths: dep_search_paths,
                 system_libs: dep_system_libs,
                 macro_binary: if is_macro { Some(dep_artifact) } else { None },
+                interface: None,
+                shared_lib: None,
             },
             locked_pkg,
         ));
@@ -627,6 +917,7 @@ fn build_single_dependency(
             false,
         )?;
     }
+    drop(dep_manifest_guard);
 
     if !env.no_lib_log {
         if should_color() {
@@ -646,8 +937,11 @@ fn build_single_dependency(
             archive: dep_artifact.clone(),
             source_dir: dep_pkg_dir,
             static_archives: dep_static_archives,
+            static_search_paths: dep_search_paths,
             system_libs: dep_system_libs,
             macro_binary: if is_macro { Some(dep_artifact) } else { None },
+            interface: None,
+            shared_lib: None,
         },
         locked_pkg,
     ))
@@ -657,6 +951,7 @@ fn build_single_dependency(
 fn run_build_script(
     script_path: &Path,
     project_dir: &Path,
+    manifest_path: &Path,
     target: TargetTriple,
     profile: &str,
     name: &str,
@@ -667,9 +962,9 @@ fn run_build_script(
     link_archives: &mut Vec<PathBuf>,
     link_systems: &mut Vec<String>,
     dashboard: &BuildDashboard,
-) -> Result<(), ProjectError> {
+) -> Result<Option<ScopedManifestGuard>, ProjectError> {
     if !script_path.is_file() {
-        return Ok(());
+        return Ok(None);
     }
 
     let rel_script = format_relative_path(script_path);
@@ -709,9 +1004,8 @@ fn run_build_script(
     compile_cmd.current_dir(&script_dir);
     compile_cmd.arg("--target").arg("host");
     compile_cmd.arg("-o").arg(&build_bin);
-    let manifest_file = project_dir.join("yuki.toml");
-    if manifest_file.is_file() {
-        compile_cmd.arg("--manifest").arg(&manifest_file);
+    if manifest_path.is_file() {
+        compile_cmd.arg("--manifest").arg(manifest_path);
     }
     compile_cmd.arg(&isolated_script);
 
@@ -752,6 +1046,25 @@ fn run_build_script(
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
+    apply_build_script_stdout(
+        &stdout_str,
+        project_dir,
+        manifest_path,
+        link_archives,
+        link_systems,
+        dashboard,
+    )
+}
+
+fn apply_build_script_stdout(
+    stdout_str: &str,
+    project_dir: &Path,
+    manifest_path: &Path,
+    link_archives: &mut Vec<PathBuf>,
+    link_systems: &mut Vec<String>,
+    dashboard: &BuildDashboard,
+) -> Result<Option<ScopedManifestGuard>, ProjectError> {
+    let mut manifest_directives: Vec<ManifestDirective> = Vec::new();
     for line in stdout_str.lines() {
         if let Some(sys) = line.strip_prefix("yuki:link-system=") {
             link_systems.push(sys.trim().to_string());
@@ -765,10 +1078,16 @@ fn run_build_script(
             link_archives.push(resolved);
         } else if let Some(warn) = line.strip_prefix("yuki:warning=") {
             dashboard.log(&format!("warning: {}", warn.trim()));
+        } else if let Some(dir) = parse_manifest_directive_line(line)? {
+            manifest_directives.push(dir);
         }
     }
 
-    Ok(())
+    if manifest_directives.is_empty() {
+        return Ok(None);
+    }
+    let guard = apply_manifest_directives(manifest_path, &manifest_directives)?;
+    Ok(Some(guard))
 }
 
 struct BuildDepParams<'a> {
@@ -876,7 +1195,7 @@ fn run_single_build_dependency(
     let dep_version = dep_manifest
         .as_ref()
         .map(|(m, _)| m.version().to_string())
-        .unwrap_or_else(|| "0.1.0".to_string());
+        .unwrap_or_else(|| VERSION.to_string());
 
     let host_deps_dir = params.project_dir.join("yuki-work/local/build/host/deps").join(dep_name);
     fs::create_dir_all(&host_deps_dir).map_err(|e| ProjectError::Io(e.to_string()))?;
@@ -1082,6 +1401,7 @@ struct YukicCommandParams<'a> {
     cgunits: usize,
     features: &'a [String],
     link_archives: &'a [PathBuf],
+    link_search_paths: &'a [PathBuf],
     link_systems: &'a [String],
     connected_libs: &'a [String],
     macro_runners: &'a [(String, PathBuf)],
@@ -1090,6 +1410,7 @@ struct YukicCommandParams<'a> {
     no_warns: bool,
     extra_info: bool,
     include_dirs: &'a [PathBuf],
+    prebuilt_interfaces: &'a [(String, PathBuf)],
     cache_dir: Option<&'a Path>,
     splitnames: &'a [(String, Vec<String>)],
     linker: Option<&'a str>,
@@ -1115,40 +1436,20 @@ fn build_yukic_command(p: &YukicCommandParams) -> Command {
         cmd.arg("--cache-dir").arg(cache);
     }
 
-    if p.profile_cfg.function_sections_enabled() {
-        cmd.arg("--function-sections");
-    }
-    if p.profile_cfg.lto_enabled() {
-        cmd.arg("--lto");
-    }
-    if let Some(cpu) = &p.profile_cfg.cpu {
-        cmd.arg("--cpu").arg(cpu);
-    }
-    if let Some(features) = &p.profile_cfg.features {
-        if !features.is_empty() {
-            cmd.arg("--target-features").arg(features.join(","));
-        }
-    }
-    if p.profile_cfg.fast_math == Some(true) {
-        cmd.arg("--fast-math");
-    }
-    if p.profile_cfg.strip_enabled() {
-        cmd.arg("--strip");
-    }
-    if p.profile_cfg.strip_unused_enabled() {
-        cmd.arg("--strip-unused");
-    }
-    if let Some(strategy) = &p.profile_cfg.panic_strategy {
-        cmd.arg("--panic-strategy").arg(strategy);
-    }
     if !p.features.is_empty() {
         cmd.arg("--features").arg(p.features.join(","));
     }
     for inc in p.include_dirs {
         cmd.arg("--include").arg(inc);
     }
+    for (name, ykni_path) in p.prebuilt_interfaces {
+        cmd.arg("--prebuilt").arg(format!("{}={}", name, ykni_path.display()));
+    }
     for arch in p.link_archives {
         cmd.arg("--link-archive").arg(arch);
+    }
+    for sp in p.link_search_paths {
+        cmd.arg("--link-search").arg(sp);
     }
     for sys in p.link_systems {
         cmd.arg("--link-system").arg(sys);
@@ -1176,8 +1477,7 @@ fn build_yukic_command(p: &YukicCommandParams) -> Command {
     }
     let macro_timeout = crate::config::load_global_macrotimeout();
     cmd.arg("--macro-timeout").arg(macro_timeout.to_string());
-    let linker = p.linker.or(p.profile_cfg.linker.as_deref()).unwrap_or("lld");
-    cmd.arg("--linker").arg(linker);
+    apply_profile_flags_to_yukic(&mut cmd, p.profile_cfg, true, p.linker);
     cmd
 }
 
@@ -1263,6 +1563,9 @@ fn collect_reexported_dependencies(
     }
 
     while let Some((alias_name, spec)) = queue.pop_front() {
+        if spec.has_prebuilt_spec() {
+            continue;
+        }
         let (dep_dir, _, _) = match crate::fetch::resolve_dependency_dir(
             &alias_name,
             &spec,
@@ -1432,22 +1735,25 @@ fn build_runtime_dependencies(
 
 pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     let start_time = Instant::now();
-    let (manifest, manifest_path) = ProjectManifest::load_with_package(
+    let (mut manifest, manifest_path) = ProjectManifest::resolve_root_manifest(
         &opts.project_dir,
+        opts.manifest_path.as_deref(),
         opts.package.as_deref(),
     )?;
 
     if let ProjectManifest::Workspace(ref ws) = manifest {
-        let members = ws.find_all_members(&opts.project_dir)?;
+        let ws_dir = manifest_path.parent().unwrap_or(&opts.project_dir).to_path_buf();
+        let members = ws.find_default_or_all_members(&ws_dir)?;
         if members.is_empty() {
-            println!("No members found in workspace {}", opts.project_dir.display());
-            return Ok(opts.project_dir.join("yukispace.toml"));
+            println!("No members found in workspace {}", ws_dir.display());
+            return Ok(ws_dir.join("yukispace.toml"));
         }
         let mut last_artifact = PathBuf::new();
         for (name, _, member_path) in members {
             let mut member_opts = opts.clone();
-            let member_dir = member_path.parent().unwrap_or(&opts.project_dir).to_path_buf();
+            let member_dir = member_path.parent().unwrap_or(&ws_dir).to_path_buf();
             member_opts.project_dir = member_dir;
+            member_opts.manifest_path = Some(member_path);
             member_opts.package = Some(name);
             last_artifact = build_project(&member_opts)?;
         }
@@ -1479,7 +1785,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         profile_cfg.apply_override(k, v).map_err(ProjectError::Runtime)?;
     }
 
-    let runtime_deps = manifest.runtime_deps(Some(target.as_str()));
+    let mut runtime_deps = manifest.runtime_deps(Some(target.as_str()));
     let unified = unify_dependency_features(
         manifest.features(),
         &opts.features,
@@ -1487,7 +1793,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         opts.no_default_features,
         &runtime_deps,
     );
-    let resolved_features: BTreeSet<String> = unified.root_features;
+    let mut resolved_features: BTreeSet<String> = unified.root_features;
 
     let threads = resolve_pool_threads(opts.threads);
     let compiler = resolve_compiler_exe();
@@ -1498,7 +1804,6 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         .unwrap_or_else(|| Lockfile::new(target.as_str(), VERSION, &opts.profile));
 
     let project_name = manifest.name();
-    let project_kind = manifest.output_kind();
 
     let dashboard = if let Some(parent) = &opts.parent_dashboard {
         BuildDashboard::nested(parent.clone())
@@ -1543,6 +1848,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     }
 
     let mut link_archives = Vec::new();
+    let mut link_search_paths = Vec::new();
     let mut link_systems = Vec::new();
 
     let host_workspace_path = {
@@ -1564,7 +1870,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     let dep_env = DepBuildEnv {
         project_dir: &opts.project_dir,
         host_manifest: Some(manifest_path.clone()),
-        host_workspace: host_workspace_path,
+        host_workspace: host_workspace_path.clone(),
         target,
         app_profile: &opts.profile,
         app_profile_cfg: &profile_cfg,
@@ -1599,6 +1905,8 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     let built_deps = build_runtime_dependencies(&all_dep_entries, &compile_dep_env, &lockfile, threads)?;
 
     let mut include_dirs = Vec::new();
+    let mut prebuilt_interfaces = Vec::new();
+    let mut prebuilt_shared_libs = Vec::new();
     let mut macro_runners = Vec::new();
     let deps_dir = opts.project_dir.join("yuki-work/local/deps");
     if deps_dir.is_dir() {
@@ -1615,8 +1923,19 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
                 }
             }
         } else {
-            if !link_archives.contains(&built.archive) {
+            if !built.archive.as_os_str().is_empty() && !link_archives.contains(&built.archive) {
                 link_archives.push(built.archive);
+            }
+            if let Some(ref shared_so) = built.shared_lib {
+                if !link_archives.contains(shared_so) {
+                    link_archives.push(shared_so.clone());
+                }
+                if !prebuilt_shared_libs.contains(shared_so) {
+                    prebuilt_shared_libs.push(shared_so.clone());
+                }
+            }
+            if let Some(ref iface) = built.interface {
+                prebuilt_interfaces.push((built.name.clone(), iface.clone()));
             }
             for arch in built.static_archives {
                 if !link_archives.contains(&arch) {
@@ -1628,8 +1947,16 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
                     link_systems.push(sys);
                 }
             }
+            for sp in built.static_search_paths {
+                if !link_search_paths.contains(&sp) {
+                    link_search_paths.push(sp);
+                }
+            }
         }
-        if built.source_dir.is_dir() && !include_dirs.contains(&built.source_dir) {
+        if !built.source_dir.as_os_str().is_empty()
+            && built.source_dir.is_dir()
+            && !include_dirs.contains(&built.source_dir)
+        {
             include_dirs.push(built.source_dir);
         }
     }
@@ -1793,41 +2120,6 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         }
     }
 
-    let static_specs = manifest.static_libs(Some(target.as_str()));
-    for arch in static_specs.archives {
-        let resolved = if arch.is_relative() {
-            opts.project_dir.join(arch)
-        } else {
-            arch
-        };
-        if resolved.is_file() {
-            yukic_target::validate_binary_compatibility(&resolved, target)
-                .map_err(|e| ProjectError::Runtime(e.to_string()))?;
-        }
-        if !link_archives.contains(&resolved) {
-            link_archives.push(resolved);
-        }
-    }
-    for obj in static_specs.objects {
-        let resolved = if obj.is_relative() {
-            opts.project_dir.join(obj)
-        } else {
-            obj
-        };
-        if resolved.is_file() {
-            yukic_target::validate_binary_compatibility(&resolved, target)
-                .map_err(|e| ProjectError::Runtime(e.to_string()))?;
-        }
-        if !link_archives.contains(&resolved) {
-            link_archives.push(resolved);
-        }
-    }
-    for sys in static_specs.system {
-        if !link_systems.contains(&sys) {
-            link_systems.push(sys);
-        }
-    }
-
     let build_deps = manifest.build_deps(Some(target.as_str()));
     let build_params = BuildDepParams {
         project_dir: &opts.project_dir,
@@ -1859,9 +2151,10 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
     }
 
     let build_script = opts.project_dir.join("build.ykn");
-    run_build_script(
+    let manifest_guard = run_build_script(
         &build_script,
         &opts.project_dir,
+        &manifest_path,
         target,
         &opts.profile,
         project_name,
@@ -1874,7 +2167,53 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         &dashboard,
     )?;
 
-    let out_artifact = resolve_artifact_path(
+    if manifest_guard.is_some() {
+        let (reloaded_manifest, _) = ProjectManifest::load_file(&manifest_path)?;
+        reloaded_manifest
+            .validate_compiler_version(VERSION)
+            .map_err(ProjectError::Runtime)?;
+        manifest = reloaded_manifest;
+        profile_cfg = manifest.resolve_profile(&opts.profile);
+        for (k, v) in &opts.overrides {
+            profile_cfg.apply_override(k, v).map_err(ProjectError::Runtime)?;
+        }
+        runtime_deps = manifest.runtime_deps(Some(target.as_str()));
+        let re_unified = unify_dependency_features(
+            manifest.features(),
+            &opts.features,
+            opts.all_features,
+            opts.no_default_features,
+            &runtime_deps,
+        );
+        resolved_features = re_unified.root_features;
+    }
+
+    let project_name = manifest.name();
+    let project_kind = manifest.output_kind();
+
+    let static_specs = manifest.static_libs(Some(target.as_str()));
+    append_static_specs(
+        &static_specs,
+        &opts.project_dir,
+        &mut link_archives,
+        &mut link_search_paths,
+        &mut link_systems,
+    );
+    append_workspace_build_specs(
+        host_workspace_path.as_deref(),
+        target,
+        &mut link_archives,
+        &mut link_search_paths,
+        &mut link_systems,
+    );
+    for arch in &link_archives {
+        if arch.is_file() {
+            yukic_target::validate_binary_compatibility(arch, target)
+                .map_err(|e| ProjectError::Runtime(e.to_string()))?;
+        }
+    }
+
+    let mut out_artifact = resolve_artifact_path(
         &opts.project_dir,
         project_name,
         manifest.namedbg(),
@@ -1882,6 +2221,20 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         &opts.profile,
         target,
     );
+    if let Some(emits) = &profile_cfg.emit
+        && !emits.is_empty()
+        && !emits.iter().any(|e| e == "bin")
+    {
+        let ext = match emits[0].as_str() {
+            "llvm-ir" | "ir" | "ll" => Some("ll"),
+            "asm" | "s" => Some("s"),
+            "obj" | "o" => Some("o"),
+            _ => None,
+        };
+        if let Some(ext) = ext {
+            out_artifact = out_artifact.with_extension(ext);
+        }
+    }
     if let Some(parent) = out_artifact.parent() {
         fs::create_dir_all(parent).map_err(|e| ProjectError::Io(e.to_string()))?;
     }
@@ -1922,6 +2275,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         cgunits,
         features: &feat_list,
         link_archives: &link_archives,
+        link_search_paths: &link_search_paths,
         link_systems: &link_systems,
         connected_libs: &connected_libs,
         macro_runners: &macro_runners,
@@ -1930,6 +2284,7 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         no_warns: opts.no_warns,
         extra_info: opts.extra_info,
         include_dirs: &include_dirs,
+        prebuilt_interfaces: &prebuilt_interfaces,
         cache_dir: Some(&cgu_cache_dir),
         splitnames: &splitnames_entries,
         linker: opts.linker.as_deref(),
@@ -1953,12 +2308,33 @@ pub fn build_project(opts: &BuildOptions) -> Result<PathBuf, ProjectError> {
         return Err(ProjectError::Runtime("compilation failed".to_string()));
     }
 
+    if project_kind == "app"
+        && let Some(out_dir) = out_artifact.parent()
+    {
+        for so_path in &prebuilt_shared_libs {
+            if let Some(fname) = so_path.file_name() {
+                let dest = out_dir.join(fname);
+                if dest != *so_path {
+                    let _ = fs::copy(so_path, &dest);
+                }
+            }
+        }
+    }
+
+    let manifest_file_name = manifest_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(if project_kind == "app" { "yuki.toml" } else { "lib.toml" });
     let root_checksum = compute_source_dir_checksum(
         &opts.project_dir,
-        if project_kind == "app" { "yuki.toml" } else { "lib.toml" },
+        manifest_file_name,
         &[target.as_str(), profile_cfg.opt_level_str()],
     )
     .unwrap_or_default();
+
+    // Restore original yuki.toml/lib.toml immediately once compilation finishes,
+    // before lockfile checksums or executing `yukino run`.
+    drop(manifest_guard);
 
     lockfile.upsert_package(LockedPackage {
         name: project_name.to_string(),
@@ -2061,23 +2437,30 @@ pub struct TestOptions {
     pub all_features: bool,
     pub no_default_features: bool,
     pub package: Option<String>,
+    pub manifest_path: Option<PathBuf>,
 }
 
 pub fn test_project(
     project_dir: &Path,
     opts: &TestOptions,
 ) -> Result<(), ProjectError> {
-    let (manifest, manifest_path) = ProjectManifest::load_with_package(project_dir, opts.package.as_deref())?;
+    let (manifest, manifest_path) = ProjectManifest::resolve_root_manifest(
+        project_dir,
+        opts.manifest_path.as_deref(),
+        opts.package.as_deref(),
+    )?;
 
     if let ProjectManifest::Workspace(ref ws) = manifest {
-        let members = ws.find_all_members(project_dir)?;
+        let ws_dir = manifest_path.parent().unwrap_or(project_dir);
+        let members = ws.find_default_or_all_members(ws_dir)?;
         if members.is_empty() {
-            println!("No members found in workspace {}", project_dir.display());
+            println!("No members found in workspace {}", ws_dir.display());
             return Ok(());
         }
         for (name, _, member_path) in members {
-            let member_dir = member_path.parent().unwrap_or(project_dir);
+            let member_dir = member_path.parent().unwrap_or(ws_dir);
             let mut member_opts = opts.clone();
+            member_opts.manifest_path = Some(member_path.clone());
             member_opts.package = Some(name);
             test_project(member_dir, &member_opts)?;
         }
@@ -2159,7 +2542,7 @@ pub fn test_project(
     let dep_env = DepBuildEnv {
         project_dir,
         host_manifest: Some(manifest_path.clone()),
-        host_workspace: host_workspace_path,
+        host_workspace: host_workspace_path.clone(),
         target,
         app_profile: "debug",
         app_profile_cfg: &profile_cfg,
@@ -2180,6 +2563,7 @@ pub fn test_project(
     let built_deps = build_runtime_dependencies(&all_dep_entries, &dep_env, &lockfile, pool_threads)?;
 
     let mut link_archives = Vec::new();
+    let mut link_search_paths = Vec::new();
     let mut link_systems = Vec::new();
     let mut include_dirs = Vec::new();
     let mut macro_runners = Vec::new();
@@ -2209,6 +2593,11 @@ pub fn test_project(
             for sys in built.system_libs {
                 if !link_systems.contains(&sys) {
                     link_systems.push(sys);
+                }
+            }
+            for sp in built.static_search_paths {
+                if !link_search_paths.contains(&sp) {
+                    link_search_paths.push(sp);
                 }
             }
         }
@@ -2374,31 +2763,20 @@ pub fn test_project(
     }
 
     let static_specs = manifest.static_libs(Some(target.as_str()));
-    for arch in static_specs.archives {
-        let resolved = if arch.is_relative() {
-            project_dir.join(arch)
-        } else {
-            arch
-        };
-        if !link_archives.contains(&resolved) {
-            link_archives.push(resolved);
-        }
-    }
-    for obj in static_specs.objects {
-        let resolved = if obj.is_relative() {
-            project_dir.join(obj)
-        } else {
-            obj
-        };
-        if !link_archives.contains(&resolved) {
-            link_archives.push(resolved);
-        }
-    }
-    for sys in static_specs.system {
-        if !link_systems.contains(&sys) {
-            link_systems.push(sys);
-        }
-    }
+    append_static_specs(
+        &static_specs,
+        project_dir,
+        &mut link_archives,
+        &mut link_search_paths,
+        &mut link_systems,
+    );
+    append_workspace_build_specs(
+        host_workspace_path.as_deref(),
+        target,
+        &mut link_archives,
+        &mut link_search_paths,
+        &mut link_systems,
+    );
 
     let entry_file = project_dir.join(manifest.entry());
     let mut compile_cmd = Command::new(&compiler);
@@ -2412,6 +2790,9 @@ pub fn test_project(
     }
     for arch in &link_archives {
         compile_cmd.arg("--link-archive").arg(arch);
+    }
+    for sp in &link_search_paths {
+        compile_cmd.arg("--link-search").arg(sp);
     }
     for sys in &link_systems {
         compile_cmd.arg("--link-system").arg(sys);
@@ -2458,6 +2839,9 @@ pub fn test_project(
     let effective_threads = opts.threads.or_else(|| {
         test_sec.threads.as_ref().and_then(|v| match v {
             toml::Value::Integer(i) => usize::try_from(*i).ok(),
+            toml::Value::String(s) if s.eq_ignore_ascii_case("auto") => {
+                Some(resolve_pool_threads(None))
+            }
             _ => None,
         })
     });
@@ -2642,5 +3026,135 @@ mod tests {
         assert!(!source_imports_std("// load std.io: print\nfun main() {}"));
         assert!(!source_imports_std("/* load std.io */ fun main() {}"));
         assert!(!source_imports_std("fun main() { set s = \"load std.io: print\"; }"));
+    }
+
+    #[test]
+    fn test_prebuilt_dependency_resolution_and_cmd_args() {
+        let tmp = std::env::temp_dir().join(format!("test_prebuilt_dep_{}", std::process::id()));
+        let prebuilt_dir = tmp.join("vendor");
+        fs::create_dir_all(&prebuilt_dir).expect("create prebuilt dir");
+
+        let ykni_path = prebuilt_dir.join("mylib.ykni");
+        fs::write(&ykni_path, "#![ykni::version(1)]\nnamespace mylib {\n    public fun ping() -> int64\n}\n")
+            .expect("write ykni");
+        let so_path = if cfg!(target_os = "windows") {
+            prebuilt_dir.join("mylib.dll")
+        } else if cfg!(target_os = "macos") {
+            prebuilt_dir.join("libmylib.dylib")
+        } else {
+            prebuilt_dir.join("libmylib.so")
+        };
+        fs::write(&so_path, b"dummy").expect("write dummy shared lib");
+
+        let spec = DependencySpec {
+            interface: Some(PathBuf::from("vendor/mylib.ykni")),
+            shared: Some(so_path.clone()),
+            ..DependencySpec::default()
+        };
+        assert!(spec.has_prebuilt_spec());
+
+        let dashboard = BuildDashboard::new(1);
+        let prof = ProfileConfig::default();
+        let env = DepBuildEnv {
+            project_dir: &tmp,
+            host_manifest: None,
+            host_workspace: None,
+            target: TargetTriple::host(),
+            app_profile: "dev",
+            app_profile_cfg: &prof,
+            overrides: &[],
+            compiler: Path::new("yukic"),
+            rebuild: false,
+            refresh_deps: false,
+            no_lib_log: true,
+            no_warns: true,
+            threads: 1,
+            cgunits: 1,
+            dashboard: &dashboard,
+        };
+        let resolved = try_resolve_prebuilt_dependency("mylib", &spec, &env)
+            .expect("resolve prebuilt")
+            .expect("should return Some");
+        assert_eq!(resolved.0.interface.as_deref(), Some(ykni_path.as_path()));
+        assert_eq!(resolved.0.shared_lib.as_deref(), Some(so_path.as_path()));
+        assert_eq!(resolved.1.kind, "prebuilt");
+
+        let prebuilt_arg = vec![("mylib".to_string(), ykni_path)];
+        let cmd = build_yukic_command(&YukicCommandParams {
+            compiler: Path::new("yukic"),
+            entry_file: Path::new("src/main.ykn"),
+            out_artifact: Path::new("app"),
+            manifest_path: Path::new("yuki.toml"),
+            project_kind: "app",
+            target: TargetTriple::host(),
+            profile_cfg: &prof,
+            profile_name: "dev",
+            threads: 1,
+            cgunits: 1,
+            features: &[],
+            link_archives: &[],
+            link_search_paths: &[],
+            link_systems: &[],
+            connected_libs: &[],
+            macro_runners: &[],
+            runtime: None,
+            no_runtime: false,
+            no_warns: false,
+            extra_info: false,
+            include_dirs: &[],
+            prebuilt_interfaces: &prebuilt_arg,
+            cache_dir: None,
+            splitnames: &[],
+            linker: None,
+        });
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|w| w[0] == "--prebuilt" && w[1].starts_with("mylib=")));
+
+        let _ = fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn test_apply_build_script_stdout_manifest_overrides() {
+        let tmp = std::env::temp_dir().join(format!("test_build_stdout_mf_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).expect("mkdir");
+        let mf_path = tmp.join("yuki.toml");
+        let orig = "[bin]\nname = \"app_orig\"\nversion = \"0.1.0\"\nentry = \"src/main.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n";
+        fs::write(&mf_path, orig).expect("write manifest");
+
+        let mut archives = Vec::new();
+        let mut systems = Vec::new();
+        let dashboard = BuildDashboard::new(1);
+        let stdout = concat!(
+            "yuki:link-system=m\n",
+            "yuki:link-archive=native/libfoo.a\n",
+            "yuki:manifest=bin.name=app_overridden\n",
+            "yuki:manifest-append=libs.static.system=pthread\n",
+        );
+
+        {
+            let guard = apply_build_script_stdout(
+                stdout,
+                &tmp,
+                &mf_path,
+                &mut archives,
+                &mut systems,
+                &dashboard,
+            )
+            .expect("apply stdout")
+            .expect("should return manifest guard");
+            let (m, _) = ProjectManifest::load_file(&mf_path).expect("reload");
+            assert_eq!(m.name(), "app_overridden");
+            assert_eq!(m.static_libs(None).system, vec!["pthread".to_string()]);
+            assert_eq!(systems, vec!["m".to_string()]);
+            assert_eq!(archives, vec![tmp.join("native/libfoo.a")]);
+            drop(guard);
+        }
+
+        assert_eq!(fs::read_to_string(&mf_path).unwrap(), orig);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

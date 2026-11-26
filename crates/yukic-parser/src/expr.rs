@@ -202,7 +202,7 @@ impl TokenStream<'_> {
         }
 
         if self.eat_kind(|k| matches!(k, TokenKind::DoubleColon)) {
-            return self.parse_path_or_macro(ident, start_span);
+            return self.parse_path_or_macro(ident, start_span, allow_struct);
         }
 
         if self.eat_kind(|k| matches!(k, TokenKind::Bang)) {
@@ -240,7 +240,7 @@ impl TokenStream<'_> {
         }
     }
 
-    fn parse_path_or_macro(&mut self, first: Ident, start_span: Span) -> Expr {
+    fn parse_path_or_macro(&mut self, first: Ident, start_span: Span, allow_struct: bool) -> Expr {
         let mut segments = vec![first];
         loop {
             let seg_span = self.curr_span();
@@ -255,6 +255,19 @@ impl TokenStream<'_> {
 
         if self.eat_kind(|k| matches!(k, TokenKind::Bang)) {
             return self.parse_macro_call(segments, start_span);
+        }
+
+        if allow_struct
+            && self.check_kind(|k| matches!(k, TokenKind::LBrace))
+            && self.is_struct_init_lookahead()
+        {
+            let full = segments
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            let path_span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
+            return self.parse_struct_init(Ident::new(full, path_span), start_span);
         }
 
         let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
@@ -584,7 +597,7 @@ impl TokenStream<'_> {
             generics,
             params,
             return_type,
-            body,
+            body: Some(body),
             span,
         };
         Expr::new(ExprKind::AnonymousFun(Box::new(decl)), span)
@@ -1250,7 +1263,7 @@ impl TokenStream<'_> {
         let span = self.curr_span();
         let ident = self.parse_ident_node();
         if self.eat_kind(|k| matches!(k, TokenKind::DoubleColon)) {
-            self.parse_path_or_macro(ident, span)
+            self.parse_path_or_macro(ident, span, false)
         } else {
             Expr::new(ExprKind::Ident(ident), span)
         }

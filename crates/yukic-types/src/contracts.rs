@@ -8,40 +8,58 @@ use yukic_diagnostics::code::ErrorCode;
 use yukic_span::Span;
 
 use crate::convert::ast_type_to_type;
+use crate::env::TypeEnv;
 use crate::types::Type;
 
 pub struct SemanticContracts;
 
 impl SemanticContracts {
     pub fn is_c_abi_compatible(ty: &Type) -> bool {
-        matches!(
-            ty,
+        Self::is_c_abi_compatible_in_env(ty, None)
+    }
+
+    pub fn is_c_abi_compatible_in_env(ty: &Type, env: Option<&TypeEnv>) -> bool {
+        match ty {
             Type::Int8
-                | Type::Int16
-                | Type::Int32
-                | Type::Int64
-                | Type::Uint8
-                | Type::Uint16
-                | Type::Uint32
-                | Type::Uint64
-                | Type::Float32
-                | Type::Float64
-                | Type::Bool
-                | Type::Void
-                | Type::Never
-                | Type::Ptr(_)
-                | Type::Fn { is_cfun: true, .. }
-                | Type::CInt(_)
-                | Type::Cstruct(_)
-                | Type::Dynlib
-                | Type::Arena
-        )
+            | Type::Int16
+            | Type::Int32
+            | Type::Int64
+            | Type::Uint8
+            | Type::Uint16
+            | Type::Uint32
+            | Type::Uint64
+            | Type::Float32
+            | Type::Float64
+            | Type::Bool
+            | Type::Void
+            | Type::Never
+            | Type::Ptr(_)
+            | Type::Fn { is_cfun: true, .. }
+            | Type::CInt(_)
+            | Type::Cstruct(_)
+            | Type::Dynlib
+            | Type::Arena => true,
+            Type::FixedArray(inner, _) => Self::is_c_abi_compatible_in_env(inner, env),
+            Type::Struct(name) => env
+                .and_then(|e| e.lookup_struct(name))
+                .is_some_and(|s| s.is_cstruct),
+            _ => false,
+        }
     }
 
     pub fn validate_cfun(decl: &CfunDecl) -> Result<(), Diagnostic> {
+        Self::validate_cfun_impl(decl, None)
+    }
+
+    pub fn validate_cfun_in_env(decl: &CfunDecl, env: &TypeEnv) -> Result<(), Diagnostic> {
+        Self::validate_cfun_impl(decl, Some(env))
+    }
+
+    fn validate_cfun_impl(decl: &CfunDecl, env: Option<&TypeEnv>) -> Result<(), Diagnostic> {
         for param in &decl.params {
-            let ty = ast_type_to_type(&param.ty);
-            if !Self::is_c_abi_compatible(&ty) {
+            let raw_ty = ast_type_to_type(&param.ty);
+            let ty = env.map_or(raw_ty.clone(), |e| e.canonicalize_type(&raw_ty));
+            if !Self::is_c_abi_compatible_in_env(&ty, env) {
                 let diag = Diagnostic::error(
                     ErrorCode::E0701,
                     format!("type `{ty}` is not C ABI compatible in cfun declaration"),
@@ -52,8 +70,9 @@ impl SemanticContracts {
         }
 
         if let Some(ret_ty_node) = &decl.return_type {
-            let ret_ty = ast_type_to_type(ret_ty_node);
-            if !Self::is_c_abi_compatible(&ret_ty) {
+            let raw_ret = ast_type_to_type(ret_ty_node);
+            let ret_ty = env.map_or(raw_ret.clone(), |e| e.canonicalize_type(&raw_ret));
+            if !Self::is_c_abi_compatible_in_env(&ret_ty, env) {
                 let diag = Diagnostic::error(
                     ErrorCode::E0701,
                     format!("return type `{ret_ty}` is not C ABI compatible in cfun declaration"),

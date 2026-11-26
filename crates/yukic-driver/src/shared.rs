@@ -139,7 +139,12 @@ fn build_msvc_shared_linker_args(
     }
 
     let sys_dirs = collect_system_search_dirs(target);
-    for dir in config.include_dirs.iter().chain(sys_dirs.iter()) {
+    for dir in config
+        .link_search_paths
+        .iter()
+        .chain(config.include_dirs.iter())
+        .chain(sys_dirs.iter())
+    {
         if dir.exists() {
             args.push(format!("/LIBPATH:{}", dir.display()));
         }
@@ -188,6 +193,9 @@ pub fn build_shared_linker_args(
         args.push(obj.to_string_lossy().to_string());
     }
 
+    for dir in &config.link_search_paths {
+        args.push(format!("-L{}", dir.display()));
+    }
     for dir in &config.include_dirs {
         args.push(format!("-L{}", dir.display()));
     }

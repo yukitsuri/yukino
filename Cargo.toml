@@ -8,6 +8,7 @@ members = [
   "crates/yukic-parser",
   "crates/yukic-resolve",
   "crates/yukic-macro",
+  "crates/yukic-cheader",
   "crates/yukic-types",
   "crates/yukic-borrow",
   "crates/yukic-dce",
@@ -17,6 +18,7 @@ members = [
   "crates/yukino",
   "crates/yukino-builtin",
   "crates/yukino-macroproto",
+  "crates/tree-sitter-c",
   "builtin/runtime",
   "builtin/stdlib",
   "builtin/macrosdk",
@@ -28,7 +30,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.98.1"
 authors = ["shareui"]
@@ -43,6 +45,7 @@ yukic-ast = { path = "crates/yukic-ast" }
 yukic-parser = { path = "crates/yukic-parser" }
 yukic-resolve = { path = "crates/yukic-resolve" }
 yukic-macro = { path = "crates/yukic-macro" }
+yukic-cheader = { path = "crates/yukic-cheader" }
 yukic-types = { path = "crates/yukic-types" }
 yukic-borrow = { path = "crates/yukic-borrow" }
 yukic-dce = { path = "crates/yukic-dce" }
@@ -52,7 +55,9 @@ yukic-driver = { path = "crates/yukic-driver" }
 yukino = { path = "crates/yukino" }
 yukino-builtin = { path = "crates/yukino-builtin" }
 yukino-macroproto = { path = "crates/yukino-macroproto" }
+tree-sitter-c = { path = "crates/tree-sitter-c" }
 yukino-rt = { path = "builtin/runtime" }
+tree-sitter = "0.25"
 
 inkwell = { version = "0.10.0", features = ["llvm22-1"] }
 indexmap = "2.7"

@@ -9,16 +9,17 @@ This guide covers installing the `yukino` project manager, the `yukic` compiler 
 ## Contents
 
 1. [Supported platforms](#supported-platforms)
-2. [Installing on Linux](#installing-on-linux)
-   - 2.1 [Nix (recommended)](#nix-recommended)
-   - 2.2 [Manual Cargo build](#manual-cargo-build)
-3. [Installing on Windows](#installing-on-windows)
-4. [Cross-compilation](#cross-compilation)
-   - 4.1 [Cross-compilation requirements](#cross-compilation-requirements)
-   - 4.2 [Compiler](#cross-compiling-the-compiler)
-   - 4.3 [Runtime](#cross-compiling-the-runtime)
-5. [Verifying the installation](#verifying-the-installation)
-6. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
+2. [Installation via Lacie (recommended for all OS)](#installation-via-lacie-recommended-for-all-os)
+3. [Installing on Linux](#installing-on-linux)
+   - 3.1 [Nix](#nix)
+   - 3.2 [Manual Cargo build](#manual-cargo-build)
+4. [Installing on Windows](#installing-on-windows)
+5. [Cross-compilation](#cross-compilation)
+   - 5.1 [Cross-compilation requirements](#cross-compilation-requirements)
+   - 5.2 [Compiler](#cross-compiling-the-compiler)
+   - 5.3 [Runtime](#cross-compiling-the-runtime)
+6. [Verifying the installation](#verifying-the-installation)
+7. [Editor extensions (Zed, VS Code)](#editor-extensions-zed-vscode)
 
 ## Supported platforms
 
@@ -34,6 +35,31 @@ The compiler supports these target platforms:
 
 macOS is not supported yet. Work on macOS support will start as soon as someone with a Mac is available to develop and test it.
 
+## Installation via Lacie (Recommended for all OS)
+
+The recommended and simplest way to install the prebuilt Yukino toolchain on any supported operating system (Linux, Windows) is through the **[Lacie](https://github.com/shareui/lacie)** package manager. It automatically fetches prebuilt binaries, resolves dependencies, configures active binaries in `PATH`, and handles updates without requiring local C or Rust build tools.
+
+### 1. Install Lacie
+
+If Lacie is not yet installed on your system, install it using the official guide:
+- **[Lacie Installation Guide](https://github.com/shareui/lacie/tree/main/docs/install/en.md)**
+
+### 2. Install Yukino Toolchain
+
+To install all Yukino packages (`yukic` compiler driver and `yukino` build toolchain) for tag `v0.1.1` from `yukitsuri/yukino`:
+
+```sh
+lacie add yukitsuri/yukino v0.1.1
+```
+
+> [!TIP]
+> Use `-y` (`--yes`) to approve the installation prompt automatically:
+> ```sh
+> lacie add yukitsuri/yukino v0.1.1 -y
+> ```
+
+After installation completes, `yukino` and `yukic` will be immediately available in your terminal.
+
 ## Installing on Linux
 
 ### Nix (recommended)
@@ -43,18 +69,18 @@ When using Nix, all necessary build dependencies (LLVM 22, Clang, LLD, system li
 Install the release package directly from the release tag:
 
 ```sh
-nix profile add github:yukitsuri/yukino/v0.1.0#yukino
+nix profile add github:yukitsuri/yukino/v0.1.1#yukino
 ```
 
 For local installation from a cloned repository:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 nix profile add .#yukino
 ```
 
-The debug package is installed with:
+Install the debug package with:
 
 ```sh
 nix profile add .#yukino-debug
@@ -62,7 +88,7 @@ nix profile add .#yukino-debug
 
 It provides `yukino-dbg` and `yukic-dbg`.
 
-To enter the ready development environment with all variables set:
+To enter a development shell with all dependencies and environment variables ready:
 
 ```sh
 nix develop
@@ -86,7 +112,7 @@ Exact package names depend on your Linux distribution.
 
 #### Environment variables
 
-Before compiling through Cargo, paths to LLVM and `libclang` must be explicitly exported in your current shell session:
+Before building with Cargo, LLVM and `libclang` paths must be explicitly exported in your shell session:
 
 ```sh
 export LLVM_CONFIG=/path/to/llvm-config
@@ -99,46 +125,46 @@ export LIBCLANG_PATH=/path/to/libclang/lib
 Once the environment is configured, install both binaries from the release tag:
 
 ```sh
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukino
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukino
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukic-driver
 ```
 
-Cargo installs binaries to `~/.cargo/bin`:
+Cargo installs the binaries into `~/.cargo/bin`:
 
-- `yukino` — project and build manager;
-- `yukic` — low-level compiler driver.
+- `yukino` — the project manager and build tool;
+- `yukic` — the low-level compiler driver.
 
 ## Installing on Windows
 
-On Windows, use the PowerShell script, which automatically downloads prebuilt binaries of the latest release and adds them to `PATH`:
+For Windows, use the PowerShell script that automatically downloads prebuilt release binaries and configures `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/yukitsuri/yukino/main/scripts/wininstall.ps1 | iex
 ```
 
-The script does not require manual LLVM configuration or compiling from source. If you need to build from source via Cargo manually, ensure LLVM 22 and MSVC/MinGW are installed and corresponding LLVM environment variables are set.
+The script does not require configuring LLVM or compiling from source. If you need to build from source manually via Cargo, ensure LLVM 22 and MSVC/MinGW are installed and the respective LLVM environment variables are set.
 
 ## Cross-compilation
 
 ### Cross-compilation requirements
 
-Building for other platforms additionally requires:
+Cross-compilation additionally requires:
 
-- `cargo-zigbuild` and Zig — for Linux targets different from your host;
-- Android NDK — for Android targets;
-- Rust target components installed via `rustup target add <target>`.
+- `cargo-zigbuild` and Zig for Linux targets other than the normal host build;
+- Android NDK for Android targets;
+- Target components installed via `rustup target add <target>` if not already present.
 
 ### Cross-compiling the compiler
 
 Clone the repository at the required tag:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 python3 scripts/crossbuild.py
 ```
 
-The script will prompt you to select targets. Selecting `0` builds all targets supported by `crossbuild.py`:
+The script asks you to select one or more targets. Enter `0` to build all targets currently available in `crossbuild.py`:
 
 - `x86_64-pc-windows-gnu`;
 - `x86_64-unknown-linux-gnu`;
@@ -147,30 +173,30 @@ The script will prompt you to select targets. Selecting `0` builds all targets s
 - `aarch64-unknown-linux-musl`;
 - `aarch64-linux-android`.
 
-Build outputs are placed in:
+Outputs are written to:
 
 ```text
-build/0.1.0/yukino/yukino-<target>
-build/0.1.0/yukic/yukic-<target>
+build/0.1.1/yukino/yukino-<target>
+build/0.1.1/yukic/yukic-<target>
 ```
 
 On Windows, use `py -3` instead of `python3`.
 
 ### Cross-compiling the runtime
 
-The runtime is built separately and only produces static `.a` archives:
+The runtime is built separately and produces static `.a` archives only:
 
 ```sh
 python3 scripts/crossbuild-rt.py
 ```
 
-Outputs are placed in:
+Outputs are written to:
 
 ```text
-build/0.1.0/runtime/<target>.a
+build/0.1.1/runtime/<target>.a
 ```
 
-Pass this runtime to `yukic` for custom targets via `--runtime <path>`. For the host target, an external runtime archive is not required: `yukic` uses its built-in host runtime.
+Pass the resulting runtime to `yukic` for a custom target with `--runtime <path>`. A separate runtime is not needed for the host target: `yukic` uses its embedded host runtime.
 
 ## Verifying the installation
 

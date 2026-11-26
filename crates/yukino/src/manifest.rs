@@ -39,8 +39,8 @@ strip = true
 function_sections = true
 
 # LLVM config
-cpu = "native"
-features = ["+avx2"]
+cpu = "generic"
+features = []
 reloc_model = "pic"
 code_model = "default"
 fast_math = false
@@ -156,6 +156,220 @@ fn toml_escape(value: &str) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestDirective {
+    Set { path: String, value: String },
+    Append { path: String, value: String },
+    Remove { path: String },
+}
+
+// Restores the exact original bytes of yuki.toml/lib.toml on drop, covering both
+// successful builds and early error/panic exits.
+pub struct ScopedManifestGuard {
+    path: PathBuf,
+    original_bytes: Vec<u8>,
+}
+
+impl ScopedManifestGuard {
+    pub fn capture(path: &Path) -> Result<Self, ProjectError> {
+        let original_bytes = fs::read(path).map_err(|e| {
+            ProjectError::Io(format!("cannot snapshot manifest '{}': {e}", path.display()))
+        })?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            original_bytes,
+        })
+    }
+}
+
+impl Drop for ScopedManifestGuard {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.path, &self.original_bytes);
+    }
+}
+
+pub fn parse_manifest_directive_line(line: &str) -> Result<Option<ManifestDirective>, ProjectError> {
+    if let Some(rest) = line.strip_prefix("yuki:manifest=") {
+        let (path, value) = split_directive_kv(rest, "yuki:manifest")?;
+        return Ok(Some(ManifestDirective::Set { path, value }));
+    }
+    if let Some(rest) = line.strip_prefix("yuki:manifest-append=") {
+        let (path, value) = split_directive_kv(rest, "yuki:manifest-append")?;
+        return Ok(Some(ManifestDirective::Append { path, value }));
+    }
+    if let Some(rest) = line.strip_prefix("yuki:manifest-remove=") {
+        let path = rest.trim().to_string();
+        validate_key_segments(&path, "yuki:manifest-remove")?;
+        return Ok(Some(ManifestDirective::Remove { path }));
+    }
+    Ok(None)
+}
+
+fn split_directive_kv(raw: &str, directive_name: &str) -> Result<(String, String), ProjectError> {
+    let Some((raw_key, raw_val)) = raw.split_once('=') else {
+        return Err(ProjectError::Runtime(format!(
+            "directive '{directive_name}' expects KEY=VALUE, got '{raw}'"
+        )));
+    };
+    let key = raw_key.trim().to_string();
+    validate_key_segments(&key, directive_name)?;
+    let value = raw_val.trim().to_string();
+    if value.is_empty() {
+        return Err(ProjectError::Runtime(format!(
+            "directive '{directive_name}={key}=' requires a non-empty value (use \"\" for empty string or yuki:manifest-remove={key})"
+        )));
+    }
+    Ok((key, value))
+}
+
+fn validate_key_segments<'a>(key: &'a str, directive_name: &str) -> Result<Vec<&'a str>, ProjectError> {
+    if key.is_empty() {
+        return Err(ProjectError::Runtime(format!(
+            "directive '{directive_name}' has an empty manifest key path"
+        )));
+    }
+    let segments: Vec<&str> = key.split('.').collect();
+    if segments.iter().any(|s| s.trim().is_empty()) {
+        return Err(ProjectError::Runtime(format!(
+            "directive '{directive_name}' has invalid manifest key path '{key}'"
+        )));
+    }
+    Ok(segments)
+}
+
+fn parse_toml_directive_value(raw: &str) -> Result<toml::Value, ProjectError> {
+    let snippet = format!("v = {raw}");
+    match toml::from_str::<toml::Table>(&snippet) {
+        Ok(mut tbl) => tbl.remove("v").ok_or_else(|| {
+            ProjectError::Runtime(format!("failed to parse TOML value '{raw}'"))
+        }),
+        Err(err) => {
+            let starts_delims = raw.starts_with('[')
+                || raw.starts_with('{')
+                || raw.starts_with('"')
+                || raw.starts_with('\'');
+            if starts_delims {
+                return Err(ProjectError::Runtime(format!(
+                    "invalid TOML value '{raw}' in manifest directive: {err}"
+                )));
+            }
+            Ok(toml::Value::String(raw.to_string()))
+        }
+    }
+}
+
+fn traverse_table_mut<'a>(
+    mut current: &'a mut toml::Table,
+    parents: &[&str],
+    create_missing: bool,
+    full_path: &str,
+) -> Result<Option<&'a mut toml::Table>, ProjectError> {
+    for &seg in parents {
+        if !current.contains_key(seg) {
+            if !create_missing {
+                return Ok(None);
+            }
+            current.insert(seg.to_string(), toml::Value::Table(toml::Table::new()));
+        }
+        let next = current.get_mut(seg).ok_or_else(|| {
+            ProjectError::Runtime(format!("manifest path '{full_path}' lookup failed"))
+        })?;
+        current = next.as_table_mut().ok_or_else(|| {
+            ProjectError::Runtime(format!(
+                "manifest path segment '{seg}' in '{full_path}' is not a table"
+            ))
+        })?;
+    }
+    Ok(Some(current))
+}
+
+fn apply_single_manifest_directive(
+    root: &mut toml::Table,
+    directive: &ManifestDirective,
+) -> Result<(), ProjectError> {
+    match directive {
+        ManifestDirective::Set { path, value } => {
+            let segments = validate_key_segments(path, "yuki:manifest")?;
+            let (last, parents) = segments.split_last().expect("non-empty segments");
+            let tbl = traverse_table_mut(root, parents, true, path)?
+                .expect("create_missing=true always yields Some");
+            tbl.insert((*last).to_string(), parse_toml_directive_value(value)?);
+        }
+        ManifestDirective::Append { path, value } => {
+            let segments = validate_key_segments(path, "yuki:manifest-append")?;
+            let (last, parents) = segments.split_last().expect("non-empty segments");
+            let tbl = traverse_table_mut(root, parents, true, path)?
+                .expect("create_missing=true always yields Some");
+            let parsed = parse_toml_directive_value(value)?;
+            match tbl.get_mut(*last) {
+                Some(toml::Value::Array(arr)) => arr.push(parsed),
+                Some(_) => {
+                    return Err(ProjectError::Runtime(format!(
+                        "cannot append to non-array manifest field '{path}'"
+                    )));
+                }
+                None => {
+                    tbl.insert((*last).to_string(), toml::Value::Array(vec![parsed]));
+                }
+            }
+        }
+        ManifestDirective::Remove { path } => {
+            let segments = validate_key_segments(path, "yuki:manifest-remove")?;
+            let (last, parents) = segments.split_last().expect("non-empty segments");
+            if let Some(tbl) = traverse_table_mut(root, parents, false, path)? {
+                tbl.remove(*last);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn apply_manifest_directives(
+    manifest_path: &Path,
+    directives: &[ManifestDirective],
+) -> Result<ScopedManifestGuard, ProjectError> {
+    if manifest_path.file_name().and_then(|n| n.to_str()) == Some("yukispace.toml") {
+        return Err(ProjectError::Runtime(
+            "build.ykn manifest directives cannot modify workspace manifest yukispace.toml".to_string(),
+        ));
+    }
+    let guard = ScopedManifestGuard::capture(manifest_path)?;
+    let original_str = std::str::from_utf8(&guard.original_bytes).map_err(|e| {
+        ProjectError::Io(format!("manifest '{}' is not valid UTF-8: {e}", manifest_path.display()))
+    })?;
+    let mut root: toml::Table = toml::from_str(original_str).map_err(|e| {
+        ProjectError::Io(format!("invalid {}: {e}", manifest_path.display()))
+    })?;
+    for directive in directives {
+        apply_single_manifest_directive(&mut root, directive)?;
+    }
+    let rendered = toml::to_string_pretty(&root).map_err(|e| {
+        ProjectError::Runtime(format!("failed to serialize modified manifest: {e}"))
+    })?;
+    let file_name = manifest_path.file_name().and_then(|s| s.to_str());
+    match file_name {
+        Some("lib.toml") => {
+            let _: LibManifest = toml::from_str(&rendered)
+                .map_err(|e| ProjectError::Runtime(format!("build.ykn produced invalid lib.toml: {e}")))?;
+        }
+        _ => {
+            if toml::from_str::<AppManifest>(&rendered).is_err()
+                && toml::from_str::<LibManifest>(&rendered).is_err()
+            {
+                let err = toml::from_str::<AppManifest>(&rendered).unwrap_err();
+                return Err(ProjectError::Runtime(format!(
+                    "build.ykn produced invalid {}: {err}",
+                    manifest_path.display()
+                )));
+            }
+        }
+    }
+    fs::write(manifest_path, rendered).map_err(|e| {
+        ProjectError::Io(format!("cannot update temporary manifest '{}': {e}", manifest_path.display()))
+    })?;
+    Ok(guard)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BinSection {
     pub name: String,
@@ -253,7 +467,7 @@ impl ProfileConfig {
             strip: Some(true),
             function_sections: Some(true),
             codegen_units: None,
-            cpu: Some("native".to_string()),
+            cpu: Some("generic".to_string()),
             features: None,
             reloc_model: None,
             code_model: None,
@@ -281,6 +495,20 @@ impl ProfileConfig {
             Some(toml::Value::Boolean(b)) => *b,
             Some(toml::Value::String(s)) => s != "none" && s != "false",
             _ => false,
+        }
+    }
+
+    pub fn lto_mode_str(&self) -> Option<&'static str> {
+        match &self.lto {
+            Some(toml::Value::Boolean(true)) => Some("full"),
+            Some(toml::Value::Boolean(false)) => Some("none"),
+            Some(toml::Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "thin" => Some("thin"),
+                "fat" | "full" | "true" => Some("full"),
+                "none" | "false" => Some("none"),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -347,8 +575,22 @@ impl ProfileConfig {
                 }
                 self.panic_strategy = Some(value.to_string());
             }
-            "reloc_model" => self.reloc_model = Some(value.to_string()),
-            "code_model" => self.code_model = Some(value.to_string()),
+            "reloc_model" => {
+                if !["default", "static", "pic", "dynamic-no-pic", "dynamic_no_pic"]
+                    .contains(&value.to_ascii_lowercase().as_str())
+                {
+                    return Err(format!("invalid reloc_model '{value}'"));
+                }
+                self.reloc_model = Some(value.to_string());
+            }
+            "code_model" => {
+                if !["default", "small", "kernel", "medium", "large"]
+                    .contains(&value.to_ascii_lowercase().as_str())
+                {
+                    return Err(format!("invalid code_model '{value}'"));
+                }
+                self.code_model = Some(value.to_string());
+            }
             "cpu" => self.cpu = Some(value.to_string()),
             "linker" => self.linker = Some(value.to_string()),
             "features" => {
@@ -392,9 +634,23 @@ pub struct DependencySpec {
     pub reexport: Option<bool>,
     #[serde(default)]
     pub splitnames: Option<bool>,
+    #[serde(default)]
+    pub interface: Option<PathBuf>,
+    #[serde(default)]
+    pub prebuilt: Option<PathBuf>,
+    #[serde(default)]
+    pub archive: Option<PathBuf>,
+    #[serde(default)]
+    pub shared: Option<PathBuf>,
 }
 
 impl DependencySpec {
+    pub fn has_prebuilt_spec(&self) -> bool {
+        self.interface.is_some()
+            || self.prebuilt.is_some()
+            || self.archive.is_some()
+            || self.shared.is_some()
+    }
     pub fn is_optional(&self) -> bool {
         self.optional.unwrap_or(false)
     }
@@ -499,36 +755,61 @@ impl WorkspaceManifest {
         Ok(Some((manifest, ws_path)))
     }
 
+    pub fn find_upwards(start_dir: &Path) -> Result<Option<(Self, PathBuf)>, ProjectError> {
+        for ancestor in start_dir.ancestors() {
+            if let Some(found) = Self::load_from_dir(ancestor)? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn find_package(
         &self,
         root_dir: &Path,
         package_name: &str,
     ) -> Result<Option<(ProjectManifest, PathBuf)>, ProjectError> {
+        // pass 1: match workspace package name (inline members first, then discovered members)
         if let Some(pkg) = self.members.get(package_name) {
             let manifest = self.synthesize_member_manifest(package_name, pkg);
             return Ok(Some((manifest, root_dir.join("yukispace.toml"))));
         }
 
         let member_dirs = self.collect_member_dirs(root_dir);
-        let target_path = root_dir.join(package_name);
         for member_dir in &member_dirs {
-            let (member_manifest, member_path) = match ProjectManifest::load(member_dir) {
-                Ok(res) => res,
-                Err(_) => continue,
+            let Ok((member_manifest, member_path)) = ProjectManifest::load(member_dir) else {
+                continue;
             };
-            let dir_name = member_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let matches_path = *member_dir == target_path
-                || member_dir.strip_prefix(root_dir).ok().map(|p| p.to_string_lossy()) == Some(package_name.into());
-            if member_manifest.name() == package_name || dir_name == package_name || matches_path {
+            if member_manifest.name() == package_name {
                 return Ok(Some((member_manifest, member_path)));
+            }
+        }
+
+        // pass 2: fallback to relative path from workspace root
+        let target_path = root_dir.join(package_name);
+        let target_rel = normalize_rel_path(Path::new(package_name));
+        let target_canon = target_path.canonicalize().ok();
+        for member_dir in &member_dirs {
+            let rel_matches = member_dir
+                .strip_prefix(root_dir)
+                .ok()
+                .is_some_and(|rel| normalize_rel_path(rel) == target_rel);
+            let canon_matches = target_canon
+                .as_ref()
+                .is_some_and(|tc| member_dir.canonicalize().ok().as_ref() == Some(tc));
+            if *member_dir == target_path || rel_matches || canon_matches {
+                if let Ok(res) = ProjectManifest::load(member_dir) {
+                    return Ok(Some(res));
+                }
             }
         }
 
         if target_path.is_dir() {
             if let Ok(res) = ProjectManifest::load(&target_path) {
+                return Ok(Some(res));
+            }
+        } else if target_path.is_file() {
+            if let Ok(res) = ProjectManifest::load_file(&target_path) {
                 return Ok(Some(res));
             }
         }
@@ -555,6 +836,36 @@ impl WorkspaceManifest {
             }
         }
         Ok(result)
+    }
+
+    pub fn find_default_or_all_members(
+        &self,
+        root_dir: &Path,
+    ) -> Result<Vec<(String, ProjectManifest, PathBuf)>, ProjectError> {
+        let all = self.find_all_members(root_dir)?;
+        if self.workspace.default_members.is_empty() {
+            return Ok(all);
+        }
+        let mut selected = Vec::new();
+        for (name, manifest, manifest_path) in all {
+            let member_dir = manifest_path.parent().unwrap_or(root_dir);
+            let dir_name = member_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let rel_path = member_dir
+                .strip_prefix(root_dir)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"));
+            let matches = self.workspace.default_members.iter().any(|dm| {
+                let norm = dm.trim_end_matches('/').replace('\\', "/");
+                norm == name || norm == dir_name || rel_path.as_deref() == Some(norm.as_str())
+            });
+            if matches {
+                selected.push((name, manifest, manifest_path));
+            }
+        }
+        Ok(selected)
     }
 
     fn collect_member_dirs(&self, root_dir: &Path) -> Vec<PathBuf> {
@@ -608,7 +919,7 @@ impl WorkspaceManifest {
                     namedbg: None,
                     version: pkg.version.clone().unwrap_or_else(|| "0.1.0".to_string()),
                     entry: pkg.entry.clone(),
-                    yukino: vec!["0.1.0".to_string(), "+".to_string()],
+                    yukino: vec![crate::VERSION.to_string(), "+".to_string()],
                     output: None,
                     includes: pkg.includes.clone(),
                     reexport: None,
@@ -628,7 +939,7 @@ impl WorkspaceManifest {
                     name: name.to_string(),
                     version: pkg.version.clone().unwrap_or_else(|| "0.1.0".to_string()),
                     entry: pkg.entry.clone(),
-                    yukino: vec!["0.1.0".to_string(), "+".to_string()],
+                    yukino: vec![crate::VERSION.to_string(), "+".to_string()],
                     output: pkg.kind.clone(),
                     includes: pkg.includes.clone(),
                     reexport: None,
@@ -698,6 +1009,15 @@ pub enum ProjectManifest {
     Workspace(WorkspaceManifest),
 }
 
+fn normalize_rel_path(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let parts: Vec<&str> = raw
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
+    parts.join("/")
+}
+
 impl ProjectManifest {
     pub fn customcgus(&self) -> Option<&HashMap<String, Vec<String>>> {
         match self {
@@ -705,6 +1025,33 @@ impl ProjectManifest {
             ProjectManifest::Lib(l) => l.customcgus.as_ref(),
             ProjectManifest::Workspace(_) => None,
         }
+    }
+
+    fn load_non_workspace_package(
+        dir: &Path,
+        pkg_name: &str,
+    ) -> Result<(Self, PathBuf), ProjectError> {
+        if let Ok((manifest, path)) = Self::load(dir) {
+            if manifest.name() == pkg_name {
+                return Ok((manifest, path));
+            }
+        }
+
+        let target_path = dir.join(pkg_name);
+        if target_path.is_dir() {
+            if let Ok(found) = Self::load(&target_path) {
+                return Ok(found);
+            }
+        } else if target_path.is_file() {
+            if let Ok(found) = Self::load_file(&target_path) {
+                return Ok(found);
+            }
+        }
+
+        Err(ProjectError::Runtime(format!(
+            "package '{pkg_name}' not found by name or relative path in '{}'",
+            dir.display()
+        )))
     }
 
     pub fn load_with_package(
@@ -717,46 +1064,119 @@ impl ProjectManifest {
                     return Ok(target);
                 }
                 return Err(ProjectError::Runtime(format!(
-                    "package '{pkg_name}' not found in workspace '{}'",
+                    "package '{pkg_name}' not found by name or relative path in workspace '{}'",
                     dir.display()
                 )));
             }
+            return Self::load_non_workspace_package(dir, pkg_name);
         }
         Self::load(dir)
     }
 
+    pub fn resolve_root_manifest(
+        project_dir: &Path,
+        manifest_path: Option<&Path>,
+        package: Option<&str>,
+    ) -> Result<(Self, PathBuf), ProjectError> {
+        if let Some(raw_mf) = manifest_path {
+            let full_mf = if raw_mf.is_relative() {
+                project_dir.join(raw_mf)
+            } else {
+                raw_mf.to_path_buf()
+            };
+            let (manifest, mf_path) = Self::load_file(&full_mf)?;
+            if let Some(pkg_name) = package {
+                let mf_dir = mf_path.parent().unwrap_or(project_dir);
+                if let Self::Workspace(ref ws) = manifest {
+                    if let Some(target) = ws.find_package(mf_dir, pkg_name)? {
+                        return Ok(target);
+                    }
+                    return Err(ProjectError::Runtime(format!(
+                        "package '{pkg_name}' not found by name or relative path in workspace '{}'",
+                        mf_dir.display()
+                    )));
+                }
+                if manifest.name() == pkg_name {
+                    return Ok((manifest, mf_path));
+                }
+                return Err(ProjectError::Runtime(format!(
+                    "package '{pkg_name}' does not match manifest '{}' (found '{}')",
+                    mf_path.display(),
+                    manifest.name()
+                )));
+            }
+            return Ok((manifest, mf_path));
+        }
+
+        if let Some(pkg_name) = package {
+            if let Some((ws, _)) = WorkspaceManifest::load_from_dir(project_dir)? {
+                if let Some(target) = ws.find_package(project_dir, pkg_name)? {
+                    return Ok(target);
+                }
+                return Err(ProjectError::Runtime(format!(
+                    "package '{pkg_name}' not found by name or relative path in workspace '{}'",
+                    project_dir.display()
+                )));
+            }
+            if let Some((ws, ws_path)) = WorkspaceManifest::find_upwards(project_dir)? {
+                let ws_dir = ws_path.parent().unwrap_or(project_dir);
+                if let Some(target) = ws.find_package(ws_dir, pkg_name)? {
+                    return Ok(target);
+                }
+            }
+            return Self::load_non_workspace_package(project_dir, pkg_name);
+        }
+
+        Self::load(project_dir)
+    }
+
+    pub fn load_file(path: &Path) -> Result<(Self, PathBuf), ProjectError> {
+        if !path.exists() {
+            return Err(ProjectError::Io(format!(
+                "manifest path '{}' does not exist",
+                path.display()
+            )));
+        }
+        if path.is_dir() {
+            return Err(ProjectError::Io(format!(
+                "manifest path '{}' is a directory, expected yuki.toml, lib.toml, or yukispace.toml",
+                path.display()
+            )));
+        }
+        let content = fs::read_to_string(path)
+            .map_err(|e| ProjectError::Io(format!("cannot read {}: {e}", path.display())))?;
+        let file_name = path.file_name().and_then(|s| s.to_str());
+        match file_name {
+            Some("lib.toml") => {
+                let manifest: LibManifest = toml::from_str(&content)
+                    .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", path.display())))?;
+                Ok((Self::Lib(manifest), path.to_path_buf()))
+            }
+            Some("yukispace.toml") => {
+                let manifest: WorkspaceManifest = toml::from_str(&content)
+                    .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", path.display())))?;
+                Ok((Self::Workspace(manifest), path.to_path_buf()))
+            }
+            _ => {
+                if let Ok(manifest) = toml::from_str::<AppManifest>(&content) {
+                    return Ok((Self::App(manifest), path.to_path_buf()));
+                }
+                if let Ok(manifest) = toml::from_str::<LibManifest>(&content) {
+                    return Ok((Self::Lib(manifest), path.to_path_buf()));
+                }
+                let manifest: AppManifest = toml::from_str(&content)
+                    .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", path.display())))?;
+                Ok((Self::App(manifest), path.to_path_buf()))
+            }
+        }
+    }
+
     pub fn load(dir: &Path) -> Result<(Self, PathBuf), ProjectError> {
-        let app_path = dir.join("yuki.toml");
-        if app_path.is_file() {
-            let content = fs::read_to_string(&app_path)
-                .map_err(|e| ProjectError::Io(format!("cannot read {}: {e}", app_path.display())))?;
-            if let Ok(manifest) = toml::from_str::<AppManifest>(&content) {
-                return Ok((Self::App(manifest), app_path));
+        for filename in ["yuki.toml", "lib.toml", "yukispace.toml"] {
+            let candidate = dir.join(filename);
+            if candidate.is_file() {
+                return Self::load_file(&candidate);
             }
-            if let Ok(manifest) = toml::from_str::<LibManifest>(&content) {
-                return Ok((Self::Lib(manifest), app_path));
-            }
-            let manifest: AppManifest = toml::from_str(&content)
-                .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", app_path.display())))?;
-            return Ok((Self::App(manifest), app_path));
-        }
-
-        let lib_path = dir.join("lib.toml");
-        if lib_path.is_file() {
-            let content = fs::read_to_string(&lib_path)
-                .map_err(|e| ProjectError::Io(format!("cannot read {}: {e}", lib_path.display())))?;
-            let manifest: LibManifest = toml::from_str(&content)
-                .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", lib_path.display())))?;
-            return Ok((Self::Lib(manifest), lib_path));
-        }
-
-        let ws_path = dir.join("yukispace.toml");
-        if ws_path.is_file() {
-            let content = fs::read_to_string(&ws_path)
-                .map_err(|e| ProjectError::Io(format!("cannot read {}: {e}", ws_path.display())))?;
-            let manifest: WorkspaceManifest = toml::from_str(&content)
-                .map_err(|e| ProjectError::Io(format!("invalid {}: {e}", ws_path.display())))?;
-            return Ok((Self::Workspace(manifest), ws_path));
         }
 
         Err(ProjectError::Io(format!(
@@ -784,7 +1204,7 @@ impl ProjectManifest {
         match self {
             Self::App(a) => &a.bin.version,
             Self::Lib(l) => &l.lib.version,
-            Self::Workspace(_) => "0.1.0",
+            Self::Workspace(_) => crate::VERSION,
         }
     }
 
@@ -1304,5 +1724,178 @@ archives = ["native/libcore.a"]
         let static_specs = manifest.static_libs(None);
         assert!(static_specs.system.contains(&"pthread".to_string()));
         assert!(static_specs.archives.contains(&PathBuf::from("native/libcore.a")));
+    }
+
+    #[test]
+    fn test_package_lookup_prefers_workspace_name_then_relative_path() {
+        let root = std::env::temp_dir().join("yukino_pkg_name_over_path_test");
+        let _ = fs::remove_dir_all(&root);
+
+        // dir "shared" has package name "other", while dir "libs/shared_impl" has package name "shared"
+        let dir_first = root.join("shared");
+        let dir_named = root.join("libs/shared_impl");
+        let dir_unlisted = root.join("extra/sub_pkg");
+        fs::create_dir_all(&dir_first).expect("mkdir shared");
+        fs::create_dir_all(&dir_named).expect("mkdir shared_impl");
+        fs::create_dir_all(&dir_unlisted).expect("mkdir sub_pkg");
+
+        fs::write(
+            root.join("yukispace.toml"),
+            "[workspace]\nname = \"ws\"\nmembers = [\"shared\", \"libs/*\"]\n",
+        )
+        .expect("write ws");
+        fs::write(
+            dir_first.join("lib.toml"),
+            "[lib]\nname = \"other\"\nversion = \"0.1.0\"\nentry = \"lib.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n",
+        )
+        .expect("write dir_first");
+        fs::write(
+            dir_named.join("lib.toml"),
+            "[lib]\nname = \"shared\"\nversion = \"0.1.0\"\nentry = \"lib.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n",
+        )
+        .expect("write dir_named");
+        fs::write(
+            dir_unlisted.join("lib.toml"),
+            "[lib]\nname = \"sub_pkg\"\nversion = \"0.1.0\"\nentry = \"lib.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n",
+        )
+        .expect("write dir_unlisted");
+
+        // 1. Name match wins over directory path "shared"
+        let (m, p) = ProjectManifest::load_with_package(&root, Some("shared"))
+            .expect("resolve by workspace package name");
+        assert_eq!(m.name(), "shared");
+        assert_eq!(p, dir_named.join("lib.toml"));
+
+        // 2. Relative path fallback works when no member has that name
+        let (m_rel, p_rel) = ProjectManifest::load_with_package(&root, Some("extra/sub_pkg"))
+            .expect("resolve by relative path");
+        assert_eq!(m_rel.name(), "sub_pkg");
+        assert_eq!(p_rel, dir_unlisted.join("lib.toml"));
+
+        // 3. Error when neither name nor relative path exists
+        let err = ProjectManifest::load_with_package(&root, Some("does_not_exist"))
+            .expect_err("missing package should error");
+        assert!(err.to_string().contains("not found"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_mfpath_and_non_workspace_package_resolution() {
+        let root = std::env::temp_dir().join("yukino_mfpath_resolve_test");
+        let _ = fs::remove_dir_all(&root);
+        let sub = root.join("nested/sub_app");
+        fs::create_dir_all(&sub).expect("mkdir sub");
+
+        let yuki_file = root.join("yuki.toml");
+        let sub_file = sub.join("yuki.toml");
+        fs::write(
+            &yuki_file,
+            "[bin]\nname = \"root_app\"\nversion = \"0.1.0\"\nentry = \"main.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n",
+        )
+        .expect("write root yuki.toml");
+        fs::write(
+            &sub_file,
+            "[bin]\nname = \"sub_app\"\nversion = \"0.1.0\"\nentry = \"main.ykn\"\nyukino = [\"0.1.0\", \"+\"]\n",
+        )
+        .expect("write sub yuki.toml");
+
+        // Explicit --mfpath relative to project_dir
+        let (m, p) = ProjectManifest::resolve_root_manifest(
+            &root,
+            Some(Path::new("nested/sub_app/yuki.toml")),
+            None,
+        )
+        .expect("resolve via mfpath");
+        assert_eq!(m.name(), "sub_app");
+        assert_eq!(p, sub_file);
+
+        // Non-workspace package lookup by relative path succeeds, unknown name errors
+        let (m2, _) = ProjectManifest::load_with_package(&root, Some("nested/sub_app"))
+            .expect("non-workspace relative path");
+        assert_eq!(m2.name(), "sub_app");
+        assert!(ProjectManifest::load_with_package(&root, Some("unknown_pkg")).is_err());
+
+        // Directory or missing file rejected for --mfpath
+        assert!(ProjectManifest::resolve_root_manifest(&root, Some(Path::new("nested")), None).is_err());
+        assert!(ProjectManifest::resolve_root_manifest(&root, Some(Path::new("missing.toml")), None).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_manifest_directives_apply_and_restore_on_drop() {
+        let dir = std::env::temp_dir().join(format!("yukino_mf_directive_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let mf_path = dir.join("yuki.toml");
+        let original = concat!(
+            "# keep user comment\n",
+            "[bin]\n",
+            "name = \"orig_app\"\n",
+            "namedbg = \"orig_dbg\"\n",
+            "version = \"0.1.0\"\n",
+            "entry = \"src/main.ykn\"\n",
+            "yukino = [\"0.1.0\", \"+\"]\n",
+            "\n",
+            "[libs.static]\n",
+            "system = [\"dl\"]\n",
+        );
+        fs::write(&mf_path, original).expect("write yuki.toml");
+
+        let directives = vec![
+            parse_manifest_directive_line("yuki:manifest=bin.name=temp_app")
+                .unwrap()
+                .unwrap(),
+            parse_manifest_directive_line("yuki:manifest=config.debug.opt_level=2")
+                .unwrap()
+                .unwrap(),
+            parse_manifest_directive_line("yuki:manifest-append=libs.static.system=m")
+                .unwrap()
+                .unwrap(),
+            parse_manifest_directive_line("yuki:manifest-remove=bin.namedbg")
+                .unwrap()
+                .unwrap(),
+        ];
+
+        {
+            let _guard = apply_manifest_directives(&mf_path, &directives).expect("apply directives");
+            let (loaded, _) = ProjectManifest::load_file(&mf_path).expect("reload");
+            assert_eq!(loaded.name(), "temp_app");
+            assert_eq!(loaded.namedbg(), None);
+            assert_eq!(loaded.resolve_profile("debug").opt_level_str(), "2");
+            let sl = loaded.static_libs(None);
+            assert_eq!(sl.system, vec!["dl".to_string(), "m".to_string()]);
+        }
+
+        let restored = fs::read_to_string(&mf_path).expect("read restored");
+        assert_eq!(restored, original);
+
+        // Invalid directive schema leaves original file untouched
+        let bad = vec![
+            parse_manifest_directive_line("yuki:manifest=bin.version=123")
+                .unwrap()
+                .unwrap(),
+        ];
+        assert!(apply_manifest_directives(&mf_path, &bad).is_err());
+        assert_eq!(fs::read_to_string(&mf_path).unwrap(), original);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_manifest_directive_parser_validation() {
+        assert!(parse_manifest_directive_line("yuki:warning=hi").unwrap().is_none());
+        assert!(parse_manifest_directive_line("yuki:manifest=no_equals").is_err());
+        assert!(parse_manifest_directive_line("yuki:manifest=bin..name=x").is_err());
+        assert!(parse_manifest_directive_line("yuki:manifest=bin.name=").is_err());
+        assert!(parse_manifest_directive_line("yuki:manifest-remove=").is_err());
+        assert_eq!(
+            parse_manifest_directive_line("yuki:manifest=bin.name=\"quoted\"").unwrap(),
+            Some(ManifestDirective::Set {
+                path: "bin.name".to_string(),
+                value: "\"quoted\"".to_string(),
+            })
+        );
     }
 }

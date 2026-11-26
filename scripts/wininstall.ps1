@@ -3,9 +3,9 @@
 # Install from a GitHub release:
 #   wininstall.ps1
 # Install a specific version:
-#   wininstall.ps1 -Version v0.1.0
+#   wininstall.ps1 -Version v0.1.1
 # Install from a local bundle produced by scripts/winrelease.py:
-#   wininstall.ps1 -ZipPath yukino-0.1.0-x86_64-windows.zip
+#   wininstall.ps1 -ZipPath yukino-0.1.1-x86_64-windows.zip
 
 param(
     [string]$Version = "latest",

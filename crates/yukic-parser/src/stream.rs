@@ -10,6 +10,7 @@ pub struct TokenStream<'a> {
     pub(crate) file_id: FileId,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) eof_token: Token<'a>,
+    pub(crate) is_interface_mode: bool,
 }
 
 impl<'a> TokenStream<'a> {
@@ -23,6 +24,7 @@ impl<'a> TokenStream<'a> {
             file_id,
             diagnostics: Vec::new(),
             eof_token: Token::new(TokenKind::Eof, eof_span),
+            is_interface_mode: false,
         }
     }
 

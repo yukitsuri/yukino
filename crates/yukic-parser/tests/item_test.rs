@@ -614,7 +614,7 @@ fn test_cfun_type_annotation_parsing() {
     let (module, diags) = parse_code(src);
     assert!(diags.is_empty(), "{diags:?}");
     match &module.items[0].kind {
-        ItemKind::Fun(f) => match &f.body.stmts[0].kind {
+        ItemKind::Fun(f) => match &f.body.as_ref().unwrap().stmts[0].kind {
             StmtKind::Set { ty: Some(type_node), .. } => match &type_node.kind {
                 TypeNodeKind::CFun(params, ret) => {
                     assert_eq!(params.len(), 2);
@@ -785,4 +785,116 @@ fun handle_login() {
         }
         other => panic!("expected Fun, got {other:?}"),
     }
+}
+
+#[test]
+fn test_class_static_and_default_fields_parsing() {
+    let src = r#"
+class Config {
+    set port: int32 = 8080
+    host: string = "localhost"
+    static MAX: int32 = 16
+    public static TAG: string = "cfg"
+}
+"#;
+    let (module, diags) = parse_code(src);
+    assert!(diags.is_empty(), "diags: {diags:?}");
+    let ItemKind::Class(c) = &module.items[0].kind else {
+        panic!("expected Class");
+    };
+    assert_eq!(c.fields.len(), 4);
+    assert!(!c.fields[0].is_static && c.fields[0].default_val.is_some());
+    assert!(!c.fields[1].is_static && c.fields[1].default_val.is_some());
+    assert!(c.fields[2].is_static && !c.fields[2].is_pub && c.fields[2].default_val.is_some());
+    assert!(c.fields[3].is_static && c.fields[3].is_pub && c.fields[3].default_val.is_some());
+
+    let missing_init = "class Bad { static X: int32 }";
+    let (_, bad_diags) = parse_code(missing_init);
+    assert!(!bad_diags.is_empty(), "expected parser error for static field without initializer");
+
+    let conflict = "class Bad2 { set static X: int32 = 1 }";
+    let (_, conflict_diags) = parse_code(conflict);
+    assert!(!conflict_diags.is_empty(), "expected parser error for set static field");
+}
+
+#[test]
+fn test_cload_cunion_cvar_and_variadic_cfun_parsing() {
+    let src = r#"
+public cload "include/foo.h"
+cload "bar.h"
+externc {
+    cunion UVal {
+        i: int32
+        f: float32
+    }
+    cvar ext_flag: int32
+    cfun printf_like(fmt: ptr<c_char>, ...) -> int32
+}
+fun make_it() -> foo::UVal {
+    return foo::UVal { i: 7 }
+}
+"#;
+    let (module, diags) = parse_code(src);
+    assert!(diags.is_empty(), "diags: {diags:?}");
+    assert_eq!(module.items.len(), 4);
+    assert!(matches!(
+        &module.items[0].kind,
+        ItemKind::Cload(cl) if cl.path == "include/foo.h"
+    ));
+    assert_eq!(module.items[0].visibility, Visibility::Public);
+    assert_eq!(module.items[1].visibility, Visibility::Local);
+    let ItemKind::Externc(ext) = &module.items[2].kind else {
+        panic!("expected Externc");
+    };
+    assert!(matches!(&ext.items[0], ExterncItem::Cstruct(cs) if cs.is_union && cs.fields.len() == 2));
+    assert!(matches!(&ext.items[1], ExterncItem::Cvar(cv) if cv.name.name == "ext_flag"));
+    assert!(matches!(&ext.items[2], ExterncItem::Cfun(cf) if cf.is_variadic && cf.params.len() == 1));
+}
+
+#[test]
+fn test_interface_mode_parses_namespace_and_bodyless_decls() {
+    let src = r#"
+#![ykni::version(1)]
+namespace math.linalg {
+    #[ykni::symbol("__yukifun_dot_float64_float64__float64")]
+    public fun dot(a: float64, b: float64 = 0.0) -> float64
+
+    public fun identity<T>(x: T) -> T {
+        return x
+    }
+
+    public class Matrix {
+        rows: int32
+        public cols: int32
+
+        #[ykni::symbol("_Y_Matrix_init")]
+        public fun init(r: int32, c: int32)
+
+        #[ykni::symbol("_Y_Matrix_trace")]
+        public fun trace() -> float64
+    }
+}
+"#;
+    let lexer = Lexer::new(FileId(0), src);
+    let (tokens, mut diags) = lexer.tokenize();
+    let mut parser = Parser::new(tokens);
+    let (module, mut p_diags) = parser.parse_interface_module();
+    diags.append(&mut p_diags);
+    assert!(diags.is_empty(), "diags: {diags:?}");
+    assert_eq!(module.items.len(), 1);
+    let ItemKind::Namespace(ns) = &module.items[0].kind else {
+        panic!("expected Namespace");
+    };
+    assert_eq!(ns.path.len(), 2);
+    assert_eq!(ns.items.len(), 3);
+    assert!(matches!(&ns.items[0].kind, ItemKind::Fun(f) if f.body.is_none() && f.params[1].default_val.is_some()));
+    assert!(matches!(&ns.items[1].kind, ItemKind::Fun(f) if f.body.is_some() && f.generics.len() == 1));
+    let ItemKind::Class(cls) = &ns.items[2].kind else {
+        panic!("expected Class");
+    };
+    assert_eq!(cls.fields.len(), 2);
+    assert!(!cls.fields[0].is_pub);
+    assert!(cls.fields[1].is_pub);
+    assert_eq!(cls.methods.len(), 2);
+    assert!(cls.methods.iter().all(|m| m.body.is_none()));
 }

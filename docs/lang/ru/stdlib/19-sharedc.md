@@ -15,7 +15,8 @@ load std.sharedc
 При импорте модуля доступны следующие сущности:
 
 - **Константы:** `RTLD_LAZY`, `RTLD_NOW`, `RTLD_LOCAL`, `RTLD_GLOBAL`.
-- **Структуры ошибок:** `SharedError`.
+- **Перечисления:** `SymbolAbi`.
+- **Структуры:** `SharedError`, `SharedExport`, `YukinoLibInfo`.
 - **Классы:** `SharedLibrary`.
 - **Функции:** `open`, `open_flags`, `try_open`, `try_open_flags`, `open_self`, `open_self_flags`, `filename`, `last_error`.
 
@@ -66,6 +67,8 @@ public struct SharedError {
 - `1` — сбой при загрузке динамической библиотеки по указанному пути либо сбой открытия пространства процесса.
 - `2` — запрошенный символ не найден в экспорте разделяемой библиотеки.
 - `3` — попытка обращения к символу через дескриптор библиотеки, которая уже была закрыта.
+- `4` — в разделяемой библиотеке отсутствуют метаданные `__yukino_metadata_v1` и не загружен `.ykni`-интерфейс (либо ошибка чтения `.ykni`).
+- `5` — неоднозначный поиск символа среди нескольких перегруженных сигнатур.
 
 ---
 
@@ -366,6 +369,80 @@ fun main() {
             println("Причина сбоя: ${err}")
         }
     }
+}
+```
+
+---
+
+## 7. Динамическая загрузка библиотек Yukino
+
+Модуль `std.sharedc` позволяет не только загружать обычные C-библиотеки, но и работать во время выполнения с разделяемыми библиотеками, собранными на Yukino (`lib*.so`, `*.dll`, `*.dylib`). Подробно об устройстве интерфейсных файлов `.ykni`, встроенных метаданных и соглашении вызова `ptr<fun(...) -> ...>` рассказано в разделе [Интерфейсы скомпилированных библиотек (.ykni)](../9-modules.md#6-интерфейсы-скомпилированных-библиотек-ykni).
+
+### 7.1 Типы метаданных и коды ошибок
+
+```yukino
+public enum SymbolAbi {
+    CDecl,
+    YukinoFastCall
+}
+
+public struct SharedExport {
+    name: string
+    mangled: string
+    signature: string
+    abi: SymbolAbi
+    kind: string
+}
+
+public struct YukinoLibInfo {
+    package_name: string
+    yukic_version: string
+    target: string
+    abi_hash: string
+}
+```
+
+Дополнительные коды `SharedError`:
+- `4` — в загруженной библиотеке нет метаданных Yukino и не подключен внешний `.ykni` через `load_interface`.
+- `5` — имя символа неоднозначно из-за перегрузок; требуется уточнение сигнатуры через `yukino_symbol_sig` / `method_symbol`.
+
+### 7.2 Использование методов SharedLibrary для библиотек Yukino
+
+- `lib.is_yukino() -> bool` — проверяет, доступны ли для открытого дескриптора встроенные метаданные Yukino или загруженный `.ykni`.
+- `lib.yukino_info() -> YukinoLibInfo?` — возвращает сведения о пакете, версии компилятора, таргете и хэше ABI, либо `null`.
+- `lib.exports() -> SharedExport[]` — возвращает список всех экспортируемых символов с их сигнатурами и ABI.
+- `lib.load_interface(ykni_path: string) -> bool` — загружает внешний `.ykni`-файл для открытой библиотеки (полезно, если библиотека собрана без метаданных или нужно привязать сторонний `.ykni`).
+- `lib.yukino_symbol(name)` / `lib.yukino_symbol_or_panic(name)` — ищет символ по короткому логическому имени без ручного манглинга.
+- `lib.yukino_symbol_sig(name, signature)` / `lib.yukino_symbol_sig_or_panic(name, signature)` — выбирает нужную перегрузку по строковой сигнатуре (например, `"fun(string) -> string"`).
+- `lib.method_symbol(class_name, method_name, param_count = -1)` / `lib.method_symbol_or_panic(...)` — ищет скомпилированный метод класса или структуры (с опциональной фильтрацией по числу аргументов).
+
+Полученный указатель приводится через `cast` к `ptr<fun(...) -> ...>` для функций Yukino либо к `cfun(...) -> ...` для функций C ABI:
+
+```yukino
+load std.sharedc
+load std.io: println
+load core.utils: cast
+
+fun main() {
+    set lib = open("./libplugin.so")
+
+    if !lib.is_yukino() {
+        // При необходимости можно подключить внешний файл интерфейса вручную
+        lib.load_interface("./plugin.ykni")
+    }
+
+    set info = lib.yukino_info()
+    println("Пакет: ${info?.package_name ?? \"unknown\"}")
+
+    set greet_ptr = lib.yukino_symbol_sig_or_panic("format_greeting", "fun(string) -> string")
+    set greet_fn = cast(greet_ptr, "ptr<fun(string) -> string>")
+    println(greet_fn("world"))
+
+    set c_ptr = lib.yukino_symbol_or_panic("native_ping")
+    set c_fn = cast(c_ptr, "cfun(int32) -> int32")
+    println(c_fn(41))
+
+    lib.close()
 }
 ```
 

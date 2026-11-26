@@ -267,8 +267,9 @@ fn test_set_dynamic_array_without_initializer() {
     assert!(diags.is_empty(), "expected no diagnostics, found: {:?}", diags);
     assert_eq!(module.items.len(), 1);
     if let ItemKind::Fun(f) = &module.items[0].kind {
-        assert_eq!(f.body.stmts.len(), 1);
-        if let StmtKind::Set { ty, init, .. } = &f.body.stmts[0].kind {
+        let body = f.body.as_ref().unwrap();
+        assert_eq!(body.stmts.len(), 1);
+        if let StmtKind::Set { ty, init, .. } = &body.stmts[0].kind {
             assert!(matches!(ty.as_ref().unwrap().kind, TypeNodeKind::Array(_, None)));
             assert!(matches!(init.kind, ExprKind::ArrayInit(ref elems) if elems.is_empty()));
         } else {

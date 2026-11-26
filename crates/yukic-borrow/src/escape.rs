@@ -97,13 +97,16 @@ impl EscapeAnalysis {
     }
 
     pub fn analyze_fun(&mut self, decl: &FunDecl) {
+        let Some(ref body) = decl.body else {
+            return;
+        };
         self.enter_scope();
         for param in &decl.params {
             self.params.insert(param.name.name.clone());
             self.local_vars
                 .insert(param.name.name.clone(), self.current_depth);
         }
-        self.analyze_block(&decl.body);
+        self.analyze_block(body);
         self.exit_scope();
     }
 
@@ -114,13 +117,16 @@ impl EscapeAnalysis {
     }
 
     pub fn analyze_method(&mut self, decl: &MethodDecl) {
+        let Some(ref body) = decl.body else {
+            return;
+        };
         self.enter_scope();
         for param in &decl.params {
             self.params.insert(param.name.name.clone());
             self.local_vars
                 .insert(param.name.name.clone(), self.current_depth);
         }
-        self.analyze_block(&decl.body);
+        self.analyze_block(body);
         self.exit_scope();
     }
 

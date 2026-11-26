@@ -3,11 +3,12 @@
 use crate::stream::TokenStream;
 use yukic_ast::{
     AccessorKind, AliasDecl, AliasKind, AttributeArgs, AttributeNode, AttributePath,
-    CAttributeNode, CParam, CfunDecl, ClassDecl, ClassField, CstructDecl, EnumDecl, EnumVariant,
+    CAttributeNode, CParam, CfunDecl, ClassDecl, ClassField, CloadDecl, CstructDecl, CvarDecl,
+    EnumDecl, EnumVariant,
     Expr, ExprKind, ExterncBlock, ExterncItem, FieldDef, FunDecl, Ident, ImportDecl, ImportPath,
     ImportPathSegment, ImportPattern, ImportSymbolItem, ImportSymbolsClause, InterfaceDecl,
     InterfaceMethodDef, Item, ItemId, ItemKind, MacroBody,
-    MacroDefDecl, MacroParam, MacroParamKind, MethodDecl, Module, Param, PathPrefix,
+    MacroDefDecl, MacroParam, MacroParamKind, MethodDecl, Module, NamespaceDecl, Param, PathPrefix,
     PropertyAccessor, StaticDecl, StaticMethodDecl, StructDecl, ThisParam, TypeAliasDecl, TypeNode,
     TypeNodeKind, Visibility,
 };
@@ -281,15 +282,34 @@ impl TokenStream<'_> {
                     }
                     ItemKind::Struct(self.parse_struct_decl())
                 }
-                TokenKind::Cstruct => ItemKind::Cstruct(self.parse_cstruct_decl(c_attrs)),
+                TokenKind::Cstruct => ItemKind::Cstruct(self.parse_cstruct_decl(c_attrs, false)),
+                TokenKind::Cunion => ItemKind::Cstruct(self.parse_cstruct_decl(c_attrs, true)),
+                TokenKind::Cvar => ItemKind::Cvar(self.parse_cvar_decl(c_attrs)),
                 TokenKind::Interface => ItemKind::Interface(self.parse_interface_decl()),
                 TokenKind::Enum => ItemKind::Enum(self.parse_enum_decl()),
                 TokenKind::Type => ItemKind::TypeAlias(self.parse_type_alias_decl()),
                 TokenKind::Static => ItemKind::Static(self.parse_static_decl()),
                 TokenKind::Externc => ItemKind::Externc(self.parse_externc_block()),
                 TokenKind::Load => ItemKind::Import(self.parse_load_decl()),
+                TokenKind::Cload => {
+                    if !c_attrs.is_empty() {
+                        self.error(
+                            ErrorCode::E0210,
+                            "FFI attributes forbidden on cload declaration",
+                            start_span,
+                        );
+                    }
+                    ItemKind::Cload(self.parse_cload_decl())
+                }
                 TokenKind::Alias => ItemKind::Alias(self.parse_alias_decl()),
                 TokenKind::Define => ItemKind::Macro(self.parse_macro_def_decl()),
+                TokenKind::Ident("namespace")
+                    if self.is_interface_mode
+                        || (matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                            && matches!(self.peek_at(2).kind, TokenKind::Dot | TokenKind::LBrace)) =>
+                {
+                    ItemKind::Namespace(self.parse_namespace_decl(next_id))
+                }
                 TokenKind::Set | TokenKind::Rewrite => {
                     self.error(
                         ErrorCode::E0204,
@@ -355,17 +375,30 @@ impl TokenStream<'_> {
             None
         };
 
-        let body = self.parse_block();
-        if body.stmts.is_empty() {
-            self.warning(
-                WarningCode::W0201,
-                "empty function body; use 'space' keyword if intentional",
-                body.span,
-            );
-        }
+        let is_interface_decl = self.is_interface_mode
+            || attrs.iter().any(|a| a.is("ykni::symbol"));
+        let (body, end_pos) = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            let b = self.parse_block();
+            if b.stmts.is_empty() {
+                self.warning(
+                    WarningCode::W0201,
+                    "empty function body; use 'space' keyword if intentional",
+                    b.span,
+                );
+            }
+            let end = b.span.end;
+            (Some(b), end)
+        } else if is_interface_decl {
+            let _ = self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+            (None, self.prev_span().end)
+        } else {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        };
 
         self.validate_test_function(&name, &attrs, &generics, &params, return_type.as_ref());
-        let span = Span::new(start_span.file_id, start_span.start, body.span.end);
+        let span = Span::new(start_span.file_id, start_span.start, end_pos);
         FunDecl {
             name,
             attrs,
@@ -375,6 +408,28 @@ impl TokenStream<'_> {
             body,
             span,
         }
+    }
+
+    fn parse_namespace_decl(&mut self, next_id: &mut u32) -> NamespaceDecl {
+        let start_span = self.curr_span();
+        self.bump(); // consume contextual 'namespace'
+        let mut path = vec![self.parse_ident_node()];
+        while self.eat_kind(|k| matches!(k, TokenKind::Dot)) {
+            path.push(self.parse_ident_node());
+        }
+        self.expect_token(&TokenKind::LBrace, "'{' to begin namespace body");
+        let mut items = Vec::new();
+        while !self.is_eof() && !self.check_kind(|k| matches!(k, TokenKind::RBrace)) {
+            if self.eat_kind(|k| matches!(k, TokenKind::Semicolon)) {
+                continue;
+            }
+            if let Some(item) = self.parse_item(next_id) {
+                items.push(item);
+            }
+        }
+        self.expect_token(&TokenKind::RBrace, "'}' to close namespace body");
+        let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
+        NamespaceDecl { path, items, span }
     }
 
     fn validate_test_function(
@@ -443,7 +498,7 @@ impl TokenStream<'_> {
         }
 
         self.expect_token(&TokenKind::LParen, "'(' for cfun parameters");
-        let params = self.parse_cparam_list();
+        let (params, is_variadic) = self.parse_cparam_list();
         self.expect_token(&TokenKind::RParen, "')' to close cfun parameters");
 
         let return_type = if self.eat_kind(|k| matches!(k, TokenKind::Arrow)) {
@@ -459,6 +514,13 @@ impl TokenStream<'_> {
         };
 
         let body = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            if is_variadic {
+                self.error(
+                    ErrorCode::E0208,
+                    "variadic cfun declaration cannot have a Yukino body",
+                    self.curr_span(),
+                );
+            }
             Some(self.parse_block())
         } else {
             None
@@ -471,6 +533,7 @@ impl TokenStream<'_> {
             c_attrs,
             yukino_attrs,
             params,
+            is_variadic,
             return_type,
             symbol_override,
             body,
@@ -552,16 +615,23 @@ impl TokenStream<'_> {
         params
     }
 
-    fn parse_cparam_list(&mut self) -> Vec<CParam> {
+    fn parse_cparam_list(&mut self) -> (Vec<CParam>, bool) {
         let mut params = Vec::new();
+        let mut is_variadic = false;
         while !self.is_eof() && !self.check_kind(|k| matches!(k, TokenKind::RParen)) {
             let start_span = self.curr_span();
             if self.eat_kind(|k| matches!(k, TokenKind::Ellipsis)) {
-                self.error(
-                    ErrorCode::E0208,
-                    "variadics forbidden in cfun declaration",
-                    start_span,
-                );
+                is_variadic = true;
+                if self.eat_kind(|k| matches!(k, TokenKind::Comma))
+                    && !self.check_kind(|k| matches!(k, TokenKind::RParen))
+                {
+                    self.error(
+                        ErrorCode::E0208,
+                        "variadic '...' must be the last parameter in cfun declaration",
+                        start_span,
+                    );
+                }
+                break;
             }
             let name = self.parse_ident_node();
             self.expect_token(&TokenKind::Colon, "':' for cfun parameter type");
@@ -583,7 +653,7 @@ impl TokenStream<'_> {
                 break;
             }
         }
-        params
+        (params, is_variadic)
     }
 
     fn parse_class_decl(&mut self, is_locked: bool) -> ClassDecl {
@@ -651,7 +721,7 @@ impl TokenStream<'_> {
             }
 
             let attrs = self.parse_attributes();
-            let _visibility = self.eat_kind(|k| matches!(k, TokenKind::Public));
+            let is_pub = self.eat_kind(|k| matches!(k, TokenKind::Public));
             if self.eat_kind(|k| matches!(k, TokenKind::Operator)) {
                 self.eat_kind(|k| matches!(k, TokenKind::Fun));
                 let mut method = self.parse_operator_method_decl(attrs);
@@ -692,7 +762,7 @@ impl TokenStream<'_> {
                 self.bump(); // consume 'set'
                 accessors.push(self.parse_setter_accessor(attrs));
             } else {
-                fields.push(self.parse_class_field(attrs));
+                fields.push(self.parse_class_field(attrs, is_pub));
                 self.eat_kind(|k| matches!(k, TokenKind::Comma | TokenKind::Semicolon));
             }
         }
@@ -700,16 +770,34 @@ impl TokenStream<'_> {
         (fields, methods, accessors)
     }
 
-    fn parse_class_field(&mut self, attrs: Vec<AttributeNode>) -> ClassField {
+    fn parse_class_field(&mut self, attrs: Vec<AttributeNode>, outer_pub: bool) -> ClassField {
         let start_span = self.curr_span();
-        let is_pub = self.eat_kind(|k| matches!(k, TokenKind::Public));
-        self.eat_kind(|k| matches!(k, TokenKind::Set));
+        let is_pub = outer_pub || self.eat_kind(|k| matches!(k, TokenKind::Public));
+        let mut is_set = self.eat_kind(|k| matches!(k, TokenKind::Set));
+        let is_static = self.eat_kind(|k| matches!(k, TokenKind::Static));
+        if is_static && self.eat_kind(|k| matches!(k, TokenKind::Set)) {
+            is_set = true;
+        }
+        if is_set && is_static {
+            self.error(
+                ErrorCode::E0201,
+                "class field cannot be both 'set' and 'static'",
+                self.prev_span(),
+            );
+        }
         let name = self.parse_ident_node();
         self.expect_token(&TokenKind::Colon, "':' for class field type");
         let ty = self.parse_type();
         let default_val = if self.eat_kind(|k| matches!(k, TokenKind::Eq)) {
             Some(self.parse_expr())
         } else {
+            if is_static {
+                self.error(
+                    ErrorCode::E0201,
+                    format!("static field '{}' must have an initializer '= <literal>'", name.name),
+                    name.span,
+                );
+            }
             None
         };
         let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
@@ -718,6 +806,7 @@ impl TokenStream<'_> {
             attrs,
             ty,
             is_pub,
+            is_static,
             default_val,
             span,
         }
@@ -797,8 +886,21 @@ impl TokenStream<'_> {
             None
         };
 
-        let body = self.parse_block();
-        let span = Span::new(start_span.file_id, start_span.start, body.span.end);
+        let is_interface_decl = self.is_interface_mode
+            || attrs.iter().any(|a| a.is("ykni::symbol"));
+        let (body, end_pos) = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        } else if is_interface_decl {
+            let _ = self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+            (None, self.prev_span().end)
+        } else {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        };
+        let span = Span::new(start_span.file_id, start_span.start, end_pos);
         MethodDecl {
             name,
             attrs,
@@ -838,8 +940,21 @@ impl TokenStream<'_> {
         } else {
             self.parse_type()
         };
-        let body = self.parse_block();
-        let span = Span::new(start_span.file_id, start_span.start, body.span.end);
+        let is_interface_decl = self.is_interface_mode
+            || attrs.iter().any(|a| a.is("ykni::symbol"));
+        let (body, end_pos) = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        } else if is_interface_decl {
+            let _ = self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+            (None, self.prev_span().end)
+        } else {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        };
+        let span = Span::new(start_span.file_id, start_span.start, end_pos);
         PropertyAccessor {
             name,
             attrs,
@@ -861,8 +976,21 @@ impl TokenStream<'_> {
         if self.eat_kind(|k| matches!(k, TokenKind::Arrow | TokenKind::Colon)) {
             let _ = self.parse_type();
         }
-        let body = self.parse_block();
-        let span = Span::new(start_span.file_id, start_span.start, body.span.end);
+        let is_interface_decl = self.is_interface_mode
+            || attrs.iter().any(|a| a.is("ykni::symbol"));
+        let (body, end_pos) = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        } else if is_interface_decl {
+            let _ = self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+            (None, self.prev_span().end)
+        } else {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        };
+        let span = Span::new(start_span.file_id, start_span.start, end_pos);
         PropertyAccessor {
             name,
             attrs,
@@ -938,8 +1066,21 @@ impl TokenStream<'_> {
             None
         };
 
-        let body = self.parse_block();
-        let span = Span::new(start_span.file_id, start_span.start, body.span.end);
+        let is_interface_decl = self.is_interface_mode
+            || attrs.iter().any(|a| a.is("ykni::symbol"));
+        let (body, end_pos) = if self.check_kind(|k| matches!(k, TokenKind::LBrace)) {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        } else if is_interface_decl {
+            let _ = self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+            (None, self.prev_span().end)
+        } else {
+            let b = self.parse_block();
+            let end = b.span.end;
+            (Some(b), end)
+        };
+        let span = Span::new(start_span.file_id, start_span.start, end_pos);
         StaticMethodDecl {
             name,
             attrs,
@@ -950,18 +1091,26 @@ impl TokenStream<'_> {
         }
     }
 
-    fn parse_cstruct_decl(&mut self, c_attrs: Vec<CAttributeNode>) -> CstructDecl {
+    fn parse_cstruct_decl(&mut self, c_attrs: Vec<CAttributeNode>, is_union: bool) -> CstructDecl {
         let start_span = self.curr_span();
-        self.bump(); // consume 'cstruct'
+        self.bump(); // consume 'cstruct' or 'cunion'
         let name = self.parse_ident_node();
-        self.expect_token(&TokenKind::LBrace, "'{' to begin cstruct body");
+        let kind_label = if is_union { "cunion" } else { "cstruct" };
+        self.expect_token(
+            &TokenKind::LBrace,
+            if is_union {
+                "'{' to begin cunion body"
+            } else {
+                "'{' to begin cstruct body"
+            },
+        );
 
         let mut fields = Vec::new();
         while !self.is_eof() && !self.check_kind(|k| matches!(k, TokenKind::RBrace)) {
             if self.check_kind(|k| matches!(k, TokenKind::Fun)) {
                 self.error(
                     ErrorCode::E0211,
-                    "method declaration is forbidden inside cstruct",
+                    &format!("method declaration is forbidden inside {kind_label}"),
                     self.curr_span(),
                 );
                 self.bump();
@@ -973,14 +1122,58 @@ impl TokenStream<'_> {
             self.eat_kind(|k| matches!(k, TokenKind::Comma | TokenKind::Semicolon));
         }
 
-        self.expect_token(&TokenKind::RBrace, "'}' to close cstruct body");
+        self.expect_token(
+            &TokenKind::RBrace,
+            if is_union {
+                "'}' to close cunion body"
+            } else {
+                "'}' to close cstruct body"
+            },
+        );
         let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
         CstructDecl {
             name,
             c_attrs,
             fields,
+            is_union,
             span,
         }
+    }
+
+    fn parse_cvar_decl(&mut self, c_attrs: Vec<CAttributeNode>) -> CvarDecl {
+        let start_span = self.curr_span();
+        self.bump(); // consume 'cvar'
+        let name = self.parse_ident_node();
+        self.expect_token(&TokenKind::Colon, "':' for cvar type");
+        let ty = self.parse_type();
+        self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+        let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
+        CvarDecl {
+            name,
+            c_attrs,
+            ty,
+            span,
+        }
+    }
+
+    fn parse_cload_decl(&mut self) -> CloadDecl {
+        let start_span = self.curr_span();
+        self.bump(); // consume 'cload'
+        let path = if let TokenKind::StringLiteral(ref s) = self.peek().kind {
+            let p = s.clone();
+            self.bump();
+            p
+        } else {
+            self.error(
+                ErrorCode::E0201,
+                "expected string literal header path after 'cload'",
+                self.curr_span(),
+            );
+            String::new()
+        };
+        self.eat_kind(|k| matches!(k, TokenKind::Semicolon));
+        let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
+        CloadDecl { path, span }
     }
 
     fn parse_field_def(&mut self, attrs: Vec<AttributeNode>) -> FieldDef {
@@ -1165,11 +1358,15 @@ impl TokenStream<'_> {
             if self.check_kind(|k| matches!(k, TokenKind::Cfun)) {
                 items.push(ExterncItem::Cfun(self.parse_cfun_decl(attrs, c_attrs)));
             } else if self.check_kind(|k| matches!(k, TokenKind::Cstruct)) {
-                items.push(ExterncItem::Cstruct(self.parse_cstruct_decl(c_attrs)));
+                items.push(ExterncItem::Cstruct(self.parse_cstruct_decl(c_attrs, false)));
+            } else if self.check_kind(|k| matches!(k, TokenKind::Cunion)) {
+                items.push(ExterncItem::Cstruct(self.parse_cstruct_decl(c_attrs, true)));
+            } else if self.check_kind(|k| matches!(k, TokenKind::Cvar)) {
+                items.push(ExterncItem::Cvar(self.parse_cvar_decl(c_attrs)));
             } else {
                 self.error(
                     ErrorCode::E0201,
-                    "only 'cfun' and 'cstruct' are allowed inside externc block",
+                    "only 'cfun', 'cstruct', 'cunion', and 'cvar' are allowed inside externc block",
                     self.curr_span(),
                 );
                 self.bump();
@@ -1180,6 +1377,7 @@ impl TokenStream<'_> {
         let span = Span::new(start_span.file_id, start_span.start, self.prev_span().end);
         ExterncBlock {
             header,
+            namespace: None,
             items,
             span,
         }

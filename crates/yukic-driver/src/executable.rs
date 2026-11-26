@@ -77,7 +77,11 @@ fn append_target_flags(args: &mut Vec<String>, target: TargetTriple, config: &Dr
         args.push("-static".to_string());
     }
     if spec.os != OperatingSystem::Windows {
-        args.push("-pie".to_string());
+        if config.reloc_model == Some(inkwell::targets::RelocMode::Static) {
+            args.push("-no-pie".to_string());
+        } else {
+            args.push("-pie".to_string());
+        }
     }
     args.push("--gc-sections".to_string());
     args.push("--allow-multiple-definition".to_string());
@@ -89,7 +93,7 @@ fn append_target_flags(args: &mut Vec<String>, target: TargetTriple, config: &Dr
         args.push("now".to_string());
         args.push("--icf=all".to_string());
     }
-    if config.lto {
+    if config.effective_lto_kind().is_enabled() {
         let opt_str = match config.opt_level {
             yukic_opt::OptLevel::O0 => "0",
             yukic_opt::OptLevel::O1 => "1",
@@ -121,6 +125,15 @@ fn append_target_flags(args: &mut Vec<String>, target: TargetTriple, config: &Dr
 
 fn append_libraries(args: &mut Vec<String>, target: TargetTriple, config: &DriverConfig) {
     let spec = target.spec();
+    let has_shared_input = config.link_archives.iter().any(|p| {
+        p.file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|n| n.ends_with(".so") || n.contains(".so.") || n.ends_with(".dylib"))
+    });
+    if has_shared_input && spec.object_format == ObjectFormat::Elf {
+        args.push("-rpath".to_string());
+        args.push("$ORIGIN".to_string());
+    }
     args.push("--start-group".to_string());
 
     for arch in &config.link_archives {
@@ -175,7 +188,7 @@ fn build_msvc_executable_linker_args(
     args.push("/SUBSYSTEM:CONSOLE".to_string());
     args.push("/OPT:REF".to_string());
     args.push("/OPT:ICF".to_string());
-    if config.lto {
+    if config.effective_lto_kind().is_enabled() {
         args.push("/LTCG".to_string());
     }
 
@@ -184,7 +197,12 @@ fn build_msvc_executable_linker_args(
     }
 
     let sys_dirs = collect_system_search_dirs(target);
-    for dir in config.include_dirs.iter().chain(sys_dirs.iter()) {
+    for dir in config
+        .link_search_paths
+        .iter()
+        .chain(config.include_dirs.iter())
+        .chain(sys_dirs.iter())
+    {
         if dir.exists() {
             args.push(format!("/LIBPATH:{}", dir.display()));
         }
@@ -234,6 +252,9 @@ pub fn build_executable_linker_args(
         args.push(obj.to_string_lossy().to_string());
     }
 
+    for dir in &config.link_search_paths {
+        args.push(format!("-L{}", dir.display()));
+    }
     for dir in &config.include_dirs {
         args.push(format!("-L{}", dir.display()));
     }

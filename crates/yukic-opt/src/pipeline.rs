@@ -25,6 +25,8 @@ pub struct PipelineConfig {
     pub debug_logging: bool,
     pub target_cpu: Option<String>,
     pub target_features: Option<String>,
+    pub reloc_mode: Option<RelocMode>,
+    pub code_model: Option<CodeModel>,
 }
 
 impl PipelineConfig {
@@ -42,6 +44,8 @@ impl PipelineConfig {
             debug_logging: false,
             target_cpu: None,
             target_features: None,
+            reloc_mode: None,
+            code_model: None,
         }
     }
 }

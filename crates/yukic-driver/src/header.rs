@@ -91,7 +91,8 @@ pub fn format_cstruct(cstruct: &CstructDecl) -> String {
         String::new()
     };
 
-    let _ = writeln!(out, "typedef struct{} {} {{", align_str, cstruct.name.name);
+    let kw = if cstruct.is_union { "union" } else { "struct" };
+    let _ = writeln!(out, "typedef {kw}{} {} {{", align_str, cstruct.name.name);
     for field in &cstruct.fields {
         let _ = writeln!(out, "{}", format_c_field(&field.name.name, &field.ty));
     }
@@ -168,6 +169,7 @@ pub fn generate_c_header_from_ast(ast: &AstModule, lib_name: &str) -> String {
                     match ext {
                         ExterncItem::Cstruct(cs) => exported_structs.push(cs),
                         ExterncItem::Cfun(cf) => exported_funs.push(cf),
+                        ExterncItem::Cvar(_) => {}
                     }
                 }
             }
@@ -350,6 +352,7 @@ mod tests {
                     span: Span::DUMMY,
                 },
             ],
+            is_union: false,
             span: Span::DUMMY,
         };
 
@@ -395,6 +398,7 @@ mod tests {
                     span: Span::DUMMY,
                 },
             ],
+            is_variadic: false,
             return_type: Some(make_type("int32")),
             symbol_override: None,
             body: None,
@@ -433,6 +437,7 @@ mod tests {
                     span: Span::DUMMY,
                 },
             ],
+            is_union: false,
             span: Span::DUMMY,
         };
         ast.items.push(Item::new(
@@ -458,6 +463,7 @@ mod tests {
                     span: Span::DUMMY,
                 },
             ],
+            is_variadic: false,
             return_type: Some(make_type("Vector2")),
             symbol_override: None,
             body: None,

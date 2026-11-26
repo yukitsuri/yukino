@@ -112,18 +112,28 @@ pub fn expand_default_args(target_module: &mut Module, source_modules: &[Module]
 
     for item in &mut target_module.items {
         match &mut item.kind {
-            ItemKind::Fun(decl) => expand_block_defaults(&mut decl.body, &map),
+            ItemKind::Fun(decl) => {
+                if let Some(ref mut body) = decl.body {
+                    expand_block_defaults(body, &map);
+                }
+            }
             ItemKind::Class(decl) => {
                 for m in &mut decl.methods {
-                    expand_block_defaults(&mut m.body, &map);
+                    if let Some(ref mut body) = m.body {
+                        expand_block_defaults(body, &map);
+                    }
                 }
             }
             ItemKind::Struct(decl) => {
                 for m in &mut decl.methods {
-                    expand_block_defaults(&mut m.body, &map);
+                    if let Some(ref mut body) = m.body {
+                        expand_block_defaults(body, &map);
+                    }
                 }
                 for sm in &mut decl.static_methods {
-                    expand_block_defaults(&mut sm.body, &map);
+                    if let Some(ref mut body) = sm.body {
+                        expand_block_defaults(body, &map);
+                    }
                 }
             }
             _ => {}
@@ -407,7 +417,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![param1, param2],
             return_type: None,
-            body: Block::new(Vec::new(), sp),
+            body: Some(Block::new(Vec::new(), sp)),
             span: sp,
         };
 
@@ -425,7 +435,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(vec![Stmt::new(StmtKind::Expr(call_expr), sp)], sp),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Expr(call_expr), sp)], sp)),
             span: sp,
         };
 
@@ -436,7 +446,7 @@ mod tests {
         expand_default_args(&mut module, &[]);
 
         if let ItemKind::Fun(ref main_fn) = module.items[1].kind {
-            if let StmtKind::Expr(ref expr) = main_fn.body.stmts[0].kind {
+            if let StmtKind::Expr(ref expr) = main_fn.body.as_ref().unwrap().stmts[0].kind {
                 if let ExprKind::Call(_, ref args) = expr.kind {
                     assert_eq!(args.len(), 2);
                     assert_eq!(args[1], def_val);
@@ -479,7 +489,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![param_prefix, param_var],
             return_type: None,
-            body: Block::new(Vec::new(), sp),
+            body: Some(Block::new(Vec::new(), sp)),
             span: sp,
         };
 
@@ -509,13 +519,13 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![
                     Stmt::new(StmtKind::Expr(call_expr), sp),
                     Stmt::new(StmtKind::Expr(call_empty), sp),
                 ],
                 sp,
-            ),
+            )),
             span: sp,
         };
 
@@ -526,7 +536,7 @@ mod tests {
         expand_default_args(&mut module, &[]);
 
         if let ItemKind::Fun(ref main_fn) = module.items[1].kind {
-            if let StmtKind::Expr(ref expr) = main_fn.body.stmts[0].kind {
+            if let StmtKind::Expr(ref expr) = main_fn.body.as_ref().unwrap().stmts[0].kind {
                 if let ExprKind::Call(_, ref args) = expr.kind {
                     assert_eq!(args.len(), 2);
                     assert!(matches!(args[1].kind, ExprKind::ArrayInit(ref elems) if elems.len() == 2));
@@ -534,7 +544,7 @@ mod tests {
                     panic!("expected Call");
                 }
             }
-            if let StmtKind::Expr(ref expr) = main_fn.body.stmts[1].kind {
+            if let StmtKind::Expr(ref expr) = main_fn.body.as_ref().unwrap().stmts[1].kind {
                 if let ExprKind::Call(_, ref args) = expr.kind {
                     assert_eq!(args.len(), 2);
                     assert!(matches!(args[1].kind, ExprKind::ArrayInit(ref elems) if elems.is_empty()));
@@ -582,7 +592,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![param_a, param_b, param_c],
             return_type: None,
-            body: Block::new(Vec::new(), sp),
+            body: Some(Block::new(Vec::new(), sp)),
             span: sp,
         };
 
@@ -615,7 +625,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(vec![Stmt::new(StmtKind::Expr(call_named), sp)], sp),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Expr(call_named), sp)], sp)),
             span: sp,
         };
 
@@ -626,7 +636,7 @@ mod tests {
         expand_default_args(&mut module, &[]);
 
         let ItemKind::Fun(ref main_fn) = module.items[1].kind else { panic!("expected Fun"); };
-        let StmtKind::Expr(ref expr) = main_fn.body.stmts[0].kind else { panic!("expected StmtExpr"); };
+        let StmtKind::Expr(ref expr) = main_fn.body.as_ref().unwrap().stmts[0].kind else { panic!("expected StmtExpr"); };
         let ExprKind::Call(_, ref args) = expr.kind else { panic!("expected Call"); };
         assert_eq!(args.len(), 3);
         assert_eq!(args[0].kind, ExprKind::Literal(LiteralValue::Int(11)));

@@ -79,6 +79,8 @@ pub enum TokenKind<'a> {
     Class,
     Struct,
     Cstruct,
+    Cunion,
+    Cvar,
     Interface,
     Enum,
     Type,
@@ -86,6 +88,7 @@ pub enum TokenKind<'a> {
     Locked,
     Operator,
     Externc,
+    Cload,
     Get,
 
     // control flow kw

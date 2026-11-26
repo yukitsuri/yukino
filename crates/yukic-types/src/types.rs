@@ -128,6 +128,7 @@ pub enum Type {
     Class(String),
     Interface(String),
     Array(Box<Type>),
+    FixedArray(Box<Type>, usize),
     Map(Box<Type>, Box<Type>),
     Enum(String),
     Union(BTreeSet<Type>),
@@ -384,6 +385,9 @@ impl Type {
             (Self::Class(c), Self::Interface(i)) => is_interface_impl(c, i),
             (Self::Class(c), Self::Class(base)) => is_interface_impl(c, base),
             (Self::Array(a), Self::Array(b)) => a.is_subtype_of(b, is_interface_impl),
+            (Self::FixedArray(a, n1), Self::FixedArray(b, n2)) if n1 == n2 => {
+                a.is_subtype_of(b, is_interface_impl)
+            }
             (Self::Ptr(_), Self::Ptr(b)) if **b == Self::Void => true,
             (Self::Fn { .. }, Self::Ptr(b)) if **b == Self::Void => true,
             (Self::Null, Self::Ptr(_)) => true,
@@ -409,6 +413,9 @@ impl Type {
             }
             Self::Ptr(inner) => Self::Ptr(Box::new(inner.substitute(mapping))),
             Self::Array(inner) => Self::Array(Box::new(inner.substitute(mapping))),
+            Self::FixedArray(inner, len) => {
+                Self::FixedArray(Box::new(inner.substitute(mapping)), *len)
+            }
             Self::Ref { inner, mutable } => Self::Ref {
                 inner: Box::new(inner.substitute(mapping)),
                 mutable: *mutable,
@@ -468,6 +475,7 @@ impl Type {
                 name.clone()
             }
             Self::Array(elem) => format!("{}[]", elem.display_name()),
+            Self::FixedArray(elem, len) => format!("{}[{}]", elem.display_name(), len),
             Self::Map(k, v) => format!("map<{}, {}>", k.display_name(), v.display_name()),
             Self::Union(members) => {
                 if members.len() == 2 && members.contains(&Self::Null) {

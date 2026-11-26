@@ -21,6 +21,11 @@ Yukino organizes code into a hierarchical module system, where filesystem paths 
    4.2 [Re-exporting symbols: public load](#42-re-exporting-symbols-public-load)  
    4.3 [Library re-export at manifest level: reexport and splitnames](#43-library-re-export-at-manifest-level-reexport-and-splitnames)
 5. [Conditional compilation and module attributes](#5-conditional-compilation-and-module-attributes)
+6. [Compiled Library Interfaces (.ykni)](#6-compiled-library-interfaces-ykni)  
+   6.1 [Purpose and emission of .ykni files](#61-purpose-and-emission-of-ykni-files)  
+   6.2 [Structure and syntax of a .ykni file](#62-structure-and-syntax-of-a-ykni-file)  
+   6.3 [Consuming prebuilt libraries in a project](#63-consuming-prebuilt-libraries-in-a-project)  
+   6.4 [Shared libraries, __yukino_metadata_v1, and ptr<fun(...)>](#64-shared-libraries-__yukino_metadata_v1-and-ptrfun)
 
 ---
 
@@ -383,6 +388,149 @@ public fun abort_system() {
     })
 }
 ```
+
+---
+
+## 6. Compiled Library Interfaces (.ykni)
+
+When distributing libraries in compiled binary form (static `.a` archives or shared `.so` / `.dll` / `.dylib` libraries), downstream consumers do not need the original `.ykn` source files as long as a `.ykni` (Yukino Interface) service file accompanies the binary. Unlike C headers (`.h`), which only capture the C ABI, `.ykni` files preserve the full Yukino module semantics: namespaces, default parameter values, ADT enums, structs, class field layouts, interfaces, generic functions, and exact mangled symbol bindings.
+
+### 6.1 Purpose and emission of .ykni files
+
+The compiler `yukic` and build manager `yukino` emit `<name>.ykni` automatically next to compiled library artifacts:
+- with `--output-type static` (`output = "static"` in `lib.toml`), emitted next to `lib<name>.a`;
+- with `--output-type shared` (`output = "shared"` in `lib.toml`), emitted next to `lib<name>.so` / `<name>.dll` / `lib<name>.dylib`.
+
+An explicit path can also be specified with `--emit-interface <path>`. Whenever a library's public API changes, its `.ykni` file is regenerated accordingly.
+
+### 6.2 Structure and syntax of a .ykni file
+
+A `.ykni` file uses a declarative subset of Yukino syntax with file-level metadata attributes, `namespace` blocks, and bodyless public declarations:
+
+```yukino
+#![ykni::version(1)]
+#![ykni::abi(yukic = "0.1.1", target = "x86_64-unknown-linux-gnu", abi_hash = "9c5f0910cf6c2d41")]
+#![ykni::package(name = "mathlib", version = "0.2.0", kind = "static")]
+#![ykni::link(systems = ["m"], archives = [])]
+
+namespace mathlib {
+    public load .geometry: Vec2, dot
+
+    public enum Precision {
+        Fast,
+        Exact = 1
+    }
+
+    #[ykni::symbol("__yukifun_scale_int32_int32__int32")]
+    public fun scale(value: int32, factor: int32 = 2) -> int32
+
+    public class Counter {
+        public value: int32
+        secret_state: int64
+
+        #[ykni::symbol("_Y_Counter_init_int32")]
+        public fun init(start: int32)
+
+        #[ykni::symbol("_Y_Counter_inc__int32")]
+        public fun inc() -> int32
+    }
+}
+
+namespace mathlib.geometry {
+    public struct Vec2 {
+        x: float64
+        y: float64
+    }
+
+    #[ykni::symbol("__yukifun_dot_Vec2_Vec2__float64")]
+    public fun dot(ref a: Vec2, ref b: Vec2) -> float64
+}
+```
+
+Key properties of `.ykni` interfaces:
+- **ABI validation (`#![ykni::abi(...)]` and `#![ykni::link(...)]`):** When loading a prebuilt `.ykni`, the compiler verifies that `target` matches the current compilation target and automatically propagates required system libraries (`systems`) and companion archives (`archives`).
+- **Namespaces (`namespace <path> { ... }`):** Mirror the module hierarchy of the original library (`load mathlib`, `load mathlib.geometry`). `public load` re-exports are preserved so consumer imports behave identically to source-based dependencies.
+- **Exact symbol binding (`#[ykni::symbol("...")]`):** Records the exact compiled symbol name inside the `.a`/`.so` binary so overloaded and mangled Yukino symbols link deterministically.
+- **Type layout preservation:** Classes retain even non-`public` instance fields so consumer code computes the exact object size and field offsets while keeping private fields inaccessible at type-check time.
+- **Generic and inline functions:** When a function keeps an inline body (`#[ykni::inline_body]`), consumer code compiles it with internal linkage to prevent duplicate symbol errors.
+
+### 6.3 Consuming prebuilt libraries in a project
+
+Prebuilt dependencies are declared in `[libs.runtime]` (or `[libs.build]` when needed only inside `build.ykn`) in `yuki.toml` or `lib.toml` without the library's `.ykn` sources:
+
+```toml
+[libs.runtime]
+# Prebuilt static archive (package name: mathlib)
+mathlib = { interface = "vendor/mathlib.ykni", archive = "vendor/libmathlib.a" }
+
+# Prebuilt shared library (package name: pluglib)
+pluglib = { interface = "vendor/pluglib.ykni", shared = "vendor/libpluglib.so" }
+```
+
+#### Visibility scope and how to import them
+
+1. **Availability:** Any dependency under `[libs.runtime]` is available across all source modules (`src/`) and tests of the project. Symbols are not added to scope globally — you import them explicitly with `load` just like any source-based library. The key name in `yuki.toml` (`mathlib`, `pluglib`) becomes the package name used in `load`.
+2. **Importing in `.ykn` files:** Because `.ykni` preserves module namespaces and `public load` re-exports, all standard `load` forms work identically:
+
+```yukino
+// src/main.ykn
+load std.io: println
+
+// Import the entire package (all public items from namespace mathlib)
+load mathlib
+
+// Selective import from a submodule with aliasing
+load mathlib.geometry: Vec2, dot as vec_dot
+
+// Namespace alias import
+load pluglib as p
+
+fun main() {
+    set c = init Counter(10)
+    set n = c.inc()
+    set v = Vec2 { x: 3.0, y: 4.0 }
+    println(cast(scale(n), "string"))
+    println(cast(vec_dot(ref v, ref v), "string"))
+    p::plug_init()
+}
+```
+
+3. **Linking and runtime behavior:**
+   - **Static (`archive`):** `libmathlib.a` is linked statically into your executable or static library; no extra `.a`/`.so` files need to be shipped alongside the binary.
+   - **Shared (`shared`):** Your binary links directly against `libpluglib.so` (`.dll`/`.dylib`) at build time so `load pluglib` calls native exports directly. When building an application, `yukino` copies the shared library next to the executable and adds `-rpath $ORIGIN` so running the binary requires no manual `LD_LIBRARY_PATH`.
+   - If you instead want to load plugins dynamically by path at runtime (via `std.sharedc`), you do not list them in `[libs.runtime]` — open them with `open(...)` and resolve exports through `yukino_symbol*`.
+
+#### Dependency fields and direct `yukic` flags
+
+- `interface` (alias `prebuilt`): path to a `.ykni` file or a directory containing `.ykni` interfaces.
+- `archive`: path to the `.a` archive (defaults to `lib<name>.a` next to the `.ykni` file when omitted).
+- `shared`: path to the `.so` / `.dll` / `.dylib` library.
+- If only `path = "vendor/pkg"` is set and the directory contains `<name>.ykni` without a manifest (`lib.toml`/`yuki.toml`), it is treated as prebuilt automatically.
+
+When invoking `yukic` directly without `yukino`, pass `--prebuilt` (or `--include` for a directory containing `.ykni` files) together with `--link-archive`:
+
+```sh
+yukic --entry src/main.ykn --prebuilt mathlib=vendor/mathlib.ykni --link-archive vendor/libmathlib.a -o app
+```
+
+The `yukino-lsp` language server also indexes `.ykni` dependencies from manifests, providing `load` and symbol completion, signature help, hover tooltips, type checking, and go-to-definition directly into `.ykni` files.
+
+### 6.4 Shared libraries, __yukino_metadata_v1, and ptr<fun(...)>
+
+When compiling a shared library (`--output-type shared`), in addition to writing `<name>.ykni`, the compiler embeds a C ABI metadata symbol inside the shared object:
+
+```text
+__yukino_metadata_v1(out_len: ptr<int64>) -> ptr<uint8>
+```
+
+It returns a JSON manifest of all exported package symbols (logical name, mangled symbol, canonical signature, calling convention `yukino_fastcall` or `cdecl`, and symbol kind such as function, method, constructor, accessor, `cfun`, or `cvar`). This enables runtime inspection even without an external `.ykni` file on disk.
+
+To call an exported Yukino function pointer resolved dynamically (for example via `std.sharedc`), cast the raw address to a raw function pointer type `ptr<fun(T1, T2) -> R>`:
+- unlike closure types `fun(T1, T2) -> R` (which are fat pointers carrying a closure environment pointer), `ptr<fun(...) -> ...>` represents a direct code pointer invoked with Yukino `fastcall` without an `env_ptr`;
+- when the return type `R` or `ref` parameters are regional (`string`, slices `T[]`, classes), the caller automatically passes the hidden destination region pointer `_dest_region`;
+- C ABI functions (`cfun`) continue to be cast to `cfun(...) -> ...`.
+
+For runtime loading and invocation examples, see [Module std.sharedc](stdlib/19-sharedc.md).
 
 ---
 

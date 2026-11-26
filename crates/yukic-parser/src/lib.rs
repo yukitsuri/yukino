@@ -32,6 +32,14 @@ impl<'a> Parser<'a> {
         (module, diags)
     }
 
+    pub fn parse_interface_module(&mut self) -> (Module, Vec<Diagnostic>) {
+        self.stream.is_interface_mode = true;
+        let module = self.stream.parse_module();
+        self.stream.is_interface_mode = false;
+        let diags = std::mem::take(&mut self.stream.diagnostics);
+        (module, diags)
+    }
+
     pub fn parse_expr(&mut self) -> (Expr, Vec<Diagnostic>) {
         let expr = self.stream.parse_expr();
         let diags = std::mem::take(&mut self.stream.diagnostics);

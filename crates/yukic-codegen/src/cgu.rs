@@ -25,29 +25,51 @@ impl CodegenUnit {
 
 pub fn estimate_item_weight(item: &Item) -> usize {
     match &item.kind {
-        ItemKind::Fun(f) => 1 + f.body.stmts.len(),
-        ItemKind::Cfun(cf) => 1 + cf.body.as_ref().map_or(0, |b| b.stmts.len()),
+        ItemKind::Fun(f) => f.body.as_ref().map_or(0, |b| 1 + b.stmts.len()),
+        ItemKind::Cfun(cf) => cf.body.as_ref().map_or(0, |b| 1 + b.stmts.len()),
         ItemKind::Class(c) => {
-            let methods_weight: usize = c.methods.iter().map(|m| 1 + m.body.stmts.len()).sum();
-            let accessors_weight: usize = c.accessors.iter().map(|a| 1 + a.body.stmts.len()).sum();
-            1 + methods_weight + accessors_weight
+            let methods_weight: usize = c
+                .methods
+                .iter()
+                .map(|m| m.body.as_ref().map_or(0, |b| 1 + b.stmts.len()))
+                .sum();
+            let accessors_weight: usize = c
+                .accessors
+                .iter()
+                .map(|a| a.body.as_ref().map_or(0, |b| 1 + b.stmts.len()))
+                .sum();
+            if methods_weight + accessors_weight == 0 {
+                0
+            } else {
+                1 + methods_weight + accessors_weight
+            }
         }
         ItemKind::Struct(s) => {
-            let methods_weight: usize = s.methods.iter().map(|m| 1 + m.body.stmts.len()).sum();
+            let methods_weight: usize = s
+                .methods
+                .iter()
+                .map(|m| m.body.as_ref().map_or(0, |b| 1 + b.stmts.len()))
+                .sum();
             let statics_weight: usize = s
                 .static_methods
                 .iter()
-                .map(|m| 1 + m.body.stmts.len())
+                .map(|m| m.body.as_ref().map_or(0, |b| 1 + b.stmts.len()))
                 .sum();
-            1 + methods_weight + statics_weight
+            if methods_weight + statics_weight == 0 {
+                0
+            } else {
+                1 + methods_weight + statics_weight
+            }
         }
-        ItemKind::Static(_) | ItemKind::Enum(_) | ItemKind::Cstruct(_) => 1,
+        ItemKind::Static(_) | ItemKind::Enum(_) | ItemKind::Cstruct(_) | ItemKind::Cvar(_) => 1,
         ItemKind::Externc(_)
         | ItemKind::Import(_)
+        | ItemKind::Cload(_)
         | ItemKind::Alias(_)
         | ItemKind::TypeAlias(_)
         | ItemKind::Interface(_)
         | ItemKind::Macro(_)
+        | ItemKind::Namespace(_)
         | ItemKind::Error => 0,
     }
 }
@@ -355,6 +377,31 @@ pub fn compile_units_parallel_advanced(
     fast_math: bool,
     imported_overrides: &HashMap<String, String>,
 ) -> Result<Vec<CompiledCgu>, String> {
+    compile_units_parallel_with_options(
+        ast,
+        foreign_modules,
+        target,
+        units,
+        panic_strategy,
+        function_sections,
+        fast_math,
+        false,
+        imported_overrides,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compile_units_parallel_with_options(
+    ast: &AstModule,
+    foreign_modules: &[AstModule],
+    target: TargetTriple,
+    units: Vec<CodegenUnit>,
+    panic_strategy: &str,
+    function_sections: bool,
+    fast_math: bool,
+    inline_statics: bool,
+    imported_overrides: &HashMap<String, String>,
+) -> Result<Vec<CompiledCgu>, String> {
     std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(units.len());
         for unit in units {
@@ -364,7 +411,8 @@ pub fn compile_units_parallel_advanced(
                     crate::generator::CodeGenerator::new(&context, &unit.name, target)
                         .with_panic_strategy(panic_strategy)
                         .with_function_sections(function_sections)
-                        .with_fast_math(fast_math);
+                        .with_fast_math(fast_math)
+                        .with_inline_statics(inline_statics);
                 codegen.register_ast_types(ast);
                 codegen.register_vtable_layouts(ast);
                 for fmod in foreign_modules {
@@ -378,6 +426,7 @@ pub fn compile_units_parallel_advanced(
                             match &item.kind {
                                 yukic_ast::ItemKind::Fun(fun) => codegen.declare_foreign_fun(fun)?,
                                 yukic_ast::ItemKind::Cfun(cfun) => codegen.declare_foreign_cfun(cfun, true)?,
+                                yukic_ast::ItemKind::Cvar(cvar) => codegen.compile_cvar_decl(cvar)?,
                                 yukic_ast::ItemKind::Class(decl) => codegen.declare_foreign_class(decl)?,
                                 yukic_ast::ItemKind::Externc(block) => codegen.compile_externc_block(block, true)?,
                                 yukic_ast::ItemKind::Static(decl) => codegen.declare_foreign_static(decl),

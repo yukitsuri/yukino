@@ -115,6 +115,7 @@ pub fn mangle_type_str(ty: &yukic_types::Type) -> String {
         | Type::Enum(name)
         | Type::Cstruct(name) => name.replace("::", "_").replace('.', "_"),
         Type::Array(inner) => format!("arr_{}", mangle_type_str(inner)),
+        Type::FixedArray(inner, len) => format!("farr{}_{}", len, mangle_type_str(inner)),
         Type::Map(k, v) => format!("map_{}_{}", mangle_type_str(k), mangle_type_str(v)),
         Type::Union(members) => {
             if members.len() == 2 && members.contains(&Type::Null) {

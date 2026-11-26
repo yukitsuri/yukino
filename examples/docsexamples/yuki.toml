@@ -4,7 +4,7 @@ name = "docsexamples"
 namedbg = "docsexamples_debug"
 version = "0.1.0"
 entry = "src/main.ykn"
-yukino = ["0.1.0", "+"] # [min, max]
+yukino = ["0.1.1", "+"] # [min, max]
 
 [test]
 threads = "auto"

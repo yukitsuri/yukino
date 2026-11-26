@@ -258,7 +258,11 @@ impl<'a> AstExpander<'a> {
 
     fn expand_item(&mut self, item: &mut Item) {
         match &mut item.kind {
-            ItemKind::Fun(decl) => self.expand_block(&mut decl.body),
+            ItemKind::Fun(decl) => {
+                if let Some(ref mut body) = decl.body {
+                    self.expand_block(body);
+                }
+            }
             ItemKind::Cfun(decl) => {
                 if let Some(body) = &mut decl.body {
                     self.expand_block(body);
@@ -266,7 +270,9 @@ impl<'a> AstExpander<'a> {
             }
             ItemKind::Class(decl) => {
                 for method in &mut decl.methods {
-                    self.expand_block(&mut method.body);
+                    if let Some(ref mut body) = method.body {
+                        self.expand_block(body);
+                    }
                 }
                 for field in &mut decl.fields {
                     if let Some(init) = &mut field.default_val {
@@ -276,15 +282,24 @@ impl<'a> AstExpander<'a> {
             }
             ItemKind::Struct(decl) => {
                 for method in &mut decl.methods {
-                    self.expand_block(&mut method.body);
+                    if let Some(ref mut body) = method.body {
+                        self.expand_block(body);
+                    }
                 }
                 for s_method in &mut decl.static_methods {
-                    self.expand_block(&mut s_method.body);
+                    if let Some(ref mut body) = s_method.body {
+                        self.expand_block(body);
+                    }
                 }
                 for field in &mut decl.fields {
                     if let Some(init) = &mut field.default_val {
                         self.expand_expr(init, 0);
                     }
+                }
+            }
+            ItemKind::Namespace(ns) => {
+                for sub in &mut ns.items {
+                    self.expand_item(sub);
                 }
             }
             ItemKind::Static(decl) => self.expand_expr(&mut decl.init, 0),
@@ -1021,7 +1036,7 @@ mod tests {
                 generics: Vec::new(),
                 params: Vec::new(),
                 return_type: None,
-                body: fun_body,
+                body: Some(fun_body),
                 span: dummy_span(),
             }),
             dummy_span(),
@@ -1032,7 +1047,7 @@ mod tests {
 
         assert!(expander.diagnostics.is_empty());
         if let ItemKind::Fun(f) = &module.items[1].kind
-            && let StmtKind::Set { init, .. } = &f.body.stmts[0].kind
+            && let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[0].kind
         {
             if let ExprKind::Binary(BinaryOp::Add, lhs, rhs) = &init.kind {
                 assert_eq!(lhs.kind, ExprKind::Literal(LiteralValue::Int(41)));

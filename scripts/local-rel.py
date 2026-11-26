@@ -37,7 +37,7 @@ def detectPlatform() -> str:
 def readWorkspaceVersion(projectDirectory: Path) -> str:
     cargoToml = projectDirectory / "Cargo.toml"
     if not cargoToml.is_file():
-        return "0.1.0"
+        return "0.1.1"
     with open(cargoToml, "r", encoding="utf-8") as fileHandle:
         inPackage = False
         for line in fileHandle:
@@ -51,7 +51,7 @@ def readWorkspaceVersion(projectDirectory: Path) -> str:
                 parts = stripped.split("=", 1)
                 if len(parts) == 2:
                     return parts[1].strip().strip('"').strip("'")
-    return "0.1.0"
+    return "0.1.1"
 
 def buildReleaseBinaries(projectDirectory: Path) -> None:
     environment = os.environ.copy()

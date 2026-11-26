@@ -27,10 +27,10 @@ fn dummy_method(name: &str) -> MethodDecl {
         this_param: ThisParam::Value,
         params: Vec::new(),
         return_type: None,
-        body: Block {
+        body: Some(Block {
             stmts: Vec::new(),
             span: Span::DUMMY,
-        },
+        }),
         is_operator: false,
         is_override: false,
         span: Span::DUMMY,
@@ -104,7 +104,7 @@ fn build_test_ast(dummy_span: Span) -> AstModule {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(Vec::new(), dummy_span),
+            body: Some(Block::new(Vec::new(), dummy_span)),
             span: dummy_span,
         }),
         dummy_span,

@@ -3,7 +3,7 @@ includes = ["core", "stdlib"]
 name = "tlibmath"
 version = "0.1.0"
 entry = "tlibmath/lib.ykn"
-yukino = ["0.1.0", "+"] # [min, max]
+yukino = ["0.1.1", "+"] # [min, max]
 output = "static"
 
 [test]

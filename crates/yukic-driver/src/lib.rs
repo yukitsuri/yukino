@@ -8,6 +8,7 @@ pub mod emitter;
 pub mod error;
 pub mod executable;
 pub mod header;
+pub mod interface;
 pub mod linker_common;
 pub mod lint;
 pub mod pipeline;
@@ -41,13 +42,19 @@ pub use executable::{build_executable_linker_args, link_executable};
 pub use header::{
     generate_c_header_from_ast, generate_c_header_from_llvm, resolve_header_path,
 };
+pub use interface::{
+    InterfaceModuleInput, ParsedInterfacePackage, SharedExportEntry, SharedExportManifest,
+    YkniPackageMetadata, generate_ykni_and_shared_metadata, parse_ykni_file,
+    resolve_interface_path,
+};
 pub use linker_common::{
     collect_system_search_dirs, find_default_runtime_archive, resolve_dynamic_linker,
     resolve_linker_tool,
 };
 pub use pipeline::run_compiler_driver;
 pub use shared::{build_shared_linker_args, link_shared_library};
-use yukic_opt::OptLevel;
+use inkwell::targets::{CodeModel, RelocMode};
+use yukic_opt::{LtoKind, OptLevel};
 use yukic_target::TargetTriple;
 use yukic_target::spec::OperatingSystem;
 
@@ -206,18 +213,26 @@ pub struct DriverConfig {
     pub codegen_units: usize,
     pub threads: usize,
     pub emit: EmitKind,
+    pub extra_emits: Vec<EmitKind>,
     pub opt_level: OptLevel,
     pub verbose: bool,
     pub no_warns: bool,
     pub extra_info: bool,
     pub test_mode: bool,
     pub emit_header: Option<PathBuf>,
+    pub emit_interface: Option<PathBuf>,
+    pub prebuilt_interfaces: Vec<(Option<String>, PathBuf)>,
     pub output_type: OutputType,
     pub strip_unused: bool,
     pub lto: bool,
+    pub lto_kind: Option<LtoKind>,
     pub cpu: Option<String>,
     pub target_features: Option<String>,
+    pub reloc_model: Option<RelocMode>,
+    pub code_model: Option<CodeModel>,
     pub fast_math: bool,
+    pub inline_statics: bool,
+    pub debug_assertions: bool,
     pub strip: bool,
     pub include_dirs: Vec<PathBuf>,
     pub runtime: Option<PathBuf>,
@@ -225,6 +240,7 @@ pub struct DriverConfig {
     pub link_archives: Vec<PathBuf>,
     pub link_statics: Vec<PathBuf>,
     pub link_systems: Vec<String>,
+    pub link_search_paths: Vec<PathBuf>,
     pub linker: Option<String>,
     pub inspect_attributes: Option<PathBuf>,
     pub debug: bool,
@@ -253,18 +269,26 @@ impl DriverConfig {
             codegen_units: 1,
             threads: 1,
             emit: EmitKind::Bin,
+            extra_emits: Vec::new(),
             opt_level: OptLevel::O0,
             verbose: false,
             no_warns: false,
             extra_info: false,
             test_mode: false,
             emit_header: None,
+            emit_interface: None,
+            prebuilt_interfaces: Vec::new(),
             output_type: OutputType::App,
             strip_unused: false,
             lto: false,
+            lto_kind: None,
             cpu: None,
             target_features: None,
+            reloc_model: None,
+            code_model: None,
             fast_math: false,
+            inline_statics: false,
+            debug_assertions: true,
             strip: false,
             include_dirs: Vec::new(),
             runtime: None,
@@ -272,6 +296,7 @@ impl DriverConfig {
             link_archives: Vec::new(),
             link_statics: Vec::new(),
             link_systems: Vec::new(),
+            link_search_paths: Vec::new(),
             linker: None,
             inspect_attributes: None,
             debug: false,
@@ -302,11 +327,26 @@ impl DriverConfig {
             .macro_timeout
             .map(Duration::from_secs)
             .or_else(resolve_global_macro_timeout);
+        let inline_statics = args.resolve_inline_statics();
+        let debug_assertions = args.resolve_debug_assertions();
+        let lto_kind = args.lto_mode;
+        let lto = args.lto || lto_kind.is_some_and(LtoKind::is_enabled);
+        let reloc_model = args.reloc_model.map(|r| r.to_inkwell());
+        let code_model = args.code_model.map(|c| c.to_inkwell());
         let runtime = args.runtime;
         let no_runtime = args.no_runtime;
         let mut link_archives = args.link_archive;
         if let Some(runtime_path) = &runtime {
             link_archives.insert(0, runtime_path.clone());
+        }
+
+        let mut prebuilt_interfaces = Vec::new();
+        for entry in args.prebuilt {
+            if let Some((name, path)) = entry.split_once('=') {
+                prebuilt_interfaces.push((Some(name.trim().to_string()), PathBuf::from(path.trim())));
+            } else {
+                prebuilt_interfaces.push((None, PathBuf::from(entry.trim())));
+            }
         }
 
         Some(Self {
@@ -317,18 +357,26 @@ impl DriverConfig {
             codegen_units,
             threads,
             emit: args.emit,
+            extra_emits: args.extra_emit,
             opt_level: args.opt_level,
             verbose: args.verbose,
             no_warns: args.no_warns,
             extra_info: args.extra_info,
             test_mode: args.test,
             emit_header: args.emit_header,
+            emit_interface: args.emit_interface,
+            prebuilt_interfaces,
             output_type: args.output_type,
             strip_unused: args.strip_unused,
-            lto: args.lto,
+            lto,
+            lto_kind,
             cpu: args.cpu,
             target_features: args.target_features,
+            reloc_model,
+            code_model,
             fast_math: args.fast_math,
+            inline_statics,
+            debug_assertions,
             strip: args.strip,
             include_dirs: args.include,
             runtime,
@@ -336,6 +384,7 @@ impl DriverConfig {
             link_archives,
             link_statics: args.link_static,
             link_systems: args.link_system,
+            link_search_paths: args.link_search,
             linker: args.linker,
             inspect_attributes: args.inspect_attributes,
             debug: args.debug,
@@ -353,6 +402,26 @@ impl DriverConfig {
             macro_timeout,
             splitnames,
         })
+    }
+
+    pub fn effective_lto_kind(&self) -> LtoKind {
+        if let Some(kind) = self.lto_kind {
+            kind
+        } else if self.lto {
+            LtoKind::Thin
+        } else {
+            LtoKind::None
+        }
+    }
+
+    pub fn requested_emits(&self) -> Vec<EmitKind> {
+        let mut list = vec![self.emit];
+        for e in &self.extra_emits {
+            if !list.contains(e) {
+                list.push(*e);
+            }
+        }
+        list
     }
 
     #[must_use]

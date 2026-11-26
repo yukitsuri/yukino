@@ -16,7 +16,7 @@ use yukic_diagnostics::code::ErrorCode;
 use yukic_span::SourceMap;
 
 /// cfg for comptime builtin macro eval
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BuiltinMacroConfig {
     pub base_dir: Option<PathBuf>,
     pub manifest_path: Option<PathBuf>,
@@ -35,8 +35,36 @@ pub struct BuiltinMacroConfig {
     pub yukic_version: String,
     pub target_triple: String,
     pub is_test: bool,
+    pub debug_assertions: bool,
     pub macro_runners: std::collections::HashMap<String, PathBuf>,
     pub macro_timeout: Option<std::time::Duration>,
+}
+
+impl Default for BuiltinMacroConfig {
+    fn default() -> Self {
+        Self {
+            base_dir: None,
+            manifest_path: None,
+            manifest_value: None,
+            workspace_manifest_path: None,
+            workspace_manifest_value: None,
+            host_manifest_path: None,
+            host_manifest_value: None,
+            host_workspace_path: None,
+            host_workspace_value: None,
+            is_host: false,
+            project_env: IndexMap::new(),
+            connected_libs: Vec::new(),
+            features: Vec::new(),
+            profile_name: String::new(),
+            yukic_version: String::new(),
+            target_triple: String::new(),
+            is_test: false,
+            debug_assertions: true,
+            macro_runners: std::collections::HashMap::new(),
+            macro_timeout: None,
+        }
+    }
 }
 
 impl BuiltinMacroConfig {
@@ -751,7 +779,13 @@ fn eval_cfg_macro(
                 call.span,
             ));
         };
-        match eval_cfg_expr_in_macro(expr, &target, &config.features, config.is_test) {
+        match eval_cfg_expr_in_macro(
+            expr,
+            &target,
+            &config.features,
+            config.is_test,
+            config.debug_assertions,
+        ) {
             Ok(true) => {}
             Ok(false) => {
                 result = false;
@@ -778,6 +812,7 @@ fn eval_cfg_expr_in_macro(
     target: &yukic_target::TargetTriple,
     features: &[String],
     is_test: bool,
+    debug_assertions: bool,
 ) -> Result<bool, String> {
     match &expr.kind {
         ExprKind::NamedArg(name, value) => {
@@ -798,7 +833,7 @@ fn eval_cfg_expr_in_macro(
             match callee_name {
                 "all" => {
                     for arg in args {
-                        if !eval_cfg_expr_in_macro(arg, target, features, is_test)? {
+                        if !eval_cfg_expr_in_macro(arg, target, features, is_test, debug_assertions)? {
                             return Ok(false);
                         }
                     }
@@ -809,7 +844,7 @@ fn eval_cfg_expr_in_macro(
                         return Ok(false);
                     }
                     for arg in args {
-                        if eval_cfg_expr_in_macro(arg, target, features, is_test)? {
+                        if eval_cfg_expr_in_macro(arg, target, features, is_test, debug_assertions)? {
                             return Ok(true);
                         }
                     }
@@ -819,7 +854,13 @@ fn eval_cfg_expr_in_macro(
                     if args.len() != 1 {
                         return Err("cfg not(...) expects exactly 1 argument".to_string());
                     }
-                    Ok(!eval_cfg_expr_in_macro(&args[0], target, features, is_test)?)
+                    Ok(!eval_cfg_expr_in_macro(
+                        &args[0],
+                        target,
+                        features,
+                        is_test,
+                        debug_assertions,
+                    )?)
                 }
                 "feature" | "target_os" | "target_arch" | "target_env" | "target" => {
                     if args.len() != 1 {
@@ -833,7 +874,7 @@ fn eval_cfg_expr_in_macro(
         ExprKind::Ident(id) => {
             match id.as_str() {
                 "test" => Ok(is_test),
-                "debug_assertions" => Ok(true),
+                "debug_assertions" => Ok(debug_assertions),
                 other => Ok(features.iter().any(|f| f == other)),
             }
         }
@@ -1226,7 +1267,7 @@ host_lib = "1.0"
     fn test_get_profileconfig_and_version_and_target_macros() {
         let config = BuiltinMacroConfig {
             profile_name: "release".into(),
-            yukic_version: "0.1.0".into(),
+            yukic_version: "0.1.1".into(),
             target_triple: "x86_64-unknown-linux-gnu".into(),
             ..Default::default()
         };
@@ -1237,7 +1278,7 @@ host_lib = "1.0"
 
         let call_ver = make_call("get_yukic_version", vec![]);
         let res_ver = eval_builtin_macro(&call_ver, None, &config).unwrap();
-        assert_eq!(res_ver.kind, ExprKind::Literal(LiteralValue::String("0.1.0".into())));
+        assert_eq!(res_ver.kind, ExprKind::Literal(LiteralValue::String("0.1.1".into())));
 
         let call_tgt = make_call("get_target", vec![]);
         let res_tgt = eval_builtin_macro(&call_tgt, None, &config).unwrap();

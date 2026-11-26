@@ -22,12 +22,13 @@ pub use expr::{
 pub use ident::Ident;
 pub use item::{
     AccessorKind, AliasDecl, AliasKind, CParam, CfunDecl, ClassDecl,
-    ClassField, CstructDecl, EnumDecl, EnumVariant, ExterncBlock, ExterncItem, FieldDef, FunDecl,
+    ClassField, CloadDecl, CstructDecl, CvarDecl, EnumDecl, EnumVariant, ExterncBlock, ExterncItem,
+    FieldDef, FunDecl,
     ImportDecl, ImportPath, ImportPathSegment, ImportPattern, ImportSymbolItem,
     ImportSymbolsClause, InterfaceDecl, InterfaceMethodDef, Item,
     ItemId, ItemKind, MacroBody, MacroDefDecl, MacroParam, MacroParamKind, MethodDecl, Module,
-    Param, PathPrefix, PropertyAccessor, StaticDecl, StaticMethodDecl, StructDecl, ThisParam,
-    TypeAliasDecl, Visibility,
+    NamespaceDecl, Param, PathPrefix, PropertyAccessor, StaticDecl, StaticMethodDecl, StructDecl,
+    ThisParam, TypeAliasDecl, Visibility,
 };
 pub use stmt::{
     ArrayDestructElement, AssignOp, BindingTarget, Block, LValue, MapDestructField, Stmt, StmtKind,

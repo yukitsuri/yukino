@@ -305,7 +305,7 @@ mod tests {
 
         let toml_str = std::fs::read_to_string(proj_dir.join("yuki.toml")).expect("read toml");
         assert!(toml_str.contains("name = \"sample_app\""));
-        assert!(toml_str.contains("yukino = [\"0.1.0\", \"+\"]"));
+        assert!(toml_str.contains(&format!("yukino = [\"{}\", \"+\"]", crate::VERSION)));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

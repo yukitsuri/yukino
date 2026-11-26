@@ -29,7 +29,7 @@ fun test_fn() {
     assert!(result.is_ok());
 
     if let ItemKind::Fun(f) = &module.items[1].kind {
-        if let StmtKind::Set { init, .. } = &f.body.stmts[0].kind {
+        if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
             if let ExprKind::Binary(BinaryOp::Mul, lhs, rhs) = &init.kind {
                 assert_eq!(lhs.kind, ExprKind::Literal(LiteralValue::Int(5)));
                 assert_eq!(rhs.kind, ExprKind::Literal(LiteralValue::Int(5)));
@@ -57,7 +57,7 @@ fun run() {
     assert!(result.is_ok());
 
     if let ItemKind::Fun(f) = &module.items[0].kind {
-        if let StmtKind::Set { init, .. } = &f.body.stmts[0].kind {
+        if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
             if let ExprKind::Call(callee, args) = &init.kind {
                 if let ExprKind::Ident(id) = &callee.kind {
                     assert_eq!(id.name, "__typeof_intrinsic__");
@@ -94,14 +94,14 @@ fun run() {
     assert!(result.is_ok());
 
     if let ItemKind::Fun(f) = &module.items[1].kind {
-        assert_eq!(f.body.stmts.len(), 2);
-        if let StmtKind::Set { target, init, .. } = &f.body.stmts[0].kind {
+        assert_eq!(f.body.as_ref().unwrap().stmts.len(), 2);
+        if let StmtKind::Set { target, init, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
             if let BindingTarget::Ident(id) = target {
                 assert!(id.name.starts_with('x'));
             }
             assert_eq!(init.kind, ExprKind::Literal(LiteralValue::Int(10)));
         }
-        if let StmtKind::Set { target, init, .. } = &f.body.stmts[1].kind {
+        if let StmtKind::Set { target, init, .. } = &f.body.as_ref().unwrap().stmts[1].kind {
             if let BindingTarget::Ident(id) = target {
                 assert!(id.name.starts_with('y'));
             }
@@ -135,7 +135,7 @@ fun main() {
         if let StmtKind::Set {
             target: BindingTarget::Ident(id),
             ..
-        } = &f.body.stmts[0].kind
+        } = &f.body.as_ref().unwrap().stmts[0].kind
         {
             assert_eq!(id.name, "secret");
         }
@@ -143,13 +143,13 @@ fun main() {
         if let StmtKind::Set {
             target: BindingTarget::Ident(id),
             ..
-        } = &f.body.stmts[1].kind
+        } = &f.body.as_ref().unwrap().stmts[1].kind
         {
             assert_ne!(id.name, "secret");
             assert!(id.name.starts_with("secret_g"));
         }
         // statement 2: secret (passed from caller, remains "secret")
-        if let StmtKind::Expr(e) = &f.body.stmts[2].kind
+        if let StmtKind::Expr(e) = &f.body.as_ref().unwrap().stmts[2].kind
             && let ExprKind::Ident(id) = &e.kind
         {
             assert_eq!(id.name, "secret");
@@ -256,20 +256,20 @@ fn test_macro_builtin_file_line_col() {
         .expect("expected fun item");
 
     // file!()
-    if let StmtKind::Set { init, .. } = &f.body.stmts[0].kind {
+    if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
         assert_eq!(
             init.kind,
             ExprKind::Literal(LiteralValue::String("src/main.ykn".into()))
         );
     }
     // line!()
-    if let StmtKind::Set { init, .. } = &f.body.stmts[1].kind
+    if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[1].kind
         && let ExprKind::Literal(LiteralValue::Int(line)) = init.kind
     {
         assert_eq!(line, 4);
     }
     // col!()
-    if let StmtKind::Set { init, .. } = &f.body.stmts[2].kind
+    if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[2].kind
         && let ExprKind::Literal(LiteralValue::Int(col)) = init.kind
     {
         assert!(col > 1);
@@ -369,13 +369,13 @@ fun run() {
         })
         .expect("expected fun item");
 
-    if let StmtKind::Expr(expr) = &f.body.stmts[0].kind {
+    if let StmtKind::Expr(expr) = &f.body.as_ref().unwrap().stmts[0].kind {
         assert_eq!(expr.kind, ExprKind::Literal(LiteralValue::String("hello from compile_print\n".into())));
     } else {
         panic!("expected expr statement from compile_print!");
     }
 
-    if let StmtKind::Set { init, .. } = &f.body.stmts[1].kind {
+    if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[1].kind {
         assert_eq!(init.kind, ExprKind::Literal(LiteralValue::String("comptime message".into())));
     } else {
         panic!("expected set statement initialized with compile_print!");

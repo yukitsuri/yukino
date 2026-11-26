@@ -2,7 +2,7 @@
 
 use inkwell::targets::TargetData;
 use inkwell::values::BasicValueEnum;
-use yukic_ast::expr::{BinaryOp, Expr};
+use yukic_ast::expr::{BinaryOp, Expr, ExprKind};
 use yukic_ast::stmt::{AssignOp, BindingTarget, LValue, Stmt, StmtKind};
 use yukic_ast::types::{TypeNode, TypeNodeKind};
 use yukic_types::Type;
@@ -284,6 +284,80 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         op: AssignOp,
         rhs_val: BasicValueEnum<'ctx>,
     ) -> Result<(), String> {
+        let sem = self.expr_semantic_ty(target).or_else(|| {
+            if let ExprKind::Ident(id) = &target.kind {
+                self.lookup_local(&id.name).and_then(|l| l.semantic_ty.clone())
+            } else {
+                None
+            }
+        });
+        let actual_sem = match &sem {
+            Some(Type::Ref { inner, .. }) => Some(inner.as_ref().clone()),
+            other => other.clone(),
+        };
+        if let Some(Type::FixedArray(ref elem_sem, _)) = actual_sem {
+            let elem_sem_ty = elem_sem.as_ref().clone();
+            let index_val = self.compile_expr(index)?;
+            let i64_ty = self.context.i64_type();
+            let idx = self.coerce_type(index_val, i64_ty.into())?.into_int_value();
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+            let elem_ty = lowerer.lower_type(&elem_sem_ty)?;
+            let arr_ptr = match &target.kind {
+                ExprKind::FieldAccess(recv, fld) => self.compile_field_ptr(recv, fld)?.0,
+                ExprKind::Ident(id) => self
+                    .lookup_local(&id.name)
+                    .map(|v| v.ptr)
+                    .ok_or_else(|| format!("undefined fixed array '{}'", id.name))?,
+                _ => return Err("cannot mutate non-lvalue fixed array".to_string()),
+            };
+            let elem_ptr = self.intrinsic.emit_raw_elem_ptr(self.builder, arr_ptr, idx, elem_ty)?;
+            let final_val = if op == AssignOp::Eq {
+                self.coerce_type(rhs_val, elem_ty)?
+            } else if let Some(bin_op) = assign_op_to_binary_op(op) {
+                let lhs_val = self
+                    .builder
+                    .build_load(elem_ty, elem_ptr, "farr_elem")
+                    .map_err(|e| e.to_string())?;
+                let res = self.compile_binary_op_with_type(bin_op, Some(&elem_sem_ty), lhs_val, rhs_val)?;
+                self.coerce_type(res, elem_ty)?
+            } else {
+                return Err(format!("unsupported assignment operator {op:?} for fixed array index"));
+            };
+            self.builder.build_store(elem_ptr, final_val).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        if let Some(Type::Ptr(ref elem_sem)) = actual_sem {
+            let elem_sem_ty = elem_sem.as_ref().clone();
+            let target_val = self.compile_expr(target)?;
+            let index_val = self.compile_expr(index)?;
+            let i64_ty = self.context.i64_type();
+            let idx = self.coerce_type(index_val, i64_ty.into())?.into_int_value();
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let lowerer = crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
+            let elem_ty = lowerer.lower_type(&elem_sem_ty)?;
+            let elem_ptr = self.intrinsic.emit_raw_elem_ptr(
+                self.builder,
+                target_val.into_pointer_value(),
+                idx,
+                elem_ty,
+            )?;
+            let final_val = if op == AssignOp::Eq {
+                self.coerce_type(rhs_val, elem_ty)?
+            } else if let Some(bin_op) = assign_op_to_binary_op(op) {
+                let lhs_val = self
+                    .builder
+                    .build_load(elem_ty, elem_ptr, "ptr_elem")
+                    .map_err(|e| e.to_string())?;
+                let res = self.compile_binary_op_with_type(bin_op, Some(&elem_sem_ty), lhs_val, rhs_val)?;
+                self.coerce_type(res, elem_ty)?
+            } else {
+                return Err(format!("unsupported assignment operator {op:?} for ptr index"));
+            };
+            self.builder.build_store(elem_ptr, final_val).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+
         let target_val = self.compile_expr(target)?;
         let index_val = self.compile_expr(index)?;
         if let Some(Type::Class(class_name)) = self.expr_semantic_ty(target) {
@@ -382,6 +456,49 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             self.builder
                 .build_return(Some(&exit_code))
                 .map_err(|e| e.to_string())?;
+        } else if let Some(sret_ptr) = self.c_sret_ptr {
+            if let (Some(val), Some(expected_ty)) = (ret_val, self.return_type) {
+                let coerced = self.coerce_type(val, expected_ty)?;
+                self.builder
+                    .build_store(sret_ptr, coerced)
+                    .map_err(|e| e.to_string())?;
+            }
+            self.builder.build_return(None).map_err(|e| e.to_string())?;
+        } else if let Some(crate::cabi::CAbiRetMode::Coerced { abi_ty, orig_ty }) =
+            self.c_ret_mode.clone()
+        {
+            if let Some(val) = ret_val {
+                let coerced = self.coerce_type(val, orig_ty)?;
+                let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+                let bytes = td
+                    .get_store_size(&orig_ty)
+                    .max(td.get_store_size(&abi_ty))
+                    .max(1);
+                let buf_ty = self
+                    .context
+                    .i8_type()
+                    .array_type(u32::try_from(bytes).unwrap_or(1));
+                let buf = self
+                    .builder
+                    .build_alloca(buf_ty, "cret_tmp")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_store(buf, buf_ty.const_zero())
+                    .map_err(|e| e.to_string())?;
+                self.builder.build_store(buf, coerced).map_err(|e| e.to_string())?;
+                let out_val = self
+                    .builder
+                    .build_load(abi_ty, buf, "cret_abi")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_return(Some(&out_val))
+                    .map_err(|e| e.to_string())?;
+            } else {
+                let zero = abi_ty.const_zero();
+                self.builder
+                    .build_return(Some(&zero))
+                    .map_err(|e| e.to_string())?;
+            }
         } else {
             match (ret_val, self.return_type) {
                 (Some(val), Some(expected_ty)) => {

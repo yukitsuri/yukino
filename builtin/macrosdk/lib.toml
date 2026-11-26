@@ -1,8 +1,8 @@
 [lib]
 name = "macrosdk"
-version = "0.1.0"
+version = "0.1.1"
 entry = "macrosdk/lib.ykn"
-yukino = ["0.1.0", "+"]
+yukino = ["0.1.1", "+"]
 output = "static"
 includes = ["core", "stdlib"]
 

@@ -239,7 +239,9 @@ fn check_unused_variables(
         for item in &m.ast.items {
             match &item.kind {
                 ItemKind::Fun(fun) => {
-                    check_vars_in_block(&fun.body, source_map, emitter);
+                    if let Some(body) = &fun.body {
+                        check_vars_in_block(body, source_map, emitter);
+                    }
                 }
                 ItemKind::Cfun(cfun) => {
                     if let Some(body) = &cfun.body {
@@ -248,7 +250,9 @@ fn check_unused_variables(
                 }
                 ItemKind::Class(cls) => {
                     for method in &cls.methods {
-                        check_vars_in_block(&method.body, source_map, emitter);
+                        if let Some(body) = &method.body {
+                            check_vars_in_block(body, source_map, emitter);
+                        }
                     }
                 }
                 _ => {}
@@ -275,15 +279,44 @@ fn check_vars_in_block(
 
         if !bound.is_empty() {
             let mut subsequent_usages = HashSet::new();
+            let mut mutated = HashSet::new();
+            let mut method_called = HashSet::new();
             for subsequent in &block.stmts[i + 1..] {
                 collect_ident_usages_stmt(subsequent, &mut subsequent_usages);
+                collect_mutated_idents_stmt(subsequent, &mut mutated, &mut method_called);
             }
 
+            let literal_kind = match &stmt.kind {
+                StmtKind::Set {
+                    target: BindingTarget::Ident(id),
+                    init,
+                    ..
+                } => classify_literal_init(init).map(|kind| (id, kind)),
+                _ => None,
+            };
+
             for id in bound {
-                if !id.name.starts_with('_') && !subsequent_usages.contains(&id.name) {
+                if id.name.starts_with('_') {
+                    continue;
+                }
+                if !subsequent_usages.contains(&id.name) {
                     let diag = Diagnostic::warning(
                         WarningCode::W0001,
                         format!("unused variable '{}'", id.name),
+                        id.span,
+                    );
+                    let _ = emitter.emit(diag, source_map, &mut std::io::stderr());
+                } else if let Some((set_id, kind)) = &literal_kind
+                    && set_id.name == id.name
+                    && !mutated.contains(&id.name)
+                    && (*kind == LiteralInitKind::Scalar || !method_called.contains(&id.name))
+                {
+                    let diag = Diagnostic::warning(
+                        WarningCode::W0005,
+                        format!(
+                            "variable '{}' is initialized with a constant literal and never mutated; consider using 'static' instead of 'set'",
+                            id.name
+                        ),
                         id.span,
                     );
                     let _ = emitter.emit(diag, source_map, &mut std::io::stderr());
@@ -291,6 +324,267 @@ fn check_vars_in_block(
             }
         }
         check_vars_in_stmt(stmt, source_map, emitter);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiteralInitKind {
+    Scalar,
+    Aggregate,
+}
+
+fn classify_literal_init(expr: &Expr) -> Option<LiteralInitKind> {
+    match &expr.kind {
+        ExprKind::Literal(_) => Some(LiteralInitKind::Scalar),
+        ExprKind::Unary(_, inner) => classify_literal_init(inner),
+        ExprKind::Binary(op, l, r) => {
+            use yukic_ast::expr::BinaryOp;
+            if matches!(op, BinaryOp::Range | BinaryOp::RangeInclusive) {
+                return None;
+            }
+            let lk = classify_literal_init(l)?;
+            let rk = classify_literal_init(r)?;
+            if lk == LiteralInitKind::Scalar && rk == LiteralInitKind::Scalar {
+                Some(LiteralInitKind::Scalar)
+            } else {
+                None
+            }
+        }
+        ExprKind::Ternary(c, t, e) => {
+            if classify_literal_init(c)? == LiteralInitKind::Scalar {
+                let tk = classify_literal_init(t)?;
+                let ek = classify_literal_init(e)?;
+                if tk == ek { Some(tk) } else { Some(LiteralInitKind::Aggregate) }
+            } else {
+                None
+            }
+        }
+        ExprKind::ArrayInit(items) | ExprKind::TupleInit(items) if !items.is_empty() => {
+            for item in items {
+                classify_literal_init(item)?;
+            }
+            Some(LiteralInitKind::Aggregate)
+        }
+        _ => None,
+    }
+}
+
+fn root_ident_of_expr(mut expr: &Expr) -> Option<&str> {
+    loop {
+        match &expr.kind {
+            ExprKind::Ident(id) => return Some(id.name.as_str()),
+            ExprKind::FieldAccess(base, _)
+            | ExprKind::IndexAccess(base, _)
+            | ExprKind::SliceAccess(base, _, _, _) => expr = base,
+            _ => return None,
+        }
+    }
+}
+
+fn collect_mutated_idents_block(
+    block: &Block,
+    mutated: &mut HashSet<String>,
+    method_called: &mut HashSet<String>,
+) {
+    for stmt in &block.stmts {
+        collect_mutated_idents_stmt(stmt, mutated, method_called);
+    }
+}
+
+fn collect_mutated_idents_stmt(
+    stmt: &Stmt,
+    mutated: &mut HashSet<String>,
+    method_called: &mut HashSet<String>,
+) {
+    match &stmt.kind {
+        StmtKind::Set { init, .. } => collect_mutated_idents_expr(init, mutated, method_called),
+        StmtKind::Static(decl) => collect_mutated_idents_expr(&decl.init, mutated, method_called),
+        StmtKind::Rewrite { target, value, .. } => {
+            collect_mutated_idents_lvalue(target, mutated, method_called);
+            collect_mutated_idents_expr(value, mutated, method_called);
+        }
+        StmtKind::Expr(expr) | StmtKind::Return(Some(expr)) => {
+            collect_mutated_idents_expr(expr, mutated, method_called);
+        }
+        StmtKind::Recur(exprs) => {
+            for expr in exprs {
+                collect_mutated_idents_expr(expr, mutated, method_called);
+            }
+        }
+        StmtKind::Defer(blk) => collect_mutated_idents_block(blk, mutated, method_called),
+        _ => {}
+    }
+}
+
+fn collect_mutated_idents_lvalue(
+    lval: &LValue,
+    mutated: &mut HashSet<String>,
+    method_called: &mut HashSet<String>,
+) {
+    match lval {
+        LValue::Ident(id) => {
+            mutated.insert(id.name.clone());
+        }
+        LValue::Field(base, _) => {
+            if let Some(root) = root_ident_of_expr(base) {
+                mutated.insert(root.to_string());
+            }
+            collect_mutated_idents_expr(base, mutated, method_called);
+        }
+        LValue::Index(base, idx) => {
+            if let Some(root) = root_ident_of_expr(base) {
+                mutated.insert(root.to_string());
+            }
+            collect_mutated_idents_expr(base, mutated, method_called);
+            collect_mutated_idents_expr(idx, mutated, method_called);
+        }
+    }
+}
+
+fn collect_mutated_idents_expr(
+    expr: &Expr,
+    mutated: &mut HashSet<String>,
+    method_called: &mut HashSet<String>,
+) {
+    match &expr.kind {
+        ExprKind::Ref { mutable: true, expr: inner } => {
+            if let Some(root) = root_ident_of_expr(inner) {
+                mutated.insert(root.to_string());
+            }
+            collect_mutated_idents_expr(inner, mutated, method_called);
+        }
+        ExprKind::Ref { mutable: false, expr: inner }
+        | ExprKind::Unary(_, inner)
+        | ExprKind::Spread(inner)
+        | ExprKind::NamedArg(_, inner)
+        | ExprKind::Is(inner, _) => {
+            collect_mutated_idents_expr(inner, mutated, method_called);
+        }
+        ExprKind::PtrOf(id) => {
+            mutated.insert(id.name.clone());
+        }
+        ExprKind::Binary(_, l, r) | ExprKind::Pipe(l, r) => {
+            collect_mutated_idents_expr(l, mutated, method_called);
+            collect_mutated_idents_expr(r, mutated, method_called);
+        }
+        ExprKind::Ternary(c, t, e) => {
+            collect_mutated_idents_expr(c, mutated, method_called);
+            collect_mutated_idents_expr(t, mutated, method_called);
+            collect_mutated_idents_expr(e, mutated, method_called);
+        }
+        ExprKind::Call(callee, args) | ExprKind::ClassInit(callee, args) => {
+            collect_mutated_idents_expr(callee, mutated, method_called);
+            for arg in args {
+                collect_mutated_idents_expr(arg, mutated, method_called);
+            }
+        }
+        ExprKind::MethodCall(recv, _, args)
+        | ExprKind::QualifiedMethodCall(recv, _, _, args)
+        | ExprKind::SafeCall(recv, _, args) => {
+            if let Some(root) = root_ident_of_expr(recv) {
+                method_called.insert(root.to_string());
+            }
+            collect_mutated_idents_expr(recv, mutated, method_called);
+            for arg in args {
+                collect_mutated_idents_expr(arg, mutated, method_called);
+            }
+        }
+        ExprKind::FieldAccess(recv, _) => collect_mutated_idents_expr(recv, mutated, method_called),
+        ExprKind::IndexAccess(arr, idx) => {
+            collect_mutated_idents_expr(arr, mutated, method_called);
+            collect_mutated_idents_expr(idx, mutated, method_called);
+        }
+        ExprKind::SliceAccess(arr, start, end, _) => {
+            collect_mutated_idents_expr(arr, mutated, method_called);
+            if let Some(s) = start {
+                collect_mutated_idents_expr(s, mutated, method_called);
+            }
+            if let Some(e) = end {
+                collect_mutated_idents_expr(e, mutated, method_called);
+            }
+        }
+        ExprKind::StructInit(_, fields) => {
+            for f in fields {
+                collect_mutated_idents_expr(&f.value, mutated, method_called);
+            }
+        }
+        ExprKind::ArrayInit(items) | ExprKind::TupleInit(items) => {
+            for item in items {
+                collect_mutated_idents_expr(item, mutated, method_called);
+            }
+        }
+        ExprKind::MapInit(entries) => {
+            for (k, v) in entries {
+                collect_mutated_idents_expr(k, mutated, method_called);
+                collect_mutated_idents_expr(v, mutated, method_called);
+            }
+        }
+        ExprKind::Block(blk)
+        | ExprKind::RegionBlock(blk)
+        | ExprKind::RegionScopedBlock(_, blk)
+        | ExprKind::Loop { body: blk, .. } => {
+            collect_mutated_idents_block(blk, mutated, method_called);
+        }
+        ExprKind::If {
+            cond,
+            then_branch,
+            elif_branches,
+            else_branch,
+        } => {
+            collect_mutated_idents_expr(cond, mutated, method_called);
+            collect_mutated_idents_block(then_branch, mutated, method_called);
+            for (elif_c, elif_b) in elif_branches {
+                collect_mutated_idents_expr(elif_c, mutated, method_called);
+                collect_mutated_idents_block(elif_b, mutated, method_called);
+            }
+            if let Some(else_b) = else_branch {
+                collect_mutated_idents_block(else_b, mutated, method_called);
+            }
+        }
+        ExprKind::Switch { target, arms } => {
+            collect_mutated_idents_expr(target, mutated, method_called);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_mutated_idents_expr(g, mutated, method_called);
+                }
+                collect_mutated_idents_block(&arm.body, mutated, method_called);
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_mutated_idents_expr(cond, mutated, method_called);
+            collect_mutated_idents_block(body, mutated, method_called);
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_mutated_idents_expr(iter, mutated, method_called);
+            collect_mutated_idents_block(body, mutated, method_called);
+        }
+        ExprKind::Sus {
+            body,
+            catches,
+            finally_branch,
+        } => {
+            collect_mutated_idents_block(body, mutated, method_called);
+            for c in catches {
+                collect_mutated_idents_block(&c.body, mutated, method_called);
+            }
+            if let Some(fin) = finally_branch {
+                collect_mutated_idents_block(fin, mutated, method_called);
+            }
+        }
+        ExprKind::Lambda(_, body) => collect_mutated_idents_expr(body, mutated, method_called),
+        ExprKind::AnonymousFun(fun) => {
+            if let Some(body) = &fun.body {
+                collect_mutated_idents_block(body, mutated, method_called);
+            }
+        }
+        ExprKind::InterpolatedString(parts) => {
+            for part in parts {
+                if let StringPart::Expr(sub) = part {
+                    collect_mutated_idents_expr(sub, mutated, method_called);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -422,7 +716,9 @@ fn collect_ident_usages_fun(fun: &FunDecl, usages: &mut HashSet<String>) {
     if let Some(ret) = &fun.return_type {
         collect_ident_usages_type(ret, usages);
     }
-    collect_ident_usages_block(&fun.body, usages);
+    if let Some(body) = &fun.body {
+        collect_ident_usages_block(body, usages);
+    }
 }
 
 fn collect_ident_usages_method(method: &MethodDecl, usages: &mut HashSet<String>) {
@@ -434,7 +730,9 @@ fn collect_ident_usages_method(method: &MethodDecl, usages: &mut HashSet<String>
     if let Some(ret) = &method.return_type {
         collect_ident_usages_type(ret, usages);
     }
-    collect_ident_usages_block(&method.body, usages);
+    if let Some(body) = &method.body {
+        collect_ident_usages_block(body, usages);
+    }
 }
 
 fn collect_ident_usages_block(block: &Block, usages: &mut HashSet<String>) {
@@ -901,7 +1199,9 @@ impl DeprecatedUsageChecker<'_> {
                 if let Some(ret) = &fun.return_type {
                     self.check_type(ret);
                 }
-                self.check_block(&fun.body);
+                if let Some(body) = &fun.body {
+                    self.check_block(body);
+                }
                 self.in_deprecated_item = prev;
             }
             ItemKind::Cfun(cfun) => {
@@ -940,11 +1240,15 @@ impl DeprecatedUsageChecker<'_> {
                     if let Some(ret) = &method.return_type {
                         self.check_type(ret);
                     }
-                    self.check_block(&method.body);
+                    if let Some(body) = &method.body {
+                        self.check_block(body);
+                    }
                     self.in_deprecated_item = prev_method;
                 }
                 for accessor in &cls.accessors {
-                    self.check_block(&accessor.body);
+                    if let Some(body) = &accessor.body {
+                        self.check_block(body);
+                    }
                 }
                 self.in_deprecated_item = prev_cls;
             }
@@ -967,7 +1271,9 @@ impl DeprecatedUsageChecker<'_> {
                     if let Some(ret) = &method.return_type {
                         self.check_type(ret);
                     }
-                    self.check_block(&method.body);
+                    if let Some(body) = &method.body {
+                        self.check_block(body);
+                    }
                     self.in_deprecated_item = prev_method;
                 }
                 for sm in &st.static_methods {
@@ -984,7 +1290,9 @@ impl DeprecatedUsageChecker<'_> {
                     if let Some(ret) = &sm.return_type {
                         self.check_type(ret);
                     }
-                    self.check_block(&sm.body);
+                    if let Some(body) = &sm.body {
+                        self.check_block(body);
+                    }
                     self.in_deprecated_item = prev_sm;
                 }
                 self.in_deprecated_item = prev_st;
@@ -1252,7 +1560,11 @@ impl DeprecatedUsageChecker<'_> {
                 }
             }
             ExprKind::Lambda(_, body) => self.check_expr(body),
-            ExprKind::AnonymousFun(fun) => self.check_block(&fun.body),
+            ExprKind::AnonymousFun(fun) => {
+                if let Some(body) = &fun.body {
+                    self.check_block(body);
+                }
+            }
             ExprKind::Is(expr, ty) => {
                 self.check_expr(expr);
                 self.check_type(ty);
@@ -1444,6 +1756,7 @@ fun main() {
             c_attrs: Vec::new(),
             yukino_attrs: Vec::new(),
             params: vec![param],
+            is_variadic: false,
             return_type: Some(TypeNode {
                 kind: TypeNodeKind::Ident(Ident::new("CustomReturnType", dummy_span)),
                 span: dummy_span,
@@ -1510,6 +1823,7 @@ fun main() {
                 file_id: FileId(0),
                 items: Vec::new(),
                 module_attrs: vec![ignore_attr, deny_attr],
+                c_namespaces: Default::default(),
             },
             is_external: false,
             tracked_files: Vec::new(),
@@ -1530,5 +1844,48 @@ fun main() {
         emitter.emit(warn2, &sm, &mut buf).unwrap();
         assert_eq!(emitter.error_count(), 1);
         assert!(emitter.has_errors());
+    }
+
+    #[test]
+    fn test_set_literal_unmutated_warns_and_mutated_or_nonliteral_does_not() {
+        let source = r#"
+fun compute() -> int64 { return 10 }
+
+fun take_mut(ref ~v: int64) {
+    rewrite v += 1
+}
+
+fun main() {
+    set const_int = 42
+    set const_expr = 1 + 2 * -3
+    set mutated = 5
+    set borrowed_mut = 7
+    set from_call = compute()
+    set from_var = const_int + 1
+    set arr = [1, 2]
+    set empty_arr: int64[]
+    static already_static = 99
+
+    rewrite mutated = 6
+    take_mut(ref ~borrowed_mut)
+    arr.push(3)
+
+    set _ = const_int + const_expr + mutated + borrowed_mut + from_call + from_var + already_static + empty_arr.len()
+}
+"#;
+        let mut source_map = SourceMap::new();
+        let module = parse_module(source, &mut source_map);
+        let emitter = run(vec![module], &source_map);
+
+        let w0005_msgs: Vec<&str> = emitter
+            .diagnostics()
+            .iter()
+            .filter(|d| d.code.as_str() == WarningCode::W0005.as_str())
+            .map(|d| d.message.as_str())
+            .collect();
+
+        assert_eq!(w0005_msgs.len(), 2, "unexpected W0005 diagnostics: {w0005_msgs:?}");
+        assert!(w0005_msgs[0].contains("const_int"));
+        assert!(w0005_msgs[1].contains("const_expr"));
     }
 }

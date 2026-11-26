@@ -144,8 +144,8 @@ fn optimize_single_cgu(
     let machine = create_target_machine_advanced(
         target,
         config.level,
-        None,
-        None,
+        config.reloc_mode,
+        config.code_model,
         config.target_cpu.as_deref(),
         config.target_features.as_deref(),
     )?;

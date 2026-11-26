@@ -1,0 +1,18 @@
+[package]
+name = "yukic-cheader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+yukic-ast.workspace = true
+yukic-diagnostics.workspace = true
+yukic-span.workspace = true
+yukic-target.workspace = true
+tree-sitter.workspace = true
+tree-sitter-c.workspace = true
+
+[lints]
+workspace = true

@@ -732,7 +732,7 @@ mod tests {
                 generics: Vec::new(),
                 params: Vec::new(),
                 return_type: None,
-                body: Block::new(Vec::new(), dummy_span()),
+                body: Some(Block::new(Vec::new(), dummy_span())),
                 span: dummy_span(),
             }),
             dummy_span(),

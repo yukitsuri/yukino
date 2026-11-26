@@ -8,6 +8,13 @@ cfun yukistd_sharedc_symbol(handle: ptr<void>, name_p: ptr<uint8>, name_len: int
 cfun yukistd_sharedc_close(handle: ptr<void>) -> bool
 cfun yukistd_sharedc_last_error(out_len: ptr<int64>) -> ptr<uint8>
 cfun yukistd_sharedc_filename(name_p: ptr<uint8>, name_len: int64, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sharedc_yukino_has_meta(handle: ptr<void>) -> bool
+cfun yukistd_sharedc_yukino_info_field(handle: ptr<void>, field_idx: int32, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sharedc_yukino_export_count(handle: ptr<void>) -> int64
+cfun yukistd_sharedc_yukino_export_field(handle: ptr<void>, idx: int64, field_idx: int32, out_len: ptr<int64>) -> ptr<uint8>
+cfun yukistd_sharedc_yukino_load_ykni(handle: ptr<void>, path_p: ptr<uint8>, path_len: int64) -> bool
+cfun yukistd_sharedc_yukino_find(handle: ptr<void>, name_p: ptr<uint8>, name_len: int64, sig_p: ptr<uint8>, sig_len: int64, out_status: ptr<int32>) -> ptr<void>
+cfun yukistd_sharedc_yukino_find_method(handle: ptr<void>, class_p: ptr<uint8>, class_len: int64, method_p: ptr<uint8>, method_len: int64, param_count: int32, out_status: ptr<int32>) -> ptr<void>
 
 // decl end
 
@@ -19,6 +26,38 @@ public static RTLD_GLOBAL: int32 = 8
 public struct SharedError {
     message: string
     code: int32
+}
+
+public enum SymbolAbi {
+    CDecl,
+    YukinoFastCall
+}
+
+public struct SharedExport {
+    name: string
+    mangled: string
+    signature: string
+    abi: SymbolAbi
+    kind: string
+}
+
+public struct YukinoLibInfo {
+    package_name: string
+    yukic_version: string
+    target: string
+    abi_hash: string
+}
+
+fun copy_raw_string(p: ptr<uint8>, n: int64) -> string {
+    if n <= 0 || p == null { return "" }
+    return "" + from_raw_parts(p, n)
+}
+
+fun parse_abi_kind(raw: string) -> SymbolAbi {
+    if raw == "cdecl" {
+        return SymbolAbi::CDecl
+    }
+    return SymbolAbi::YukinoFastCall
 }
 
 public fun last_error() -> string? {
@@ -74,6 +113,193 @@ public class SharedLibrary {
         if this.is_closed || this.handle == null { return true }
         rewrite this.is_closed = true
         return yukistd_sharedc_close(this.handle)
+    }
+
+    public fun is_yukino() -> bool {
+        if this.is_closed || this.handle == null { return false }
+        return yukistd_sharedc_yukino_has_meta(this.handle)
+    }
+
+    public fun load_interface(ykni_path: string) -> bool {
+        if this.is_closed || this.handle == null { return false }
+        return yukistd_sharedc_yukino_load_ykni(this.handle, ykni_path.as_ptr(), ykni_path.len())
+    }
+
+    public fun yukino_info() -> YukinoLibInfo? {
+        if this.is_closed || this.handle == null { return null }
+        if !yukistd_sharedc_yukino_has_meta(this.handle) { return null }
+        set out_len: int64 = 0
+        set p0 = yukistd_sharedc_yukino_info_field(this.handle, 0, ptr_of(out_len))
+        set pkg = copy_raw_string(p0, out_len)
+        set p1 = yukistd_sharedc_yukino_info_field(this.handle, 1, ptr_of(out_len))
+        set ver = copy_raw_string(p1, out_len)
+        set p2 = yukistd_sharedc_yukino_info_field(this.handle, 2, ptr_of(out_len))
+        set tgt = copy_raw_string(p2, out_len)
+        set p3 = yukistd_sharedc_yukino_info_field(this.handle, 3, ptr_of(out_len))
+        set hash = copy_raw_string(p3, out_len)
+        return YukinoLibInfo {
+            package_name: pkg,
+            yukic_version: ver,
+            target: tgt,
+            abi_hash: hash,
+        }
+    }
+
+    public fun exports() -> SharedExport[] {
+        set list: SharedExport[] = []
+        if this.is_closed || this.handle == null { return list }
+        set total = yukistd_sharedc_yukino_export_count(this.handle)
+        if total <= 0 { return list }
+        set out_len: int64 = 0
+        for i in 0..total {
+            set p0 = yukistd_sharedc_yukino_export_field(this.handle, i, 0, ptr_of(out_len))
+            set name = copy_raw_string(p0, out_len)
+            set p1 = yukistd_sharedc_yukino_export_field(this.handle, i, 1, ptr_of(out_len))
+            set mangled = copy_raw_string(p1, out_len)
+            set p2 = yukistd_sharedc_yukino_export_field(this.handle, i, 2, ptr_of(out_len))
+            set signature = copy_raw_string(p2, out_len)
+            set p3 = yukistd_sharedc_yukino_export_field(this.handle, i, 3, ptr_of(out_len))
+            set abi_str = copy_raw_string(p3, out_len)
+            set p4 = yukistd_sharedc_yukino_export_field(this.handle, i, 4, ptr_of(out_len))
+            set kind = copy_raw_string(p4, out_len)
+            list.push(SharedExport {
+                name: name,
+                mangled: mangled,
+                signature: signature,
+                abi: parse_abi_kind(abi_str),
+                kind: kind,
+            })
+        }
+        return list
+    }
+
+    public fun yukino_symbol(name: string) -> ptr<void> {
+        if this.is_closed || this.handle == null { return null }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find(this.handle, name.as_ptr(), name.len(), null, 0, ptr_of(status))
+        if sym == null { return null }
+        return sym
+    }
+
+    public fun yukino_symbol_sig(name: string, signature: string) -> ptr<void> {
+        if this.is_closed || this.handle == null { return null }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find(
+            this.handle,
+            name.as_ptr(),
+            name.len(),
+            signature.as_ptr(),
+            signature.len(),
+            ptr_of(status),
+        )
+        if sym == null { return null }
+        return sym
+    }
+
+    public fun yukino_symbol_or_panic(name: string) -> ptr<void> {
+        if this.is_closed || this.handle == null {
+            panic(SharedError {
+                message: "library '" + this.path + "' is already closed",
+                code: 3,
+            })
+        }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find(this.handle, name.as_ptr(), name.len(), null, 0, ptr_of(status))
+        if sym == null {
+            set err = last_error() ?? "lookup failed"
+            set err_code: int32 = 2
+            if status == 3 {
+                rewrite err_code = 4
+            } elif status == 2 {
+                rewrite err_code = 5
+            }
+            panic(SharedError {
+                message: err,
+                code: err_code,
+            })
+        }
+        return sym
+    }
+
+    public fun yukino_symbol_sig_or_panic(name: string, signature: string) -> ptr<void> {
+        if this.is_closed || this.handle == null {
+            panic(SharedError {
+                message: "library '" + this.path + "' is already closed",
+                code: 3,
+            })
+        }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find(
+            this.handle,
+            name.as_ptr(),
+            name.len(),
+            signature.as_ptr(),
+            signature.len(),
+            ptr_of(status),
+        )
+        if sym == null {
+            set err = last_error() ?? "lookup failed"
+            set err_code: int32 = 2
+            if status == 3 {
+                rewrite err_code = 4
+            } elif status == 2 {
+                rewrite err_code = 5
+            }
+            panic(SharedError {
+                message: err,
+                code: err_code,
+            })
+        }
+        return sym
+    }
+
+    public fun method_symbol(class_name: string, method_name: string, param_count: int32 = -1) -> ptr<void> {
+        if this.is_closed || this.handle == null { return null }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find_method(
+            this.handle,
+            class_name.as_ptr(),
+            class_name.len(),
+            method_name.as_ptr(),
+            method_name.len(),
+            param_count,
+            ptr_of(status),
+        )
+        if sym == null { return null }
+        return sym
+    }
+
+    public fun method_symbol_or_panic(class_name: string, method_name: string, param_count: int32 = -1) -> ptr<void> {
+        if this.is_closed || this.handle == null {
+            panic(SharedError {
+                message: "library '" + this.path + "' is already closed",
+                code: 3,
+            })
+        }
+        set status: int32 = 0
+        set sym = yukistd_sharedc_yukino_find_method(
+            this.handle,
+            class_name.as_ptr(),
+            class_name.len(),
+            method_name.as_ptr(),
+            method_name.len(),
+            param_count,
+            ptr_of(status),
+        )
+        if sym == null {
+            set err = last_error() ?? "method lookup failed"
+            set err_code: int32 = 2
+            if status == 3 {
+                rewrite err_code = 4
+            } elif status == 2 {
+                rewrite err_code = 5
+            }
+            panic(SharedError {
+                message: err,
+                code: err_code,
+            })
+        }
+        return sym
     }
 }
 

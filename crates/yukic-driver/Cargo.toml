@@ -23,6 +23,7 @@ yukic-ast = { workspace = true }
 yukic-parser = { workspace = true }
 yukic-resolve = { workspace = true }
 yukic-macro = { workspace = true }
+yukic-cheader = { workspace = true }
 yukic-types = { workspace = true }
 yukic-borrow = { workspace = true }
 yukic-dce = { workspace = true }

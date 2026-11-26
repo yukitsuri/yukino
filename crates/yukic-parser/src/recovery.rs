@@ -46,12 +46,15 @@ impl TokenStream<'_> {
                         | TokenKind::Class
                         | TokenKind::Struct
                         | TokenKind::Cstruct
+                        | TokenKind::Cunion
+                        | TokenKind::Cvar
                         | TokenKind::Interface
                         | TokenKind::Enum
                         | TokenKind::Type
                         | TokenKind::Static
                         | TokenKind::Externc
                         | TokenKind::Load
+                        | TokenKind::Cload
                         | TokenKind::Alias
                         | TokenKind::Define
                         | TokenKind::Public

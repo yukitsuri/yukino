@@ -133,7 +133,7 @@ fun test_fn() {
     assert!(tracked.contains(&"tracked_extra.ykn".to_string()));
 
     if let ItemKind::Fun(f) = &module.items[0].kind {
-        if let StmtKind::Set { init, .. } = &f.body.stmts[0].kind {
+        if let StmtKind::Set { init, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
             if let ExprKind::Binary(BinaryOp::Mul, lhs, rhs) = &init.kind {
                 assert_eq!(lhs.kind, ExprKind::Literal(LiteralValue::Int(42)));
                 assert_eq!(rhs.kind, ExprKind::Literal(LiteralValue::Int(2)));
@@ -172,8 +172,8 @@ fun test_fn() {
     assert!(result.is_ok(), "expand_module_tracked failed: {:?}", result.err());
 
     if let ItemKind::Fun(f) = &module.items[0].kind {
-        assert_eq!(f.body.stmts.len(), 1);
-        if let StmtKind::Rewrite { value, .. } = &f.body.stmts[0].kind {
+        assert_eq!(f.body.as_ref().unwrap().stmts.len(), 1);
+        if let StmtKind::Rewrite { value, .. } = &f.body.as_ref().unwrap().stmts[0].kind {
             assert_eq!(value.kind, ExprKind::Literal(LiteralValue::Int(100)));
         } else {
             panic!("expected rewrite statement from macro expansion");
@@ -260,8 +260,8 @@ fun original_fn() {
     assert_eq!(module.items.len(), 1);
     if let ItemKind::Fun(f) = &module.items[0].kind {
         assert_eq!(f.name.name, "traced_fn");
-        assert_eq!(f.body.stmts.len(), 1);
-        if let StmtKind::Return(Some(expr)) = &f.body.stmts[0].kind {
+        assert_eq!(f.body.as_ref().unwrap().stmts.len(), 1);
+        if let StmtKind::Return(Some(expr)) = &f.body.as_ref().unwrap().stmts[0].kind {
             assert_eq!(expr.kind, ExprKind::Literal(LiteralValue::Int(777)));
         } else {
             panic!("expected return statement in expanded function");

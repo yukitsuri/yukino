@@ -30,6 +30,7 @@ impl TypeAffinity {
             Type::Ref { mutable, .. } => !*mutable,
             Type::Tuple(types) => types.iter().all(Self::is_copy),
             Type::Union(types) => types.iter().all(Self::is_copy),
+            Type::FixedArray(inner, _) => Self::is_copy(inner),
             _ => false,
         }
     }

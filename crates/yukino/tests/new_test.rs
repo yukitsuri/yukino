@@ -71,8 +71,10 @@ fn test_cli_new_app() {
     assert!(toml_content.contains("name = \"test_app\""));
     assert!(toml_content.contains("namedbg = \"test_app_debug\""));
     assert!(toml_content.contains("entry = \"src/main.ykn\""));
-    assert!(toml_content.contains("yukino = [\"0.1.0\", \"+\"]"));
+    assert!(toml_content.contains("yukino = [\"0.1.1\", \"+\"]"));
     assert!(toml_content.contains("includes = [\"core\", \"stdlib\"]"));
+    assert!(toml_content.contains("cpu = \"generic\""));
+    assert!(toml_content.contains("features = []"));
     assert!(!toml_content.contains("std ="));
     assert!(toml_content.contains("# example = { link = \"https://.../lib.tar.zst\" }"));
 
@@ -110,7 +112,7 @@ fn test_cli_new_static_lib() {
     assert!(toml_content.contains("name = \"my_stat\""));
     assert!(toml_content.contains("output = \"static\""));
     assert!(toml_content.contains("entry = \"my_stat/lib.ykn\""));
-    assert!(toml_content.contains("yukino = [\"0.1.0\", \"+\"]"));
+    assert!(toml_content.contains("yukino = [\"0.1.1\", \"+\"]"));
     assert!(toml_content.contains("includes = [\"core\", \"stdlib\"]"));
 
     let lib_content = std::fs::read_to_string(&lib_file).expect("read lib.ykn");

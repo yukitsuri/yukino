@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use yukic_opt::OptLevel;
+use inkwell::targets::{CodeModel, RelocMode};
+use yukic_opt::{LtoKind, OptLevel};
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 pub enum DriverSubcommand {
@@ -103,6 +104,81 @@ impl FromStr for OutputType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum RelocModelArg {
+    Default,
+    Static,
+    Pic,
+    DynamicNoPic,
+}
+
+impl RelocModelArg {
+    pub fn to_inkwell(self) -> RelocMode {
+        match self {
+            Self::Default => RelocMode::Default,
+            Self::Static => RelocMode::Static,
+            Self::Pic => RelocMode::PIC,
+            Self::DynamicNoPic => RelocMode::DynamicNoPic,
+        }
+    }
+}
+
+impl FromStr for RelocModelArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "default" => Ok(Self::Default),
+            "static" => Ok(Self::Static),
+            "pic" => Ok(Self::Pic),
+            "dynamic-no-pic" | "dynamic_no_pic" => Ok(Self::DynamicNoPic),
+            other => Err(format!(
+                "unknown reloc_model '{other}', expected default, static, pic, or dynamic-no-pic"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum CodeModelArg {
+    Default,
+    Small,
+    Kernel,
+    Medium,
+    Large,
+}
+
+impl CodeModelArg {
+    pub fn to_inkwell(self) -> CodeModel {
+        match self {
+            Self::Default => CodeModel::Default,
+            Self::Small => CodeModel::Small,
+            Self::Kernel => CodeModel::Kernel,
+            Self::Medium => CodeModel::Medium,
+            Self::Large => CodeModel::Large,
+        }
+    }
+}
+
+impl FromStr for CodeModelArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "default" => Ok(Self::Default),
+            "small" => Ok(Self::Small),
+            "kernel" => Ok(Self::Kernel),
+            "medium" => Ok(Self::Medium),
+            "large" => Ok(Self::Large),
+            other => Err(format!(
+                "unknown code_model '{other}', expected default, small, kernel, medium, or large"
+            )),
+        }
+    }
+}
+
 #[derive(Parser, Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 #[command(
@@ -163,6 +239,15 @@ pub struct Args {
     pub emit: EmitKind,
 
     #[arg(
+        long = "extra-emit",
+        value_name = "KINDS",
+        value_delimiter = ',',
+        action = clap::ArgAction::Append,
+        help = "Additional output artifact formats (bin, llvm-ir, asm, obj)"
+    )]
+    pub extra_emit: Vec<EmitKind>,
+
+    #[arg(
         short = 'O',
         long = "opt-level",
         default_value = "0",
@@ -189,6 +274,21 @@ pub struct Args {
         help = "Path to emit C header file (.h)"
     )]
     pub emit_header: Option<PathBuf>,
+
+    #[arg(
+        long = "emit-interface",
+        value_name = "PATH",
+        help = "Path to emit Yukino prebuilt interface file (.ykni)"
+    )]
+    pub emit_interface: Option<PathBuf>,
+
+    #[arg(
+        long = "prebuilt",
+        value_name = "SPEC",
+        action = clap::ArgAction::Append,
+        help = "Prebuilt Yukino package interface (<name>=<path.ykni> or <path.ykni>)"
+    )]
+    pub prebuilt: Vec<String>,
 
     #[arg(
         long = "cgunits",
@@ -233,14 +333,39 @@ pub struct Args {
     #[arg(long = "lto", help = "Enable link-time optimization")]
     pub lto: bool,
 
+    #[arg(
+        long = "lto-mode",
+        value_name = "MODE",
+        help = "Link-time optimization mode (none, thin, full, fat)"
+    )]
+    pub lto_mode: Option<LtoKind>,
+
     #[arg(long = "cpu", value_name = "CPU", help = "Target CPU architecture (e.g. native, generic, x86-64-v3)")]
     pub cpu: Option<String>,
 
     #[arg(long = "target-features", value_name = "FEATURES", help = "Target CPU features list (e.g. +avx2,+fma)")]
     pub target_features: Option<String>,
 
+    #[arg(long = "reloc-model", value_name = "MODEL", help = "Relocation model (default, static, pic, dynamic-no-pic)")]
+    pub reloc_model: Option<RelocModelArg>,
+
+    #[arg(long = "code-model", value_name = "MODEL", help = "Code model (default, small, kernel, medium, large)")]
+    pub code_model: Option<CodeModelArg>,
+
     #[arg(long = "fast-math", help = "Enable fast-math optimizations on floating point operations")]
     pub fast_math: bool,
+
+    #[arg(long = "inline-statics", help = "Inline constant static declarations at usage sites")]
+    pub inline_statics: bool,
+
+    #[arg(long = "no-inline-statics", help = "Disable inlining constant static declarations")]
+    pub no_inline_statics: bool,
+
+    #[arg(long = "debug-assertions", help = "Enable debug assertions cfg predicate")]
+    pub debug_assertions: bool,
+
+    #[arg(long = "no-debug-assertions", help = "Disable debug assertions cfg predicate")]
+    pub no_debug_assertions: bool,
 
     #[arg(long = "strip", help = "Strip symbols from output binary")]
     pub strip: bool,
@@ -279,6 +404,14 @@ pub struct Args {
         help = "System library name to link (-l<name>)"
     )]
     pub link_system: Vec<String>,
+
+    #[arg(
+        long = "link-search",
+        short = 'L',
+        value_name = "DIR",
+        help = "Library search directory (-L<dir>)"
+    )]
+    pub link_search: Vec<PathBuf>,
 
     #[arg(
         long = "linker",
@@ -427,6 +560,23 @@ impl Args {
             Some(true)
         } else {
             None
+        }
+    }
+
+    pub fn resolve_inline_statics(&self) -> bool {
+        if self.no_inline_statics {
+            false
+        } else {
+            self.inline_statics
+        }
+    }
+
+    pub fn resolve_debug_assertions(&self) -> bool {
+        if self.no_debug_assertions {
+            false
+        } else {
+            let _ = self.debug_assertions;
+            true
         }
     }
 }
