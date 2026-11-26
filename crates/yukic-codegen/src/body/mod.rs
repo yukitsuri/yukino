@@ -74,6 +74,9 @@ pub struct BodyCompiler<'a, 'ctx> {
     pub expected_fixed_array_size: Option<usize>,
     pub generic_map: HashMap<String, Type>,
     pub fast_math: bool,
+    pub inline_statics: bool,
+    pub c_ret_mode: Option<crate::cabi::CAbiRetMode<'ctx>>,
+    pub c_sret_ptr: Option<PointerValue<'ctx>>,
 }
 
 impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
@@ -131,6 +134,9 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
             expected_fixed_array_size: None,
             generic_map: HashMap::new(),
             fast_math: false,
+            inline_statics: false,
+            c_ret_mode: None,
+            c_sret_ptr: None,
         }
     }
 
@@ -141,6 +147,11 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
 
     pub fn with_fast_math(mut self, enabled: bool) -> Self {
         self.fast_math = enabled;
+        self
+    }
+
+    pub fn with_inline_statics(mut self, enabled: bool) -> Self {
+        self.inline_statics = enabled;
         self
     }
 
@@ -741,11 +752,13 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 layout.fields.iter().find(|(f, _)| f == field_name).map(|(_, ty)| ty.clone())
             }
             Type::Class(name) => {
-                let layout = self.registry.classes.get(&name).or_else(|| {
-                    let short = name.rsplit("::").next().unwrap_or(&name);
-                    self.registry.classes.get(short)
-                })?;
-                layout.fields.iter().find(|(f, _)| f == field_name).map(|(_, ty)| ty.clone())
+                let layout = self.registry.lookup_class_layout(&name)?;
+                layout
+                    .fields
+                    .iter()
+                    .find(|(f, _)| f == field_name)
+                    .map(|(_, ty)| ty.clone())
+                    .or_else(|| layout.static_fields.get(field_name).map(|(_, ty)| ty.clone()))
             }
             _ => None,
         }
@@ -908,6 +921,118 @@ impl<'a, 'ctx> BodyCompiler<'a, 'ctx> {
                 .map_err(|e| e.to_string())?;
             let sem_ty = ast_type_to_type(&param.ty);
             self.add_local_with_ty(param.name.name.clone(), alloca, param_ty, Some(sem_ty));
+        }
+        Ok(())
+    }
+
+    pub fn setup_cparams_with_abi(
+        &mut self,
+        params: &[CParam],
+        sig: &crate::cabi::CAbiSignature<'ctx>,
+    ) -> Result<(), String> {
+        self.c_ret_mode = Some(sig.ret_mode.clone());
+        let mut llvm_idx: u32 = 0;
+        if matches!(sig.ret_mode, crate::cabi::CAbiRetMode::Sret { .. }) {
+            if let Some(p0) = self.fn_val.get_nth_param(0) {
+                self.c_sret_ptr = Some(p0.into_pointer_value());
+            }
+            llvm_idx = 1;
+        }
+
+        let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+        for (param, mode) in params.iter().zip(&sig.arg_modes) {
+            let sem_ty = self.registry.canonicalize_type(&ast_type_to_type(&param.ty));
+            match mode {
+                crate::cabi::CAbiArgMode::Direct(_) => {
+                    if let Some(param_val) = self.fn_val.get_nth_param(llvm_idx) {
+                        let param_ty = param_val.get_type();
+                        let alloca = self
+                            .builder
+                            .build_alloca(param_ty, &param.name.name)
+                            .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_store(alloca, param_val)
+                            .map_err(|e| e.to_string())?;
+                        self.add_local_with_ty(
+                            param.name.name.clone(),
+                            alloca,
+                            param_ty,
+                            Some(sem_ty),
+                        );
+                    }
+                    llvm_idx += 1;
+                }
+                crate::cabi::CAbiArgMode::Coerced { parts, orig_ty } => {
+                    let orig_sz = td.get_store_size(orig_ty);
+                    let parts_sz: u64 = parts
+                        .iter()
+                        .map(|p| td.get_store_size(p))
+                        .sum();
+                    let buf_bytes = orig_sz.max(parts_sz).max(1);
+                    let buf_ty = self
+                        .context
+                        .i8_type()
+                        .array_type(u32::try_from(buf_bytes).unwrap_or(1));
+                    let buf = self
+                        .builder
+                        .build_alloca(buf_ty, &param.name.name)
+                        .map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_store(buf, buf_ty.const_zero())
+                        .map_err(|e| e.to_string())?;
+                    let mut off = 0u64;
+                    for pty in parts {
+                        if let Some(pval) = self.fn_val.get_nth_param(llvm_idx) {
+                            let dst = crate::cabi::offset_ptr_bytes(
+                                self.context,
+                                self.builder,
+                                buf,
+                                off,
+                                "cabi_in",
+                            )?;
+                            self.builder.build_store(dst, pval).map_err(|e| e.to_string())?;
+                        }
+                        off += td.get_store_size(pty);
+                        llvm_idx += 1;
+                    }
+                    let alloca = self
+                        .builder
+                        .build_alloca(*orig_ty, &param.name.name)
+                        .map_err(|e| e.to_string())?;
+                    let loaded = self
+                        .builder
+                        .build_load(*orig_ty, buf, "cabi_unpacked")
+                        .map_err(|e| e.to_string())?;
+                    self.builder.build_store(alloca, loaded).map_err(|e| e.to_string())?;
+                    self.add_local_with_ty(
+                        param.name.name.clone(),
+                        alloca,
+                        *orig_ty,
+                        Some(sem_ty),
+                    );
+                }
+                crate::cabi::CAbiArgMode::IndirectPtr { pointee, .. } => {
+                    if let Some(param_val) = self.fn_val.get_nth_param(llvm_idx) {
+                        let ptr = param_val.into_pointer_value();
+                        let loaded = self
+                            .builder
+                            .build_load(*pointee, ptr, &param.name.name)
+                            .map_err(|e| e.to_string())?;
+                        let alloca = self
+                            .builder
+                            .build_alloca(*pointee, &param.name.name)
+                            .map_err(|e| e.to_string())?;
+                        self.builder.build_store(alloca, loaded).map_err(|e| e.to_string())?;
+                        self.add_local_with_ty(
+                            param.name.name.clone(),
+                            alloca,
+                            *pointee,
+                            Some(sem_ty),
+                        );
+                    }
+                    llvm_idx += 1;
+                }
+            }
         }
         Ok(())
     }
@@ -1810,7 +1935,7 @@ mod tests {
                 yukic_ast::TypeNodeKind::Ident(Ident::new("int64", sp)),
                 sp,
             )),
-            body: Block::new(stmts, sp),
+            body: Some(Block::new(stmts, sp)),
             span: sp,
         };
 
@@ -1854,7 +1979,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(vec![call_stmt], sp),
+            body: Some(Block::new(vec![call_stmt], sp)),
             span: sp,
         };
 
@@ -1915,7 +2040,7 @@ mod tests {
                 TypeNodeKind::Ident(Ident::new("int64", sp)),
                 sp,
             )),
-            body: Block::new(vec![coal_stmt], sp),
+            body: Some(Block::new(vec![coal_stmt], sp)),
             span: sp,
         };
 
@@ -1955,7 +2080,7 @@ mod tests {
                 TypeNodeKind::Ident(Ident::new("bool", sp)),
                 sp,
             )),
-            body: Block::new(vec![eq_stmt], sp),
+            body: Some(Block::new(vec![eq_stmt], sp)),
             span: sp,
         };
 
@@ -2032,7 +2157,7 @@ mod tests {
                 TypeNodeKind::Ident(Ident::new("int64", sp)),
                 sp,
             )),
-            body: Block::new(stmts, sp),
+            body: Some(Block::new(stmts, sp)),
             span: sp,
         };
 
@@ -2090,7 +2215,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(stmts, sp),
+            body: Some(Block::new(stmts, sp)),
             span: sp,
         };
 
@@ -2142,7 +2267,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![Stmt::new(
                     StmtKind::Expr(Expr::new(
                         ExprKind::Loop {
@@ -2154,7 +2279,7 @@ mod tests {
                     sp,
                 )],
                 sp,
-            ),
+            )),
             span: sp,
         };
 
@@ -2237,7 +2362,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(vec![Stmt::new(StmtKind::Expr(outer_loop), sp)], sp),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Expr(outer_loop), sp)], sp)),
             span: sp,
         };
 
@@ -2333,7 +2458,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![Stmt::new(
                     StmtKind::Expr(Expr::new(
                         ExprKind::Sus {
@@ -2346,7 +2471,7 @@ mod tests {
                     sp,
                 )],
                 sp,
-            ),
+            )),
             span: sp,
         };
 
@@ -2379,6 +2504,7 @@ mod tests {
                 attrs: Vec::new(),
                 ty: TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp),
                 is_pub: true,
+                is_static: false,
                 default_val: None,
                 span: sp,
             }],
@@ -2388,7 +2514,7 @@ mod tests {
                 this_param: yukic_ast::item::ThisParam::Value,
                 params: Vec::new(),
                 return_type: None,
-                body: Block::new(Vec::new(), sp),
+                body: Some(Block::new(Vec::new(), sp)),
                 is_operator: false,
                 is_override: false,
                 span: sp,
@@ -2410,7 +2536,7 @@ mod tests {
                 this_param: yukic_ast::item::ThisParam::Value,
                 params: Vec::new(),
                 return_type: None,
-                body: Block::new(
+                body: Some(Block::new(
                     vec![
                         // super.greet()
                         Stmt::new(
@@ -2441,7 +2567,7 @@ mod tests {
                         ),
                     ],
                     sp,
-                ),
+                )),
                 is_operator: false,
                 is_override: true,
                 span: sp,
@@ -2485,6 +2611,7 @@ mod tests {
                     attrs: Vec::new(),
                     ty: TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp),
                     is_pub: true,
+                    is_static: false,
                     default_val: None,
                     span: sp,
                 },
@@ -2504,7 +2631,7 @@ mod tests {
                         span: sp,
                     }],
                     return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("Vec2", sp)), sp)),
-                    body: Block::new(Vec::new(), sp),
+                    body: Some(Block::new(Vec::new(), sp)),
                     is_operator: true,
                     is_override: false,
                     span: sp,
@@ -2515,7 +2642,7 @@ mod tests {
                     this_param: yukic_ast::item::ThisParam::Value,
                     params: Vec::new(),
                     return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("Vec2", sp)), sp)),
-                    body: Block::new(Vec::new(), sp),
+                    body: Some(Block::new(Vec::new(), sp)),
                     is_operator: true,
                     is_override: false,
                     span: sp,
@@ -2534,7 +2661,7 @@ mod tests {
                         span: sp,
                     }],
                     return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("bool", sp)), sp)),
-                    body: Block::new(Vec::new(), sp),
+                    body: Some(Block::new(Vec::new(), sp)),
                     is_operator: true,
                     is_override: false,
                     span: sp,
@@ -2569,7 +2696,7 @@ mod tests {
                 },
             ],
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![
                     // set s = a + b
                     Stmt::new(
@@ -2636,7 +2763,7 @@ mod tests {
                     ),
                 ],
                 sp,
-            ),
+            )),
             span: sp,
         };
 
@@ -2727,7 +2854,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(stmts, sp),
+            body: Some(Block::new(stmts, sp)),
             span: sp,
         };
 
@@ -2776,7 +2903,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![lambda_param],
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp)),
-            body: Block::new(vec![Stmt::new(StmtKind::Return(Some(lambda_body)), sp)], sp),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Return(Some(lambda_body)), sp)], sp)),
             span: sp,
         };
 
@@ -2806,7 +2933,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp)),
-            body: Block::new(vec![set_f, call_f], sp),
+            body: Some(Block::new(vec![set_f, call_f], sp)),
             span: sp,
         };
 
@@ -2859,7 +2986,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![cap_param],
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp)),
-            body: Block::new(vec![Stmt::new(StmtKind::Return(Some(cap_body)), sp)], sp),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Return(Some(cap_body)), sp)], sp)),
             span: sp,
         };
 
@@ -2889,7 +3016,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp)),
-            body: Block::new(vec![base_stmt, set_f_cap, call_f_cap], sp),
+            body: Some(Block::new(vec![base_stmt, set_f_cap, call_f_cap], sp)),
             span: sp,
         };
 
@@ -2905,6 +3032,206 @@ mod tests {
         let ir2 = codegen2.emit_llvm_ir_to_string();
         assert!(ir2.contains("struct.env___yuki_closure_"));
         assert!(ir2.contains("yukino_region_alloc"));
+    }
+
+    #[test]
+    fn test_class_static_and_default_fields_codegen() {
+        let sp = dummy_span();
+        let class_decl = yukic_ast::item::ClassDecl {
+            name: Ident::new("Config", sp),
+            is_locked: false,
+            base_class: None,
+            interfaces: Vec::new(),
+            fields: vec![
+                yukic_ast::item::ClassField {
+                    name: Ident::new("LIMIT", sp),
+                    attrs: Vec::new(),
+                    ty: TypeNode::new(TypeNodeKind::Ident(Ident::new("int32", sp)), sp),
+                    is_pub: true,
+                    is_static: true,
+                    default_val: Some(Expr::new(ExprKind::Literal(LiteralValue::Int(42)), sp)),
+                    span: sp,
+                },
+                yukic_ast::item::ClassField {
+                    name: Ident::new("port", sp),
+                    attrs: Vec::new(),
+                    ty: TypeNode::new(TypeNodeKind::Ident(Ident::new("int32", sp)), sp),
+                    is_pub: true,
+                    is_static: false,
+                    default_val: Some(Expr::new(ExprKind::Literal(LiteralValue::Int(8080)), sp)),
+                    span: sp,
+                },
+            ],
+            methods: Vec::new(),
+            accessors: Vec::new(),
+            span: sp,
+        };
+
+        // fun read_cfg() -> int32 { set c = init Config(); return c.port + c.LIMIT }
+        let read_fn = FunDecl {
+            name: Ident::new("read_cfg", sp),
+            attrs: Vec::new(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int32", sp)), sp)),
+            body: Some(Block::new(
+                vec![
+                    Stmt::new(
+                        StmtKind::Set {
+                            target: BindingTarget::Ident(Ident::new("c", sp)),
+                            ty: None,
+                            init: Expr::new(
+                                ExprKind::ClassInit(
+                                    Box::new(Expr::new(ExprKind::Ident(Ident::new("Config", sp)), sp)),
+                                    Vec::new(),
+                                ),
+                                sp,
+                            ),
+                        },
+                        sp,
+                    ),
+                    Stmt::new(
+                        StmtKind::Return(Some(Expr::new(
+                            ExprKind::Binary(
+                                BinaryOp::Add,
+                                Box::new(Expr::new(
+                                    ExprKind::FieldAccess(
+                                        Box::new(Expr::new(ExprKind::Ident(Ident::new("c", sp)), sp)),
+                                        Ident::new("port", sp),
+                                    ),
+                                    sp,
+                                )),
+                                Box::new(Expr::new(
+                                    ExprKind::FieldAccess(
+                                        Box::new(Expr::new(ExprKind::Ident(Ident::new("c", sp)), sp)),
+                                        Ident::new("LIMIT", sp),
+                                    ),
+                                    sp,
+                                )),
+                            ),
+                            sp,
+                        ))),
+                        sp,
+                    ),
+                ],
+                sp,
+            )),
+            span: sp,
+        };
+
+        let mut ast = AstModule::default();
+        ast.items.push(Item::new(ItemId(1), Visibility::Public, ItemKind::Class(class_decl), sp));
+        ast.items.push(Item::new(ItemId(2), Visibility::Public, ItemKind::Fun(read_fn), sp));
+
+        let context = Context::create();
+        let mut codegen = crate::generator::CodeGenerator::new(
+            &context,
+            "test_class_static_default",
+            TargetTriple::host(),
+        )
+        .with_inline_statics(false);
+        codegen.compile_module(&ast).expect("compile_module failed");
+        let ir = codegen.emit_llvm_ir_to_string();
+
+        // static field emitted as global constant, excluded from instance struct
+        assert!(ir.contains("@_Y_Config_S_LIMIT = constant i32 42"));
+        assert!(ir.contains("%class.Config = type { ptr, i32 }"));
+        // default value 8080 stored on instance creation
+        assert!(ir.contains("store i32 8080"));
+    }
+
+    #[test]
+    fn test_switch_string_literal_emits_string_equality() {
+        use yukic_ast::{Pattern, PatternKind, SwitchArm};
+        let sp = dummy_span();
+        let sw_expr = Expr::new(
+            ExprKind::Switch {
+                target: Box::new(Expr::new(
+                    ExprKind::Literal(LiteralValue::String("second".to_string())),
+                    sp,
+                )),
+                arms: vec![
+                    SwitchArm {
+                        pattern: Pattern::new(
+                            PatternKind::Literal(LiteralValue::String("first".to_string())),
+                            sp,
+                        ),
+                        guard: None,
+                        body: Block::new(
+                            vec![Stmt::new(
+                                StmtKind::Return(Some(Expr::new(
+                                    ExprKind::Literal(LiteralValue::Int(1)),
+                                    sp,
+                                ))),
+                                sp,
+                            )],
+                            sp,
+                        ),
+                        span: sp,
+                    },
+                    SwitchArm {
+                        pattern: Pattern::new(
+                            PatternKind::Literal(LiteralValue::String("second".to_string())),
+                            sp,
+                        ),
+                        guard: None,
+                        body: Block::new(
+                            vec![Stmt::new(
+                                StmtKind::Return(Some(Expr::new(
+                                    ExprKind::Literal(LiteralValue::Int(2)),
+                                    sp,
+                                ))),
+                                sp,
+                            )],
+                            sp,
+                        ),
+                        span: sp,
+                    },
+                    SwitchArm {
+                        pattern: Pattern::new(PatternKind::Ident(Ident::new("else", sp)), sp),
+                        guard: None,
+                        body: Block::new(
+                            vec![Stmt::new(
+                                StmtKind::Return(Some(Expr::new(
+                                    ExprKind::Literal(LiteralValue::Int(3)),
+                                    sp,
+                                ))),
+                                sp,
+                            )],
+                            sp,
+                        ),
+                        span: sp,
+                    },
+                ],
+            },
+            sp,
+        );
+
+        let fun_decl = FunDecl {
+            name: Ident::new("sw_str_test", sp),
+            attrs: Vec::new(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int64", sp)), sp)),
+            body: Some(Block::new(vec![Stmt::new(StmtKind::Return(Some(sw_expr)), sp)], sp)),
+            span: sp,
+        };
+
+        let mut ast = AstModule::default();
+        ast.items.push(Item::new(ItemId(1), Visibility::Public, ItemKind::Fun(fun_decl), sp));
+
+        let context = Context::create();
+        let mut codegen = crate::generator::CodeGenerator::new(
+            &context,
+            "test_sw_str_mod",
+            TargetTriple::host(),
+        );
+        codegen.compile_module(&ast).expect("compile_module failed");
+        let ir = codegen.emit_llvm_ir_to_string();
+
+        assert!(ir.contains("str_cmp_bytes"), "expected string equality comparison in switch, IR:\n{ir}");
+        assert!(ir.contains("memcmp"), "expected memcmp call for string switch pattern, IR:\n{ir}");
+        assert!(!ir.contains("br i1 true, label %sw.arm_0"), "first arm must not unconditionally branch to sw.arm_0, IR:\n{ir}");
     }
 }
 

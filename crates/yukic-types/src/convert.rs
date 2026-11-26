@@ -4,6 +4,16 @@ use yukic_ast::types::{TypeNode, TypeNodeKind};
 
 use crate::types::{CIntKind, Type, TypeParam};
 
+pub fn ast_type_to_c_field_type(node: &TypeNode) -> Type {
+    match &node.kind {
+        TypeNodeKind::Array(elem, Some(len)) => {
+            Type::FixedArray(Box::new(ast_type_to_c_field_type(elem)), *len)
+        }
+        TypeNodeKind::Pointer(inner) => Type::Ptr(Box::new(ast_type_to_c_field_type(inner))),
+        _ => ast_type_to_type(node),
+    }
+}
+
 pub fn ast_type_to_type(node: &TypeNode) -> Type {
     match &node.kind {
         TypeNodeKind::Ident(ident) => parse_primitive_or_named(&ident.name),
@@ -113,26 +123,89 @@ pub fn parse_type_generic_args(s: &str) -> (String, Vec<Type>) {
     (s.to_string(), Vec::new())
 }
 
+fn find_matching_paren(s: &str) -> Option<usize> {
+    let mut paren_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => {
+                if paren_depth == 0 && angle_depth == 0 && bracket_depth == 0 {
+                    return Some(idx);
+                }
+                paren_depth = paren_depth.saturating_sub(1);
+            }
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut paren_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut start = 0usize;
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            ',' if paren_depth == 0 && angle_depth == 0 && bracket_depth == 0 => {
+                parts.push(&s[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+fn parse_fn_param_type_str(raw: &str) -> TypeParam {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed.strip_prefix("ref ") {
+        let rest = rest.trim_start();
+        if let Some(inner) = rest.strip_prefix('~') {
+            return TypeParam::new(parse_primitive_or_named(inner.trim()), true, true);
+        }
+        return TypeParam::new(parse_primitive_or_named(rest), true, false);
+    }
+    TypeParam::value(parse_primitive_or_named(trimmed))
+}
+
 fn parse_function_type_str(name: &str) -> Option<Type> {
-    let is_cfun = name.starts_with("cfun(");
-    if !is_cfun && !name.starts_with("fun(") {
+    let trimmed = name.trim();
+    let is_cfun = trimmed.starts_with("cfun(");
+    if !is_cfun && !trimmed.starts_with("fun(") {
         return None;
     }
-    let rest = if is_cfun { &name[5..] } else { &name[4..] };
-    let rparen = rest.find(')')?;
+    let rest = if is_cfun { &trimmed[5..] } else { &trimmed[4..] };
+    let rparen = find_matching_paren(rest)?;
     let params_str = &rest[..rparen];
     let after_paren = rest[rparen + 1..].trim();
     let ret_str = if let Some(stripped) = after_paren.strip_prefix("->") {
         stripped.trim()
-    } else {
+    } else if after_paren.is_empty() {
         "void"
+    } else {
+        return None;
     };
     let params = if params_str.trim().is_empty() {
         Vec::new()
     } else {
-        params_str
-            .split(',')
-            .map(|p| TypeParam::value(parse_primitive_or_named(p.trim())))
+        split_top_level_commas(params_str)
+            .into_iter()
+            .map(parse_fn_param_type_str)
             .collect()
     };
     let ret = Box::new(parse_primitive_or_named(ret_str));
@@ -162,11 +235,11 @@ pub fn parse_primitive_or_named(name: &str) -> Type {
         "uint64" => Type::Uint64,
         "float32" => Type::Float32,
         "float64" => Type::Float64,
-        "bool" => Type::Bool,
+        "bool" | "c_bool" => Type::Bool,
         "char" => Type::Char,
         "string" => Type::String,
         "bytes" => Type::Bytes,
-        "void" => Type::Void,
+        "void" | "c_void" => Type::Void,
         "never" => Type::Never,
         "null" => Type::Null,
         "dynlib" => Type::Dynlib,

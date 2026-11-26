@@ -7,7 +7,7 @@ use yukic_diagnostics::code::{ErrorCode, WarningCode};
 use yukic_span::Span;
 
 use crate::contracts::SemanticContracts;
-use crate::convert::ast_type_to_type;
+use crate::convert::{ast_type_to_c_field_type, ast_type_to_type};
 use crate::env::{ClassDef, EnumDef, FnSig, InterfaceDef, StructDef, TypeEnv};
 use crate::exhaust::ExhaustivenessChecker;
 use crate::mro::MethodResolution;
@@ -79,7 +79,7 @@ impl TypeChecker {
         for item in &module.items {
             match &item.kind {
                 ItemKind::Cfun(decl) => {
-                    if let Err(diag) = SemanticContracts::validate_cfun(decl) {
+                    if let Err(diag) = SemanticContracts::validate_cfun_in_env(decl, &self.env) {
                         self.diagnostics.push(diag);
                     }
                 }
@@ -94,7 +94,7 @@ impl TypeChecker {
                 ItemKind::Externc(block) => {
                     for ext_item in &block.items {
                         if let ExterncItem::Cfun(decl) = ext_item {
-                            if let Err(diag) = SemanticContracts::validate_cfun(decl) {
+                            if let Err(diag) = SemanticContracts::validate_cfun_in_env(decl, &self.env) {
                                 self.diagnostics.push(diag);
                             }
                         }
@@ -202,18 +202,46 @@ impl TypeChecker {
                 ItemKind::Class(decl) => self.register_class(decl),
                 ItemKind::Struct(decl) => self.register_struct(decl),
                 ItemKind::Cstruct(decl) => self.register_cstruct(decl),
+                ItemKind::Cvar(decl) => self.register_cvar(decl),
                 ItemKind::Interface(decl) => self.register_interface(decl),
                 ItemKind::Enum(decl) => self.register_enum(decl),
                 ItemKind::Static(decl) => self.register_static(decl),
                 ItemKind::Externc(block) => {
                     for ext_item in &block.items {
                         match ext_item {
-                            ExterncItem::Cfun(decl) => self.register_cfun(decl),
-                            ExterncItem::Cstruct(decl) => self.register_cstruct(decl),
+                            ExterncItem::Cfun(decl) => {
+                                self.register_cfun(decl);
+                                if let Some(ref ns) = block.namespace {
+                                    self.env.register_c_namespace_symbol(ns.clone(), decl.name.name.clone());
+                                }
+                            }
+                            ExterncItem::Cstruct(decl) => {
+                                self.register_cstruct(decl);
+                                if let Some(ref ns) = block.namespace {
+                                    self.env.register_c_namespace_symbol(ns.clone(), decl.name.name.clone());
+                                }
+                            }
+                            ExterncItem::Cvar(decl) => {
+                                self.register_cvar(decl);
+                                if let Some(ref ns) = block.namespace {
+                                    self.env.register_c_namespace_symbol(ns.clone(), decl.name.name.clone());
+                                }
+                            }
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+        for (ns, syms) in &module.c_namespaces {
+            for sym in syms {
+                self.env.register_c_namespace_symbol(ns.clone(), sym.clone());
+                let qualified = format!("{ns}::{sym}");
+                if let Some(target) = self.env.lookup_type_alias(sym).cloned() {
+                    self.env.register_type_alias(qualified, target);
+                } else if self.env.lookup_struct(sym).is_some() {
+                    self.env.register_type_alias(qualified, Type::Struct(sym.clone()));
+                }
             }
         }
     }
@@ -307,6 +335,9 @@ impl TypeChecker {
             .return_type
             .as_ref()
             .map_or(Type::Void, ast_type_to_type);
+        if decl.is_variadic {
+            self.env.register_variadic_cfun(decl.name.name.clone());
+        }
         self.env.register_cfun(
             decl.name.name.clone(),
             FnSig {
@@ -315,6 +346,11 @@ impl TypeChecker {
                 is_cfun: true,
             },
         );
+    }
+
+    fn register_cvar(&mut self, decl: &CvarDecl) {
+        let ty = ast_type_to_type(&decl.ty);
+        self.env.insert_var(decl.name.name.clone(), ty, true, decl.span);
     }
 
     fn register_class(&mut self, decl: &ClassDecl) {
@@ -331,8 +367,20 @@ impl TypeChecker {
             }
         }
         for field in &decl.fields {
-            def.fields
-                .insert(field.name.name.clone(), ast_type_to_type(&field.ty));
+            if def.fields.contains_key(&field.name.name) || def.static_fields.contains_key(&field.name.name) {
+                self.diagnostics.push(Diagnostic::error(
+                    ErrorCode::E0304,
+                    format!("field '{}' declared multiple times in class '{}'", field.name.name, decl.name.name),
+                    field.name.span,
+                ));
+                continue;
+            }
+            let fty = ast_type_to_type(&field.ty);
+            if field.is_static {
+                def.static_fields.insert(field.name.name.clone(), fty);
+            } else {
+                def.fields.insert(field.name.name.clone(), fty);
+            }
         }
         for method in &decl.methods {
             let params = method
@@ -421,9 +469,13 @@ impl TypeChecker {
     }
 
     fn register_cstruct(&mut self, decl: &CstructDecl) {
-        let mut def = StructDef::default();
+        let mut def = StructDef {
+            is_cstruct: true,
+            is_union: decl.is_union,
+            ..Default::default()
+        };
         for field in &decl.fields {
-            if def.fields.insert(field.name.name.clone(), ast_type_to_type(&field.ty)).is_some() {
+            if def.fields.insert(field.name.name.clone(), ast_type_to_c_field_type(&field.ty)).is_some() {
                 self.diagnostics.push(Diagnostic::error(
                     ErrorCode::E0304,
                     format!("field '{}' declared multiple times in struct '{}'", field.name.name, decl.name.name),
@@ -529,6 +581,9 @@ impl TypeChecker {
         if is_intrinsic_stub {
             return;
         }
+        let Some(ref body) = decl.body else {
+            return;
+        };
 
         let prev_fn = self.current_fn_name.replace(decl.name.name.clone());
         let generic_map: std::collections::HashMap<String, Type> = decl
@@ -562,7 +617,7 @@ impl TypeChecker {
         }
 
         let _ = self.check_block_impl(
-            &decl.body,
+            body,
             Some(&ret),
             Some(("function", decl.name.name.as_str(), decl.name.span)),
         );
@@ -598,6 +653,35 @@ impl TypeChecker {
 
     fn check_class_bodies(&mut self, decl: &ClassDecl) {
         self.current_class = Some(decl.name.name.clone());
+        for field in &decl.fields {
+            let expected = self.resolve_type_node(&field.ty);
+            if field.is_static && field.default_val.is_none() {
+                self.diagnostics.push(Diagnostic::error(
+                    ErrorCode::E0401,
+                    format!("static field `{}` in class `{}` must have an initializer", field.name.name, decl.name.name),
+                    field.span,
+                ));
+                continue;
+            }
+            if let Some(default_expr) = &field.default_val {
+                if !is_literal_expr(default_expr) {
+                    self.diagnostics.push(Diagnostic::error(
+                        ErrorCode::E0401,
+                        format!(
+                            "{} `{}` in class `{}` must be initialized with a literal",
+                            if field.is_static { "static field" } else { "field default" },
+                            field.name.name,
+                            decl.name.name
+                        ),
+                        default_expr.span,
+                    ));
+                    continue;
+                }
+                if let Err(diag) = self.check_expr(default_expr, &expected) {
+                    self.diagnostics.push(diag);
+                }
+            }
+        }
         for method in &decl.methods {
             self.check_method(decl, method);
         }
@@ -608,6 +692,9 @@ impl TypeChecker {
     }
 
     fn check_accessor(&mut self, decl: &ClassDecl, accessor: &PropertyAccessor) {
+        let Some(ref body) = accessor.body else {
+            return;
+        };
         let ty = self.resolve_type_node(&accessor.ty);
         let ret_ty = match &accessor.kind {
             AccessorKind::Get => ty.clone(),
@@ -628,7 +715,7 @@ impl TypeChecker {
         }
 
         let _ = self.check_block_impl(
-            &accessor.body,
+            body,
             Some(&ret_ty),
             Some(("accessor", accessor.name.name.as_str(), accessor.name.span)),
         );
@@ -664,6 +751,10 @@ impl TypeChecker {
     fn check_method(&mut self, decl: &ClassDecl, method: &MethodDecl) {
         let prev_fn = self.current_fn_name.replace(method.name.name.clone());
         self.validate_operator_method(method);
+        let Some(ref body) = method.body else {
+            self.current_fn_name = prev_fn;
+            return;
+        };
         let ret = method
             .return_type
             .as_ref()
@@ -693,7 +784,7 @@ impl TypeChecker {
         }
 
         let _ = self.check_block_impl(
-            &method.body,
+            body,
             Some(&ret),
             Some(("method", method.name.name.as_str(), method.name.span)),
         );
@@ -988,33 +1079,27 @@ impl TypeChecker {
                     if let Some(setter_ty) = self.lookup_class_setter(cname, &field.name) {
                         return Ok(setter_ty);
                     }
-                    if let Some(field_ty) = self.lookup_class_field(cname, &field.name) {
-                        let has_real_field = {
-                            let mut curr = Some(cname.as_str());
-                            let mut found = false;
-                            while let Some(c) = curr {
-                                if let Some(def) = self.env.lookup_class(c) {
-                                    if def.fields.contains_key(&field.name) {
-                                        found = true;
-                                        break;
-                                    }
-                                    curr = def.superclass.as_deref();
-                                } else {
-                                    break;
-                                }
-                            }
-                            found
-                        };
-                        if !has_real_field {
+                    if let Some((is_static, field_ty)) = self.lookup_class_field_mutability(cname, &field.name) {
+                        if is_static {
                             let diag = Diagnostic::error(
-                                ErrorCode::E0401,
-                                format!("cannot assign to read-only property `{}`", field.name),
+                                ErrorCode::E0503,
+                                format!("cannot reassign static field `{}`", field.name),
                                 span,
-                            );
+                            )
+                            .with_note("`static` class fields are immutable and cannot be reassigned with `rewrite`");
                             self.diagnostics.push(diag.clone());
                             return Err(diag);
                         }
                         return Ok(field_ty);
+                    }
+                    if self.lookup_class_field(cname, &field.name).is_some() {
+                        let diag = Diagnostic::error(
+                            ErrorCode::E0401,
+                            format!("cannot assign to read-only property `{}`", field.name),
+                            span,
+                        );
+                        self.diagnostics.push(diag.clone());
+                        return Err(diag);
                     }
                 }
                 self.lookup_field_type(&target_ty, &field.name, span)
@@ -1048,6 +1133,25 @@ impl TypeChecker {
         }
 
         if let (ExprKind::ArrayInit(elems), Type::Array(elem_ty)) = (&expr.kind, expected) {
+            for elem in elems {
+                self.check_expr(elem, elem_ty)?;
+            }
+            return Ok(expected.clone());
+        }
+
+        if let (ExprKind::ArrayInit(elems), Type::FixedArray(elem_ty, expected_len)) = (&expr.kind, expected) {
+            if elems.len() > *expected_len {
+                let diag = Diagnostic::error(
+                    ErrorCode::E0401,
+                    format!(
+                        "too many elements in fixed array initializer: expected at most {expected_len}, found {}",
+                        elems.len()
+                    ),
+                    expr.span,
+                );
+                self.diagnostics.push(diag.clone());
+                return Err(diag);
+            }
             for elem in elems {
                 self.check_expr(elem, elem_ty)?;
             }
@@ -1526,21 +1630,39 @@ impl TypeChecker {
             }
         }
 
-        let mut missing = Vec::new();
-        for field_name in &struct_def.field_names {
-            if !seen.contains(field_name) {
-                missing.push(field_name.as_str());
+        if struct_def.is_union {
+            if fields.len() > 1 {
+                let diag = Diagnostic::error(
+                    ErrorCode::E0401,
+                    format!(
+                        "cunion '{}' initializer can specify at most 1 field, found {}",
+                        name.name,
+                        fields.len()
+                    ),
+                    span,
+                );
+                self.diagnostics.push(diag.clone());
+                if first_err.is_none() {
+                    first_err = Some(diag);
+                }
             }
-        }
-        if !missing.is_empty() {
-            let diag = Diagnostic::error(
-                ErrorCode::E0401,
-                format!("missing field(s) in struct '{}': {}", name.name, missing.join(", ")),
-                span,
-            );
-            self.diagnostics.push(diag.clone());
-            if first_err.is_none() {
-                first_err = Some(diag);
+        } else {
+            let mut missing = Vec::new();
+            for field_name in &struct_def.field_names {
+                if !seen.contains(field_name) {
+                    missing.push(field_name.as_str());
+                }
+            }
+            if !missing.is_empty() {
+                let diag = Diagnostic::error(
+                    ErrorCode::E0401,
+                    format!("missing field(s) in struct '{}': {}", name.name, missing.join(", ")),
+                    span,
+                );
+                self.diagnostics.push(diag.clone());
+                if first_err.is_none() {
+                    first_err = Some(diag);
+                }
             }
         }
 
@@ -1548,7 +1670,8 @@ impl TypeChecker {
             return Err(err);
         }
 
-        Ok(Type::Struct(name.name.clone()))
+        let resolved_name = self.env.resolve_c_namespace_struct_name(&name.name).to_string();
+        Ok(Type::Struct(resolved_name))
     }
 
     fn check_anonymous_fun(
@@ -1597,14 +1720,21 @@ impl TypeChecker {
         let old_return_type = self.current_return_type.take();
         self.current_return_type = expected_block_ret.cloned();
 
+        let Some(ref fun_body) = fun.body else {
+            return Ok(Type::Fn {
+                params: param_types,
+                ret: Box::new(explicit_ret.unwrap_or(Type::Void)),
+                is_cfun: false,
+            });
+        };
         let block_res = if explicit_ret.is_some() {
             self.check_block_impl(
-                &fun.body,
+                fun_body,
                 expected_block_ret,
                 Some(("anonymous function", "<anonymous>", fun.span)),
             )
         } else {
-            self.check_block(&fun.body, expected_block_ret)
+            self.check_block(fun_body, expected_block_ret)
         };
         let inferred_ret = self.current_return_type.clone();
         self.current_return_type = old_return_type;
@@ -1658,7 +1788,7 @@ impl TypeChecker {
             generics: Vec::new(),
             params: ast_params,
             return_type: None,
-            body: block,
+            body: Some(block),
             span,
         };
         self.check_anonymous_fun(&decl, expected_params, expected_ret, span)
@@ -2248,7 +2378,30 @@ impl TypeChecker {
             _ => None,
         };
 
-        if let Some(Type::Fn { params, ret, .. }) = fn_ty {
+        if let Some(Type::Fn { params, ret, is_cfun }) = fn_ty {
+            let is_vararg = is_cfun && self.callee_is_variadic_cfun(callee);
+            if is_vararg {
+                if args.len() < params.len() {
+                    let diag = Diagnostic::error(
+                        ErrorCode::E0401,
+                        format!(
+                            "variadic C function expects at least {} argument(s), found {}",
+                            params.len(),
+                            args.len()
+                        ),
+                        span,
+                    );
+                    self.diagnostics.push(diag.clone());
+                    return Err(diag);
+                }
+                for (arg, param) in args[..params.len()].iter().zip(&params) {
+                    self.check_arg_matches_param(arg, param)?;
+                }
+                for extra_arg in &args[params.len()..] {
+                    self.infer_expr(extra_arg)?;
+                }
+                return Ok(*ret);
+            }
             if args.len() != params.len() {
                 let diag = Diagnostic::error(
                     ErrorCode::E0401,
@@ -2479,7 +2632,10 @@ impl TypeChecker {
             ExprKind::Ident(id) => self.env.lookup_var(&id.name).and_then(|v| v.fixed_size),
             ExprKind::ArrayInit(elems) => Some(elems.len()),
             ExprKind::ArrayAlloc(_, sz) => Some(*sz),
-            _ => None,
+            _ => match &target_ty {
+                Type::FixedArray(_, sz) => Some(*sz),
+                _ => None,
+            },
         };
         if let Some(size) = known_size {
             let out_of_bounds = match &index.kind {
@@ -2501,7 +2657,7 @@ impl TypeChecker {
         }
         match target_ty {
             Type::Bytes | Type::String => Ok(Type::Uint8),
-            Type::Array(elem) | Type::Ptr(elem) => Ok(*elem),
+            Type::Array(elem) | Type::FixedArray(elem, _) | Type::Ptr(elem) => Ok(*elem),
             Type::Map(k, v) => {
                 self.check_expr(index, &k)?;
                 Ok(*v)
@@ -2564,12 +2720,46 @@ impl TypeChecker {
         }
     }
 
+    fn callee_is_variadic_cfun(&self, callee: &Expr) -> bool {
+        match &callee.kind {
+            ExprKind::Ident(id) => self.env.is_variadic_cfun(&id.name),
+            ExprKind::Path(segments) if segments.len() == 2 => {
+                let ns = &segments[0].name;
+                let sym = &segments[1].name;
+                (ns == "extern" || self.env.is_c_namespace_symbol(ns, sym))
+                    && self.env.is_variadic_cfun(sym)
+            }
+            _ => false,
+        }
+    }
+
     fn infer_path_expr(&mut self, segments: &[Ident], span: Span) -> Result<Type, Diagnostic> {
         let path = segments
             .iter()
             .map(|s| s.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
+
+        if segments.len() == 2 && self.env.is_c_namespace_symbol(&segments[0].name, &segments[1].name) {
+            let sym = &segments[1].name;
+            if let Some(sig) = self.env.lookup_cfun(sym) {
+                return Ok(Type::Fn {
+                    params: sig.params.clone(),
+                    ret: Box::new(sig.ret.clone()),
+                    is_cfun: true,
+                });
+            }
+            if let Some(info) = self.env.lookup_var(sym) {
+                return Ok(info.ty.clone());
+            }
+            if let Some(sig) = self.env.lookup_fn(sym) {
+                return Ok(Type::Fn {
+                    params: sig.params.clone(),
+                    ret: Box::new(sig.ret.clone()),
+                    is_cfun: sig.is_cfun,
+                });
+            }
+        }
 
         if segments.len() == 2 && segments[0].name == "extern" {
             let c_name = &segments[1].name;
@@ -3210,8 +3400,26 @@ impl TypeChecker {
             if let Some(ty) = def.fields.get(field_name) {
                 return Some(ty.clone());
             }
+            if let Some(ty) = def.static_fields.get(field_name) {
+                return Some(ty.clone());
+            }
             if let Some(ty) = def.getters.get(field_name) {
                 return Some(ty.clone());
+            }
+            curr = def.superclass.as_deref();
+        }
+        None
+    }
+
+    fn lookup_class_field_mutability(&self, class_name: &str, field_name: &str) -> Option<(bool, Type)> {
+        let mut curr = Some(class_name);
+        while let Some(name) = curr {
+            let def = self.env.lookup_class(name)?;
+            if let Some(ty) = def.fields.get(field_name) {
+                return Some((false, ty.clone()));
+            }
+            if let Some(ty) = def.static_fields.get(field_name) {
+                return Some((true, ty.clone()));
             }
             curr = def.superclass.as_deref();
         }
@@ -3298,5 +3506,15 @@ impl TypeChecker {
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn is_literal_expr(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(_) => true,
+        ExprKind::Unary(UnaryOp::Neg | UnaryOp::Not | UnaryOp::BitNot, inner) => {
+            is_literal_expr(inner)
+        }
+        _ => false,
     }
 }

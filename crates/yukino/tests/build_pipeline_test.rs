@@ -1296,6 +1296,440 @@ lib_a = { path = "../lib_a" }
     let _ = fs::remove_dir_all(base);
 }
 
+#[test]
+fn test_all_config_profile_fields_work_end_to_end() {
+    let ws = setup_temp_workspace("all_profile_fields");
+    fs::create_dir_all(ws.join("src")).expect("create src");
+    fs::create_dir_all(ws.join("native_lib")).expect("create native_lib");
+
+    let manifest = r#"[bin]
+name = "cfg_app"
+namedbg = "cfg_app_debug"
+version = "0.1.0"
+entry = "src/main.ykn"
+yukino = ["0.1.1", "+"]
+includes = ["core"]
+
+[config.custom]
+inline_statics = true
+strip_unused = true
+opt_level = 2
+lto = "thin"
+debug_assertions = false
+panic_strategy = "abort"
+strip = true
+function_sections = true
+cpu = "generic"
+features = []
+reloc_model = "pic"
+code_model = "small"
+fast_math = true
+emit = ["bin", "llvm-ir", "asm"]
+
+[libs.static]
+search_paths = ["native_lib"]
+"#;
+    fs::write(ws.join("yuki.toml"), manifest).expect("write yuki.toml");
+
+    let src = r#"
+load core.macro: cfg
+
+static MAGIC: int64 = 777
+
+#[cfg(debug_assertions)]
+fun only_debug() -> int64 { return 111 }
+
+#[cfg(not(debug_assertions))]
+fun only_release_mode() -> int64 { return MAGIC }
+
+fun calc_fp(a: float64, b: float64) -> float64 {
+    return a * b + 1.0
+}
+
+fun main() {
+    set v = only_release_mode()
+    set _ = calc_fp(2.0, 3.0)
+    if cfg!(debug_assertions) {
+        set _ = 999
+    }
+    set _ = v
+}
+"#;
+    fs::write(ws.join("src/main.ykn"), src).expect("write main.ykn");
+
+    let opts = BuildOptions {
+        project_dir: ws.clone(),
+        profile: "custom".to_string(),
+        ..Default::default()
+    };
+    let artifact = build_project(&opts).expect("build with custom profile");
+    assert!(artifact.is_file(), "binary artifact should exist");
+
+    let ll_path = artifact.with_extension("ll");
+    let asm_path = artifact.with_extension("s");
+    assert!(ll_path.is_file(), "llvm-ir output should be emitted at {}", ll_path.display());
+    assert!(asm_path.is_file(), "asm output should be emitted at {}", asm_path.display());
+
+    let ll_content = fs::read_to_string(&ll_path).expect("read emitted ll");
+    assert!(!ll_content.contains("only_debug"), "debug_assertions=false must strip #[cfg(debug_assertions)]");
+    assert!(ll_content.contains("i64 777"), "inline_statics=true should inline constant 777");
+    assert!(!ll_content.contains("i64 999"), "cfg!(debug_assertions) should evaluate to false");
+
+    let _ = fs::remove_dir_all(ws);
+}
+
+#[test]
+fn test_workspace_default_members_and_build_inheritance() {
+    let ws = setup_temp_workspace("ws_default_members");
+    let lib_a = ws.join("libs/lib_a");
+    let lib_b = ws.join("libs/lib_b");
+    let search_dir = ws.join("vendor/libs");
+    fs::create_dir_all(lib_a.join("lib_a")).expect("create lib_a");
+    fs::create_dir_all(lib_b.join("lib_b")).expect("create lib_b");
+    fs::create_dir_all(&search_dir).expect("create search_dir");
+
+    let ws_toml = r#"[workspace]
+name = "my_ws"
+members = ["libs/*"]
+default_members = ["libs/lib_a"]
+
+[workspace.build]
+search_paths = ["vendor/libs"]
+"#;
+    fs::write(ws.join("yukispace.toml"), ws_toml).expect("write yukispace.toml");
+
+    fs::write(
+        lib_a.join("lib.toml"),
+        "[lib]\nname = \"lib_a\"\nversion = \"0.1.0\"\nentry = \"lib_a/lib.ykn\"\nyukino = [\"0.1.1\", \"+\"]\nincludes = []\n",
+    )
+    .expect("write lib_a toml");
+    fs::write(lib_a.join("lib_a/lib.ykn"), "public fun a_fn() -> int64 { return 1 }\n").expect("write lib_a src");
+
+    fs::write(
+        lib_b.join("lib.toml"),
+        "[lib]\nname = \"lib_b\"\nversion = \"0.1.0\"\nentry = \"lib_b/lib.ykn\"\nyukino = [\"0.1.1\", \"+\"]\nincludes = []\n",
+    )
+    .expect("write lib_b toml");
+    fs::write(lib_b.join("lib_b/lib.ykn"), "public fun b_fn() -> int64 { return 2 }\n").expect("write lib_b src");
+
+    let opts = BuildOptions {
+        project_dir: ws.clone(),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let artifact = build_project(&opts).expect("build workspace");
+    assert!(artifact.is_file(), "default member lib_a artifact must be built");
+    assert!(lib_a.join("yuki-work/local/build").exists(), "lib_a should be built");
+    assert!(!lib_b.join("yuki-work/local/build").exists(), "lib_b should NOT be built when excluded by default_members");
+
+    let _ = fs::remove_dir_all(ws);
+}
+
+#[test]
+fn test_build_with_mfpath_and_package_priority() {
+    let ws = setup_temp_workspace("mfpath_pkg_priority");
+    let app_dir = ws.join("apps/cli");
+    let lib_dir = ws.join("libs/utils");
+    fs::create_dir_all(app_dir.join("src")).expect("create app src");
+    fs::create_dir_all(lib_dir.join("src")).expect("create lib src");
+
+    fs::write(
+        ws.join("yukispace.toml"),
+        "[workspace]\nname = \"mf_ws\"\nmembers = [\"libs/*\", \"apps/*\"]\n",
+    )
+    .expect("write ws");
+    fs::write(
+        lib_dir.join("lib.toml"),
+        "[lib]\nname = \"helper_lib\"\nversion = \"0.1.0\"\nentry = \"src/lib.ykn\"\nyukino = [\"0.1.1\", \"+\"]\nincludes = []\n",
+    )
+    .expect("write lib.toml");
+    fs::write(lib_dir.join("src/lib.ykn"), "public fun id(x: int64) -> int64 { return x }\n")
+        .expect("write lib.ykn");
+
+    fs::write(
+        app_dir.join("yuki.toml"),
+        "[bin]\nname = \"cli_app\"\nversion = \"0.1.0\"\nentry = \"src/main.ykn\"\nyukino = [\"0.1.1\", \"+\"]\nincludes = []\n",
+    )
+    .expect("write yuki.toml");
+    fs::write(app_dir.join("src/main.ykn"), "fun main() { space }\n").expect("write main.ykn");
+
+    // 1. Build standalone manifest from outside directory using manifest_path (--mfpath)
+    let mf_opts = BuildOptions {
+        project_dir: std::env::temp_dir(),
+        manifest_path: Some(app_dir.join("yuki.toml")),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let cli_artifact = build_project(&mf_opts).expect("build via --mfpath");
+    assert!(cli_artifact.is_file(), "artifact built via --mfpath must exist");
+
+    // 2. Build workspace via --mfpath yukispace.toml targeting package by name (differs from folder name)
+    let ws_pkg_opts = BuildOptions {
+        project_dir: std::env::temp_dir(),
+        manifest_path: Some(ws.join("yukispace.toml")),
+        package: Some("helper_lib".to_string()),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let lib_artifact = build_project(&ws_pkg_opts).expect("build workspace package by name via --mfpath");
+    assert!(lib_artifact.is_file(), "lib artifact built by name must exist");
+
+    // 3. Fallback to relative path "libs/utils" inside workspace
+    let ws_rel_opts = BuildOptions {
+        project_dir: ws.clone(),
+        package: Some("libs/utils".to_string()),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let rel_artifact = build_project(&ws_rel_opts).expect("build workspace package by relative path");
+    assert!(rel_artifact.is_file(), "lib artifact built by relative path must exist");
+
+    // 4. Unknown package errors explicitly
+    let err_opts = BuildOptions {
+        project_dir: ws.clone(),
+        package: Some("nonexistent_pkg".to_string()),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    assert!(build_project(&err_opts).is_err(), "unknown package must fail");
+
+    let _ = fs::remove_dir_all(ws);
+}
+
+#[test]
+fn test_cload_c_header_end_to_end() {
+    let cc = if std::process::Command::new("cc").arg("--version").output().is_ok() {
+        "cc"
+    } else if std::process::Command::new("clang").arg("--version").output().is_ok() {
+        "clang"
+    } else {
+        return;
+    };
+
+    let base = setup_temp_workspace("cload_e2e");
+    fs::create_dir_all(base.join("src")).expect("create src");
+    fs::create_dir_all(base.join("native/include")).expect("create native/include");
+
+    let sub_h = r#"
+#pragma once
+#include <stdint.h>
+
+#define SUB_MAGIC 7
+enum Kind {
+    KIND_NONE = 0,
+    KIND_OK = 3
+};
+
+struct Vec3 {
+    int32_t elems[3];
+};
+"#;
+    let main_h = r#"
+#pragma once
+#include "sub_types.h"
+
+union Packet {
+    int32_t as_int;
+    uint8_t bytes[4];
+};
+
+extern int c_global_seed;
+int c_sum_vec(struct Vec3 v);
+int c_sum_var(int count, ...);
+int c_apply(int (*cb)(int), int val);
+int c_read_packet(union Packet p);
+"#;
+    let native_c = r#"
+#include "include/main_api.h"
+#include <stdarg.h>
+
+int c_global_seed = 100;
+
+int c_sum_vec(struct Vec3 v) {
+    return v.elems[0] + v.elems[1] + v.elems[2];
+}
+
+int c_sum_var(int count, ...) {
+    va_list ap;
+    va_start(ap, count);
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        total += va_arg(ap, int);
+    }
+    va_end(ap);
+    return total;
+}
+
+int c_apply(int (*cb)(int), int val) {
+    return cb(val);
+}
+
+int c_read_packet(union Packet p) {
+    return p.as_int;
+}
+"#;
+    fs::write(base.join("native/include/sub_types.h"), sub_h).expect("write sub_types.h");
+    fs::write(base.join("native/include/main_api.h"), main_h).expect("write main_api.h");
+    fs::write(base.join("native/native.c"), native_c).expect("write native.c");
+
+    let obj_out = base.join("native/native.o");
+    let cc_status = std::process::Command::new(cc)
+        .args([
+            "-c",
+            base.join("native/native.c").to_str().unwrap(),
+            "-o",
+            obj_out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run C compiler");
+    assert!(cc_status.success(), "C compilation must succeed");
+
+    let manifest = r#"[bin]
+name = "cload_app"
+version = "0.1.0"
+entry = "src/main.ykn"
+yukino = ["0.1.1", "+"]
+includes = []
+
+[libs.static]
+objects = ["native/native.o"]
+"#;
+    fs::write(base.join("yuki.toml"), manifest).expect("write yuki.toml");
+
+    // cload path resolves strictly relative to manifest root (`native/include/main_api.h`), NOT src/.
+    let main_ykn = r#"
+cload "native/include/main_api.h"
+
+cfun exit(code: c_int) -> void;
+
+cfun double_it(x: c_int) -> c_int {
+    return x * 2
+}
+
+fun main() {
+    set v = Vec3 { elems: [10, 20, 30] }
+    set p = main_api::Packet { as_int: 42 }
+    set s1 = c_sum_vec(v)
+    set s2 = main_api::c_sum_var(3, 1, 2, 3)
+    set s3 = c_apply(double_it, 5)
+    set s4 = c_read_packet(p)
+    if s1 != 60 { exit(11) }
+    if s2 != 6 { exit(12) }
+    if s3 != 10 { exit(13) }
+    if s4 != 42 { exit(14) }
+    if c_global_seed != 100 { exit(15) }
+    if SUB_MAGIC != 7 { exit(16) }
+    if KIND_OK != 3 { exit(17) }
+    set total = s1 + s2 + s3 + s4 + c_global_seed + SUB_MAGIC + KIND_OK
+    if total != 228 {
+        exit(1)
+    }
+}
+"#;
+    fs::write(base.join("src/main.ykn"), main_ykn).expect("write main.ykn");
+
+    let opts = BuildOptions {
+        project_dir: base.clone(),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let exe = build_project(&opts).expect("build project using cload header");
+    assert!(exe.is_file(), "output binary should exist");
+
+    let run_out = std::process::Command::new(&exe)
+        .output()
+        .expect("run built executable");
+    assert!(
+        run_out.status.success(),
+        "cload executable exited with {:?}: stdout={} stderr={}",
+        run_out.status,
+        String::from_utf8_lossy(&run_out.stdout),
+        String::from_utf8_lossy(&run_out.stderr)
+    );
+
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn test_build_script_manifest_directives_restore_on_success_and_failure() {
+    let ws = setup_temp_workspace("build_script_manifest_overrides");
+    let src = ws.join("src");
+    fs::create_dir_all(&src).expect("create src");
+
+    let orig_manifest = concat!(
+        "# user manifest comment preserved\n",
+        "[bin]\n",
+        "name = \"orig_app\"\n",
+        "namedbg = \"orig_app_dbg\"\n",
+        "version = \"0.1.0\"\n",
+        "entry = \"src/main.ykn\"\n",
+        "yukino = [\"0.1.0\", \"+\"]\n",
+        "includes = [\"core\", \"stdlib\"]\n",
+        "\n",
+        "[features]\n",
+        "default = []\n",
+    );
+    let mf_path = ws.join("yuki.toml");
+    fs::write(&mf_path, orig_manifest).expect("write manifest");
+
+    let main_ok = concat!(
+        "load std.io: println\n",
+        "\n",
+        "static OVERRIDDEN_NAME = yukienv!(\"bin.name\")\n",
+        "\n",
+        "fun main() {\n",
+        "    println(OVERRIDDEN_NAME)\n",
+        "}\n",
+    );
+    fs::write(src.join("main.ykn"), main_ok).expect("write main.ykn");
+
+    let build_ykn = concat!(
+        "load std.io: print\n",
+        "\n",
+        "fun main() {\n",
+        "    print(\"yuki:manifest=bin.name=temp_renamed_app\\n\")\n",
+        "    print(\"yuki:manifest=config.debug.opt_level=2\\n\")\n",
+        "    print(\"yuki:manifest-append=libs.static.system=m\\n\")\n",
+        "    print(\"yuki:manifest-remove=bin.namedbg\\n\")\n",
+        "}\n",
+    );
+    fs::write(ws.join("build.ykn"), build_ykn).expect("write build.ykn");
+
+    // 1. Successful build applies temporary overrides and restores original yuki.toml
+    let opts = BuildOptions {
+        project_dir: ws.clone(),
+        profile: "debug".to_string(),
+        ..Default::default()
+    };
+    let artifact = build_project(&opts).expect("build succeeds with temporary manifest overrides");
+    assert!(artifact.is_file(), "output binary should exist");
+    assert_eq!(
+        artifact.file_name().and_then(|n| n.to_str()),
+        Some(if cfg!(windows) { "temp_renamed_app.exe" } else { "temp_renamed_app" })
+    );
+    let run_out = std::process::Command::new(&artifact)
+        .output()
+        .expect("run compiled binary");
+    assert!(run_out.status.success());
+    assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "temp_renamed_app");
+    assert_eq!(
+        fs::read_to_string(&mf_path).expect("read manifest after success"),
+        orig_manifest
+    );
+
+    // 2. Failing build still restores original yuki.toml
+    fs::write(src.join("main.ykn"), "load std.io: println\nfun main() { undefined_symbol_err() }\n")
+        .expect("write broken main.ykn");
+    let err = build_project(&opts).expect_err("broken source must fail compilation");
+    assert!(!err.to_string().is_empty());
+    assert_eq!(
+        fs::read_to_string(&mf_path).expect("read manifest after failure"),
+        orig_manifest
+    );
+
+    let _ = fs::remove_dir_all(ws);
+}
+
 
 
 

@@ -697,7 +697,7 @@ fn test_ref_parameter_and_call_codegen() {
             span: dummy_span,
         }],
         return_type: None,
-        body: Block::new(
+        body: Some(Block::new(
             vec![Stmt::new(
                 StmtKind::Rewrite {
                     target: LValue::Ident(Ident::new("x", dummy_span)),
@@ -714,7 +714,7 @@ fn test_ref_parameter_and_call_codegen() {
                 dummy_span,
             )],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -810,6 +810,7 @@ fn test_class_method_ref_param_signature_codegen() {
             attrs: vec![],
             ty: i32_node.clone(),
             is_pub: false,
+            is_static: false,
             default_val: None,
             span: dummy_span,
         }],
@@ -827,7 +828,7 @@ fn test_class_method_ref_param_signature_codegen() {
                 span: dummy_span,
             }],
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![Stmt::new(
                     StmtKind::Rewrite {
                         target: LValue::Field(
@@ -843,7 +844,7 @@ fn test_class_method_ref_param_signature_codegen() {
                     dummy_span,
                 )],
                 dummy_span,
-            ),
+            )),
             is_operator: false,
             is_override: false,
             span: dummy_span,
@@ -927,7 +928,7 @@ fn test_external_class_method_with_regional_ref_signature() {
                     span: dummy_span,
                 }],
                 return_type: None,
-                body: Block::new(vec![], dummy_span),
+                body: Some(Block::new(vec![], dummy_span)),
                 is_operator: false,
                 is_override: false,
                 span: dummy_span,
@@ -972,7 +973,7 @@ fn test_external_class_method_with_regional_ref_signature() {
                 },
             ],
             return_type: None,
-            body: Block::new(
+            body: Some(Block::new(
                 vec![Stmt::new(
                     StmtKind::Expr(Expr::new(
                         ExprKind::MethodCall(
@@ -991,7 +992,7 @@ fn test_external_class_method_with_regional_ref_signature() {
                     dummy_span,
                 )],
                 dummy_span,
-            ),
+            )),
             span: dummy_span,
         }),
         dummy_span,
@@ -1052,7 +1053,7 @@ fn test_named_args_call_codegen() {
             },
         ],
         return_type: Some(i32_node.clone()),
-        body: Block::new(
+        body: Some(Block::new(
             vec![Stmt::new(
                 StmtKind::Return(Some(Expr::new(
                     ExprKind::Binary(
@@ -1065,7 +1066,7 @@ fn test_named_args_call_codegen() {
                 dummy_span,
             )],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -1075,7 +1076,7 @@ fn test_named_args_call_codegen() {
         generics: vec![],
         params: vec![],
         return_type: Some(i32_node),
-        body: Block::new(
+        body: Some(Block::new(
             vec![Stmt::new(
                 StmtKind::Return(Some(Expr::new(
                     ExprKind::Call(
@@ -1102,7 +1103,7 @@ fn test_named_args_call_codegen() {
                 dummy_span,
             )],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -1151,7 +1152,7 @@ fn test_string_and_array_cp_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(
+        body: Some(Block::new(
             vec![
                 Stmt::new(
                     StmtKind::Set {
@@ -1208,7 +1209,7 @@ fn test_string_and_array_cp_codegen() {
                 ),
             ],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -1282,7 +1283,7 @@ fn test_region_block_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(
+        body: Some(Block::new(
             vec![
                 Stmt::new(
                     StmtKind::Set {
@@ -1294,7 +1295,7 @@ fn test_region_block_codegen() {
                 ),
             ],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -1345,7 +1346,7 @@ fn test_region_block_export_and_scratch_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(
+        body: Some(Block::new(
             vec![
                 Stmt::new(
                     StmtKind::Set {
@@ -1357,7 +1358,7 @@ fn test_region_block_export_and_scratch_codegen() {
                 ),
             ],
             dummy_span,
-        ),
+        )),
         span: dummy_span,
     };
 
@@ -1418,7 +1419,7 @@ fn make_pow_test_fn(span: yukic_span::Span) -> yukic_ast::item::FunDecl {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(stmts, span),
+        body: Some(Block::new(stmts, span)),
         span,
     }
 }
@@ -1491,7 +1492,7 @@ fn test_region_capacity_attribute_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(stmts, dummy_span),
+        body: Some(Block::new(stmts, dummy_span)),
         span: dummy_span,
     };
 
@@ -1568,7 +1569,7 @@ fn test_arena_and_persistent_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(stmts, dummy_span),
+        body: Some(Block::new(stmts, dummy_span)),
         span: dummy_span,
     };
 
@@ -1633,7 +1634,7 @@ fn test_persistent_class_instance_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(vec![Stmt::new(StmtKind::Expr(persistent_call), dummy_span)], dummy_span),
+        body: Some(Block::new(vec![Stmt::new(StmtKind::Expr(persistent_call), dummy_span)], dummy_span)),
         span: dummy_span,
     };
 
@@ -1708,7 +1709,7 @@ fn test_persistent_class_array_codegen() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(vec![Stmt::new(StmtKind::Expr(persistent_call), dummy_span)], dummy_span),
+        body: Some(Block::new(vec![Stmt::new(StmtKind::Expr(persistent_call), dummy_span)], dummy_span)),
         span: dummy_span,
     };
 

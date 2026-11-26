@@ -18,7 +18,7 @@ pub use utf8::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn yukino_rt_version() -> *const u8 {
-    c"yukino-rt 0.1.0".as_ptr().cast()
+    c"yukino-rt 0.1.1".as_ptr().cast()
 }
 
 #[cfg(test)]

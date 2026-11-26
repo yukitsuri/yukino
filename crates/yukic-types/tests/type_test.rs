@@ -590,6 +590,7 @@ fn test_cfun_c_abi_validation() {
             ),
             span: dummy_span(),
         }],
+        is_variadic: false,
         return_type: Some(TypeNode::new(
             yukic_ast::types::TypeNodeKind::Ident(ident("int32")),
             dummy_span(),
@@ -612,6 +613,7 @@ fn test_cfun_c_abi_validation() {
             ),
             span: dummy_span(),
         }],
+        is_variadic: false,
         return_type: None,
         symbol_override: None,
         body: None,
@@ -794,7 +796,7 @@ fn test_test_modifiers_and_stable_contracts() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(vec![], dummy_span()),
+        body: Some(Block::new(vec![], dummy_span())),
         span: dummy_span(),
     };
     let err = SemanticContracts::validate_test_modifiers(&fun_without_test).unwrap_err();
@@ -809,7 +811,7 @@ fn test_test_modifiers_and_stable_contracts() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(vec![], dummy_span()),
+        body: Some(Block::new(vec![], dummy_span())),
         span: dummy_span(),
     };
     assert!(SemanticContracts::validate_test_modifiers(&fun_with_test).is_ok());
@@ -824,7 +826,7 @@ fn test_test_modifiers_and_stable_contracts() {
         generics: vec![],
         params: vec![],
         return_type: None,
-        body: Block::new(vec![], dummy_span()),
+        body: Some(Block::new(vec![], dummy_span())),
         span: dummy_span(),
     };
     let stable_err = SemanticContracts::validate_stable_decl(&stable_fun, true).unwrap_err();
@@ -1585,7 +1587,7 @@ fn test_class_with_interface_validation() {
                     yukic_ast::types::TypeNodeKind::Ident(ident("string")),
                     dspan,
                 )),
-                body: Block {
+                body: Some(Block {
                     stmts: vec![Stmt {
                         kind: StmtKind::Return(Some(Expr::new(
                             ExprKind::Literal(LiteralValue::String("beep".to_string())),
@@ -1594,7 +1596,7 @@ fn test_class_with_interface_validation() {
                         span: dspan,
                     }],
                     span: dspan,
-                },
+                }),
                 is_operator: false,
                 is_override: false,
                 span: dspan,
@@ -1734,7 +1736,7 @@ fn test_generic_interface_validation() {
                     yukic_ast::types::TypeNodeKind::Ident(ident("int64")),
                     dspan,
                 )),
-                body: Block {
+                body: Some(Block {
                     stmts: vec![Stmt {
                         kind: StmtKind::Return(Some(Expr::new(
                             ExprKind::Literal(LiteralValue::Int(0)),
@@ -1743,7 +1745,7 @@ fn test_generic_interface_validation() {
                         span: dspan,
                     }],
                     span: dspan,
-                },
+                }),
                 is_operator: false,
                 is_override: false,
                 span: dspan,
@@ -1791,7 +1793,7 @@ fn test_generic_interface_validation() {
                     yukic_ast::types::TypeNodeKind::Ident(ident("int64")),
                     dspan,
                 )),
-                body: Block { stmts: vec![], span: dspan },
+                body: Some(Block { stmts: vec![], span: dspan }),
                 is_operator: false,
                 is_override: false,
                 span: dspan,
@@ -1873,6 +1875,7 @@ fn test_property_accessor_types() {
                 attrs: vec![],
                 ty: TypeNode::new(yukic_ast::types::TypeNodeKind::Ident(ident("string")), dspan),
                 is_pub: false,
+                is_static: false,
                 default_val: None,
                 span: dspan,
             }],
@@ -1883,7 +1886,7 @@ fn test_property_accessor_types() {
                     attrs: vec![],
                     ty: TypeNode::new(yukic_ast::types::TypeNodeKind::Ident(ident("string")), dspan),
                     kind: AccessorKind::Get,
-                    body: Block {
+                    body: Some(Block {
                         stmts: vec![Stmt::new(
                             StmtKind::Return(Some(Expr::new(
                                 ExprKind::FieldAccess(
@@ -1895,7 +1898,7 @@ fn test_property_accessor_types() {
                             dspan,
                         )],
                         span: dspan,
-                    },
+                    }),
                     span: dspan,
                 },
                 PropertyAccessor {
@@ -1903,7 +1906,7 @@ fn test_property_accessor_types() {
                     attrs: vec![],
                     ty: TypeNode::new(yukic_ast::types::TypeNodeKind::Ident(ident("string")), dspan),
                     kind: AccessorKind::Set(ident("v")),
-                    body: Block {
+                    body: Some(Block {
                         stmts: vec![Stmt::new(
                             StmtKind::Rewrite {
                                 target: LValue::Field(
@@ -1916,7 +1919,7 @@ fn test_property_accessor_types() {
                             dspan,
                         )],
                         span: dspan,
-                    },
+                    }),
                     span: dspan,
                 },
             ],
@@ -2052,7 +2055,7 @@ fn test_operator_overload_typing() {
                     span: dspan,
                 }],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![return_this_stmt(dspan)], dspan),
+                body: Some(Block::new(vec![return_this_stmt(dspan)], dspan)),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2063,7 +2066,7 @@ fn test_operator_overload_typing() {
                 this_param: item::ThisParam::Value,
                 params: vec![],
                 return_type: Some(vec_ty_node.clone()),
-                body: Block::new(vec![return_this_stmt(dspan)], dspan),
+                body: Some(Block::new(vec![return_this_stmt(dspan)], dspan)),
                 is_operator: true,
                 is_override: false,
                 span: dspan,
@@ -2106,6 +2109,7 @@ fn test_cfun_pointer_typechecking_and_casting() {
             CParam { name: ident("a"), ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dspan), span: dspan },
             CParam { name: ident("b"), ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), dspan), span: dspan },
         ],
+        is_variadic: false,
         return_type: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), dspan)),
         symbol_override: None,
         body: None,
@@ -2479,7 +2483,7 @@ fn test_type_alias_equivalence() {
             span: dspan,
         }],
         return_type: Some(TypeNode::new(yukic_ast::types::TypeNodeKind::Ident(ident("int64")), dspan)),
-        body: Block::new(vec![set_stmt, ret_stmt], dspan),
+        body: Some(Block::new(vec![set_stmt, ret_stmt], dspan)),
         span: dspan,
     };
     mod_ast.items.push(Item::new(
@@ -2514,7 +2518,7 @@ fn test_type_alias_equivalence() {
             span: dspan,
         }],
         return_type: Some(TypeNode::new(yukic_ast::types::TypeNodeKind::Ident(ident("UserId")), dspan)),
-        body: Block::new(vec![call_ret_stmt], dspan),
+        body: Some(Block::new(vec![call_ret_stmt], dspan)),
         span: dspan,
     };
     mod_ast.items.push(Item::new(
@@ -2680,7 +2684,7 @@ fn test_anonymous_fun_and_closure_types() {
         generics: Vec::new(),
         params: vec![param],
         return_type: None,
-        body: block,
+        body: Some(block),
         span: dspan,
     };
     let anon_fun = Expr::new(ExprKind::AnonymousFun(Box::new(decl)), dspan);
@@ -2723,7 +2727,7 @@ fn test_thunk_function_attribute() {
             },
         ],
         return_type: None,
-        body: Block { stmts: vec![], span: dspan },
+        body: Some(Block { stmts: vec![], span: dspan }),
         span: dspan,
     };
 
@@ -2792,7 +2796,7 @@ fn check_fun_module(ret: Option<&str>, body: Vec<Stmt>) -> Result<(), Vec<yukic_
         generics: vec![],
         params: vec![],
         return_type,
-        body: Block::new(body, dummy_span()),
+        body: Some(Block::new(body, dummy_span())),
         span: dummy_span(),
     };
     let mut module = Module::new(FileId(0));
@@ -3775,4 +3779,527 @@ fn test_fixed_array_compile_time_bounds_check() {
     let diag = checker.diagnostics.iter().find(|d| d.code.as_str() == "E0401");
     assert!(diag.is_some());
     assert!(diag.unwrap().message.contains("array index out of bounds: index is 4, but array length is 3"));
+}
+
+#[test]
+fn test_class_static_and_default_fields_validation() {
+    let dspan = dummy_span();
+    let i32_ty = TypeNode::new(TypeNodeKind::Ident(ident("int32")), dspan);
+    let str_ty = TypeNode::new(TypeNodeKind::Ident(ident("string")), dspan);
+
+    // class Config { static MAX_RETRY: int32 = 5; port: int32 = 8080; host: string = "localhost"; ... }
+    let valid_class = Item {
+        id: ItemId(1),
+        visibility: Visibility::Public,
+        attrs: vec![],
+        kind: ItemKind::Class(ClassDecl {
+            name: ident("Config"),
+            is_locked: false,
+            base_class: None,
+            interfaces: vec![],
+            fields: vec![
+                ClassField {
+                    name: ident("MAX_RETRY"),
+                    attrs: vec![],
+                    ty: i32_ty.clone(),
+                    is_pub: true,
+                    is_static: true,
+                    default_val: Some(Expr::new(ExprKind::Literal(LiteralValue::Int(5)), dspan)),
+                    span: dspan,
+                },
+                ClassField {
+                    name: ident("port"),
+                    attrs: vec![],
+                    ty: i32_ty.clone(),
+                    is_pub: false,
+                    is_static: false,
+                    default_val: Some(Expr::new(ExprKind::Literal(LiteralValue::Int(8080)), dspan)),
+                    span: dspan,
+                },
+                ClassField {
+                    name: ident("host"),
+                    attrs: vec![],
+                    ty: str_ty,
+                    is_pub: false,
+                    is_static: false,
+                    default_val: Some(Expr::new(
+                        ExprKind::Literal(LiteralValue::String("localhost".to_string())),
+                        dspan,
+                    )),
+                    span: dspan,
+                },
+            ],
+            methods: vec![MethodDecl {
+                name: ident("read_max"),
+                attrs: vec![],
+                this_param: item::ThisParam::Value,
+                params: vec![],
+                return_type: Some(i32_ty.clone()),
+                body: Some(Block::new(
+                    vec![Stmt::new(
+                        StmtKind::Return(Some(Expr::new(
+                            ExprKind::FieldAccess(
+                                Box::new(Expr::new(ExprKind::This, dspan)),
+                                ident("MAX_RETRY"),
+                            ),
+                            dspan,
+                        ))),
+                        dspan,
+                    )],
+                    dspan,
+                )),
+                is_operator: false,
+                is_override: false,
+                span: dspan,
+            }],
+            accessors: vec![],
+            span: dspan,
+        }),
+        span: dspan,
+    };
+
+    let use_fn = Item {
+        id: ItemId(2),
+        visibility: Visibility::Public,
+        attrs: vec![],
+        kind: ItemKind::Fun(FunDecl {
+            name: ident("use_cfg"),
+            attrs: vec![],
+            generics: vec![],
+            params: vec![],
+            return_type: Some(i32_ty.clone()),
+            body: Some(Block::new(
+                vec![
+                    Stmt::new(
+                        StmtKind::Set {
+                            target: BindingTarget::Ident(ident("c")),
+                            ty: None,
+                            init: Expr::new(
+                                ExprKind::ClassInit(
+                                    Box::new(Expr::new(ExprKind::Ident(ident("Config")), dspan)),
+                                    vec![],
+                                ),
+                                dspan,
+                            ),
+                        },
+                        dspan,
+                    ),
+                    Stmt::new(
+                        StmtKind::Rewrite {
+                            target: LValue::Field(
+                                Box::new(Expr::new(ExprKind::Ident(ident("c")), dspan)),
+                                ident("port"),
+                            ),
+                            op: AssignOp::Eq,
+                            value: Expr::new(ExprKind::Literal(LiteralValue::Int(9090)), dspan),
+                        },
+                        dspan,
+                    ),
+                    Stmt::new(
+                        StmtKind::Return(Some(Expr::new(
+                            ExprKind::Binary(
+                                BinaryOp::Add,
+                                Box::new(Expr::new(
+                                    ExprKind::FieldAccess(
+                                        Box::new(Expr::new(ExprKind::Ident(ident("c")), dspan)),
+                                        ident("MAX_RETRY"),
+                                    ),
+                                    dspan,
+                                )),
+                                Box::new(Expr::new(
+                                    ExprKind::MethodCall(
+                                        Box::new(Expr::new(ExprKind::Ident(ident("c")), dspan)),
+                                        ident("read_max"),
+                                        vec![],
+                                    ),
+                                    dspan,
+                                )),
+                            ),
+                            dspan,
+                        ))),
+                        dspan,
+                    ),
+                ],
+                dspan,
+            )),
+            span: dspan,
+        }),
+        span: dspan,
+    };
+
+    let mut checker = TypeChecker::with_core_builtins();
+    let _ = checker.check_module(&Module {
+        file_id: FileId(0),
+        items: vec![valid_class.clone(), use_fn],
+        module_attrs: vec![],
+        c_namespaces: Default::default(),
+    });
+    assert!(checker.diagnostics.is_empty(), "expected no diagnostics, got: {:?}", checker.diagnostics);
+
+    // Mutating static field via rewrite must emit E0503
+    let bad_mutate = Item {
+        id: ItemId(3),
+        visibility: Visibility::Public,
+        attrs: vec![],
+        kind: ItemKind::Fun(FunDecl {
+            name: ident("bad_mutate"),
+            attrs: vec![],
+            generics: vec![],
+            params: vec![],
+            return_type: None,
+            body: Some(Block::new(
+                vec![
+                    Stmt::new(
+                        StmtKind::Set {
+                            target: BindingTarget::Ident(ident("c")),
+                            ty: None,
+                            init: Expr::new(
+                                ExprKind::ClassInit(
+                                    Box::new(Expr::new(ExprKind::Ident(ident("Config")), dspan)),
+                                    vec![],
+                                ),
+                                dspan,
+                            ),
+                        },
+                        dspan,
+                    ),
+                    Stmt::new(
+                        StmtKind::Rewrite {
+                            target: LValue::Field(
+                                Box::new(Expr::new(ExprKind::Ident(ident("c")), dspan)),
+                                ident("MAX_RETRY"),
+                            ),
+                            op: AssignOp::Eq,
+                            value: Expr::new(ExprKind::Literal(LiteralValue::Int(10)), dspan),
+                        },
+                        dspan,
+                    ),
+                ],
+                dspan,
+            )),
+            span: dspan,
+        }),
+        span: dspan,
+    };
+    let mut checker_mut = TypeChecker::with_core_builtins();
+    let _ = checker_mut.check_module(&Module {
+        file_id: FileId(0),
+        items: vec![valid_class, bad_mutate],
+        module_attrs: vec![],
+        c_namespaces: Default::default(),
+    });
+    assert!(
+        checker_mut.diagnostics.iter().any(|d| d.code.as_str() == "E0503"),
+        "expected E0503 when mutating static class field, got: {:?}",
+        checker_mut.diagnostics
+    );
+
+    // Non-literal default value must emit E0401
+    let bad_default_cls = Item {
+        id: ItemId(4),
+        visibility: Visibility::Public,
+        attrs: vec![],
+        kind: ItemKind::Class(ClassDecl {
+            name: ident("BadDefaults"),
+            is_locked: false,
+            base_class: None,
+            interfaces: vec![],
+            fields: vec![ClassField {
+                name: ident("x"),
+                attrs: vec![],
+                ty: i32_ty,
+                is_pub: false,
+                is_static: false,
+                default_val: Some(Expr::new(
+                    ExprKind::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(1)), dspan)),
+                        Box::new(Expr::new(ExprKind::Literal(LiteralValue::Int(2)), dspan)),
+                    ),
+                    dspan,
+                )),
+                span: dspan,
+            }],
+            methods: vec![],
+            accessors: vec![],
+            span: dspan,
+        }),
+        span: dspan,
+    };
+    let mut checker_lit = TypeChecker::with_core_builtins();
+    let _ = checker_lit.check_module(&Module {
+        file_id: FileId(0),
+        items: vec![bad_default_cls],
+        module_attrs: vec![],
+        c_namespaces: Default::default(),
+    });
+    assert!(
+        checker_lit.diagnostics.iter().any(|d| d.code.as_str() == "E0401" && d.message.contains("literal")),
+        "expected E0401 for non-literal default, got: {:?}",
+        checker_lit.diagnostics
+    );
+}
+
+#[test]
+fn test_cunion_fixed_array_variadic_and_c_namespace_checking() {
+    let sp = dummy_span();
+    let udata_decl = CstructDecl {
+        name: ident("UData"),
+        c_attrs: Vec::new(),
+        fields: vec![
+            FieldDef {
+                name: ident("i"),
+                attrs: Vec::new(),
+                ty: TypeNode::new(TypeNodeKind::Ident(ident("int32")), sp),
+                default_val: None,
+                span: sp,
+            },
+            FieldDef {
+                name: ident("f"),
+                attrs: Vec::new(),
+                ty: TypeNode::new(TypeNodeKind::Ident(ident("float32")), sp),
+                default_val: None,
+                span: sp,
+            },
+        ],
+        is_union: true,
+        span: sp,
+    };
+    let buf_decl = CstructDecl {
+        name: ident("BufHolder"),
+        c_attrs: Vec::new(),
+        fields: vec![FieldDef {
+            name: ident("data"),
+            attrs: Vec::new(),
+            ty: TypeNode::new(
+                TypeNodeKind::Array(
+                    Box::new(TypeNode::new(TypeNodeKind::Ident(ident("int32")), sp)),
+                    Some(4),
+                ),
+                sp,
+            ),
+            default_val: None,
+            span: sp,
+        }],
+        is_union: false,
+        span: sp,
+    };
+    let var_cfun = CfunDecl {
+        name: ident("var_fn"),
+        c_attrs: Vec::new(),
+        yukino_attrs: Vec::new(),
+        params: vec![CParam {
+            name: ident("fmt"),
+            ty: TypeNode::new(
+                TypeNodeKind::Pointer(Box::new(TypeNode::new(
+                    TypeNodeKind::Ident(ident("c_char")),
+                    sp,
+                ))),
+                sp,
+            ),
+            span: sp,
+        }],
+        is_variadic: true,
+        return_type: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), sp)),
+        symbol_override: None,
+        body: None,
+        span: sp,
+    };
+    let ok_fun = FunDecl {
+        name: ident("test_use"),
+        attrs: Vec::new(),
+        generics: Vec::new(),
+        params: Vec::new(),
+        return_type: Some(TypeNode::new(TypeNodeKind::Ident(ident("int32")), sp)),
+        body: Some(Block {
+            stmts: vec![
+                Stmt::new(
+                    StmtKind::Set {
+                        target: BindingTarget::Ident(ident("u")),
+                        ty: None,
+                        init: Expr::new(
+                            ExprKind::StructInit(
+                                ident("myhdr::UData"),
+                                vec![FieldInit {
+                                    name: ident("i"),
+                                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(12)), sp),
+                                    span: sp,
+                                }],
+                            ),
+                            sp,
+                        ),
+                    },
+                    sp,
+                ),
+                Stmt::new(
+                    StmtKind::Set {
+                        target: BindingTarget::Ident(ident("h")),
+                        ty: None,
+                        init: Expr::new(
+                            ExprKind::StructInit(
+                                ident("BufHolder"),
+                                vec![FieldInit {
+                                    name: ident("data"),
+                                    value: Expr::new(
+                                        ExprKind::ArrayInit(vec![
+                                            Expr::new(ExprKind::Literal(LiteralValue::Int(1)), sp),
+                                            Expr::new(ExprKind::Literal(LiteralValue::Int(2)), sp),
+                                            Expr::new(ExprKind::Literal(LiteralValue::Int(3)), sp),
+                                            Expr::new(ExprKind::Literal(LiteralValue::Int(4)), sp),
+                                        ]),
+                                        sp,
+                                    ),
+                                    span: sp,
+                                }],
+                            ),
+                            sp,
+                        ),
+                    },
+                    sp,
+                ),
+                Stmt::new(
+                    StmtKind::Return(Some(Expr::new(
+                        ExprKind::Call(
+                            Box::new(Expr::new(
+                                ExprKind::Path(vec![ident("myhdr"), ident("var_fn")]),
+                                sp,
+                            )),
+                            vec![
+                                Expr::new(ExprKind::Literal(LiteralValue::Null), sp),
+                                Expr::new(
+                                    ExprKind::FieldAccess(
+                                        Box::new(Expr::new(ExprKind::Ident(ident("u")), sp)),
+                                        ident("i"),
+                                    ),
+                                    sp,
+                                ),
+                            ],
+                        ),
+                        sp,
+                    ))),
+                    sp,
+                ),
+            ],
+            span: sp,
+        }),
+        span: sp,
+    };
+
+    let mut ns_syms = std::collections::BTreeSet::new();
+    ns_syms.insert("UData".to_string());
+    ns_syms.insert("var_fn".to_string());
+    let mut c_namespaces = std::collections::BTreeMap::new();
+    c_namespaces.insert("myhdr".to_string(), ns_syms);
+
+    let ok_module = Module {
+        file_id: FileId(0),
+        items: vec![
+            Item::new(
+                ItemId(0),
+                Visibility::Local,
+                ItemKind::Externc(ExterncBlock {
+                    header: Some("myhdr.h".to_string()),
+                    namespace: Some("myhdr".to_string()),
+                    items: vec![
+                        ExterncItem::Cstruct(udata_decl.clone()),
+                        ExterncItem::Cstruct(buf_decl),
+                        ExterncItem::Cfun(var_cfun),
+                    ],
+                    span: sp,
+                }),
+                sp,
+            ),
+            Item::new(ItemId(1), Visibility::Local, ItemKind::Fun(ok_fun), sp),
+        ],
+        module_attrs: vec![],
+        c_namespaces,
+    };
+
+    let mut checker = TypeChecker::new();
+    let _ = checker.check_module(&ok_module);
+    assert!(
+        checker.diagnostics.is_empty(),
+        "expected no type errors, got: {:?}",
+        checker.diagnostics
+    );
+
+    let bad_fun = FunDecl {
+        name: ident("bad"),
+        attrs: Vec::new(),
+        generics: Vec::new(),
+        params: Vec::new(),
+        return_type: None,
+        body: Some(Block {
+            stmts: vec![Stmt::new(
+                StmtKind::Set {
+                    target: BindingTarget::Ident(ident("u")),
+                    ty: None,
+                    init: Expr::new(
+                        ExprKind::StructInit(
+                            ident("UData"),
+                            vec![
+                                FieldInit {
+                                    name: ident("i"),
+                                    value: Expr::new(ExprKind::Literal(LiteralValue::Int(1)), sp),
+                                    span: sp,
+                                },
+                                FieldInit {
+                                    name: ident("f"),
+                                    value: Expr::new(
+                                        ExprKind::Literal(LiteralValue::Float(2.0)),
+                                        sp,
+                                    ),
+                                    span: sp,
+                                },
+                            ],
+                        ),
+                        sp,
+                    ),
+                },
+                sp,
+            )],
+            span: sp,
+        }),
+        span: sp,
+    };
+    let bad_mod = Module {
+        file_id: FileId(0),
+        items: vec![
+            Item::new(
+                ItemId(0),
+                Visibility::Local,
+                ItemKind::Cstruct(udata_decl),
+                sp,
+            ),
+            Item::new(ItemId(1), Visibility::Local, ItemKind::Fun(bad_fun), sp),
+        ],
+        module_attrs: vec![],
+        c_namespaces: Default::default(),
+    };
+    let mut bad_checker = TypeChecker::new();
+    let _ = bad_checker.check_module(&bad_mod);
+    assert!(
+        !bad_checker.diagnostics.is_empty(),
+        "initializing >1 field of a cunion must produce a type error"
+    );
+}
+
+#[test]
+fn test_raw_yukino_fn_pointer_cast_string_parsing() {
+    let parsed = yukic_types::convert::parse_primitive_or_named(
+        "ptr<fun(int32, ref ~string) -> string>",
+    );
+    let Type::Ptr(inner) = parsed else {
+        panic!("expected Ptr, got {parsed:?}");
+    };
+    let Type::Fn { params, ret, is_cfun } = *inner else {
+        panic!("expected Fn, got {inner:?}");
+    };
+    assert!(!is_cfun);
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].ty, Type::Int32);
+    assert!(!params[0].is_ref);
+    assert_eq!(params[1].ty, Type::String);
+    assert!(params[1].is_ref && params[1].is_mut);
+    assert_eq!(*ret, Type::String);
 }

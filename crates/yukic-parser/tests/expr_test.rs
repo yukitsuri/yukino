@@ -223,9 +223,10 @@ fn test_fun_anonymous_closure_parsing() {
         ExprKind::AnonymousFun(decl) => {
             assert_eq!(decl.params.len(), 1);
             assert_eq!(decl.params[0].name.name, "x");
-            assert_eq!(decl.body.stmts.len(), 1);
+            let body = decl.body.as_ref().unwrap();
+            assert_eq!(body.stmts.len(), 1);
             assert!(matches!(
-                decl.body.stmts[0].kind,
+                body.stmts[0].kind,
                 yukic_ast::StmtKind::Return(Some(_))
             ));
         }
@@ -367,7 +368,7 @@ fn test_anonymous_fun_parsing() {
             assert_eq!(f.params[1].name.name, "y");
             assert!(f.params[1].ty.is_none());
             assert!(f.return_type.is_some());
-            assert_eq!(f.body.stmts.len(), 1);
+            assert_eq!(f.body.as_ref().unwrap().stmts.len(), 1);
         }
         other => panic!("expected AnonymousFun, found {other:?}"),
     }

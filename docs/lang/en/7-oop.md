@@ -10,7 +10,9 @@ Yukino provides two models of object data types: **structures (`struct`)** for h
    2.1 [Declaration and constructors](#21-declaration-and-constructors)  
    2.2 [Locked classes: locked class](#22-locked-classes-locked-class)  
    2.3 [Inheritance and the super keyword](#23-inheritance-and-the-super-keyword)  
-   2.4 [Reference parameters in methods](#24-reference-parameters-in-methods)
+   2.4 [Reference parameters in methods](#24-reference-parameters-in-methods)  
+   2.5 [The this keyword, ref this, and return this](#25-the-this-keyword-ref-this-and-return-this)  
+   2.6 [Class fields: set, static, and default values](#26-class-fields-set-static-and-default-values)
 3. [Properties: get and set accessors](#3-properties-get-and-set-accessors)
 4. [Operator overloading](#4-operator-overloading)
 5. [Interfaces (interface) and itable](#5-interfaces-interface-and-itable)
@@ -62,7 +64,7 @@ Classes are polymorphic entities managed by the regional memory model. They supp
 
 ### 2.1 Declaration and constructors
 
-Class instances are created with the `init` keyword: `init ClassName(...)`, which activates the `init` method:
+Class instances are created with the `init` keyword: `init ClassName(...)`. Attempting to construct an instance as `ClassName(...)` without `init` produces compiler error `E0401`:
 
 ```yukino
 class Animal {
@@ -86,6 +88,15 @@ set pet = init Animal("Barsik")
 set voice = pet.speak()
 ```
 
+#### Initialization and `init` constructor subtleties:
+
+1. **Instantiation order**: `init ClassName(...)` first allocates memory for the object (in the active region or on the stack when elided), **deterministically zero-initializes all instance fields** (including inherited ones), stores the virtual method table (`vtable`) pointer, applies **literal default field values** (`field: T = <literal>`) from ancestors down to the subclass, and only then calls `init`.
+2. **Default field values**: any regular class field may specify a literal default initializer, e.g. `port: int32 = 8080` or `set port: int32 = 8080` (the `set` keyword before a field is optional and equivalent to a bare field declaration). Only literals (including unary `-`/`!`/`~` on literals) are allowed as defaults; non-literal expressions produce `E0401`.
+3. **Static class fields (`static`)**: `static FIELD: T = <literal>` declares an immutable class-level constant without per-instance memory overhead (emitted as a read-only global constant and respecting `inline_statics`). A literal initializer is **mandatory** for `static` fields. Reading a `static` field uses ordinary field access (`this.FIELD`, `super.FIELD`, `obj.FIELD`), except mutating it with `rewrite` is forbidden (`E0503`).
+4. **Constructor inheritance and missing `init`**: if a subclass does not declare its own `init`, it automatically inherits the `init` constructor of the nearest ancestor that defines one. If no class in the hierarchy defines `init`, `init ClassName()` takes 0 arguments (passing arguments fails with `E0401`).
+5. **Return value inside `init`**: `init` initializes an already-allocated `this` instance and defaults to a `void` return type. An empty `return` inside `init` is valid for early exit, whereas `return this` without an explicit `-> Type` causes type error `E0401` (`init ClassName(...)` returns the created instance automatically).
+6. **Visibility**: use `public` to export fields and methods from a module (e.g., `public static MAX: int32 = 16`).
+
 ### 2.2 Locked classes: locked class
 
 The `locked` modifier forbids inheriting from a class. Attempting to create a subclass results in a compilation error (`E0409`):
@@ -105,27 +116,53 @@ locked class GuardService {
 
 ### 2.3 Inheritance and the super keyword
 
-Classes extend a base class via `extends`. The `super` keyword allows calling the ancestor's constructor and accessing its methods:
+Classes extend a base class via `extends` (single inheritance is supported). Ancestor fields are laid out before the subclass's own fields. The `super` keyword has several distinct forms:
 
 ```yukino
 class Dog extends Animal {
     breed: string
 
     fun init(name: string, breed: string) {
-        // Calling the base class constructor
+        // Static call to the base class constructor
         super(name)
         rewrite this.breed = breed
     }
 
     // Overriding a virtual method
     fun speak() -> string {
-        return "Woof!"
+        // Direct call to ancestor implementation bypassing vtable, plus base field access
+        return super.speak() + " Woof (" + super.name + ")"
+    }
+
+    fun as_animal() -> Animal {
+        // Upcast view of the current instance this as Animal
+        return super
     }
 }
 
 set dog = init Dog("Rex", "Collie")
-set sound = dog.speak() // "Woof!"
+set sound = dog.speak() // "... Woof (Rex)"
 ```
+
+#### All forms of `super` and their exact semantics:
+
+1. **`super(args...)` — calling the ancestor constructor**:
+   - Statically calls the nearest ancestor's `init` method passing the current `this` pointer (no new object is allocated).
+   - **No implicit call**: if a subclass declares its own `init`, the compiler does not invoke `super(...)` automatically. Without an explicit `super(...)`, inherited fields remain zero-initialized.
+   - If no ancestor defines an `init` method, `super(...)` fails with error `E0416`.
+
+2. **`super.method(args...)` — statically calling an ancestor method**:
+   - Resolves the method in the nearest base class and calls it **directly, bypassing the `vtable`**, passing `this`. This lets an overriding method extend the parent implementation without infinite recursion. Fails with `E0416` if the method does not exist in an ancestor.
+
+3. **`super.field` and `rewrite super.field = value` — accessing ancestor fields**:
+   - Reads or writes an inherited field or accessor on the current `this` instance (`E0416` if the field is not found in the ancestor hierarchy).
+
+4. **Standalone (empty) `super` without parentheses or a dot**:
+   - Used as an expression (`set base = super`, `return super`, or passed as a function argument), standalone `super` evaluates to the **exact same `this` instance pointer**, typed as the immediate base class (an upcast view).
+   - **Important subtlety**: bare `super` written as a standalone statement (without `()`) **does NOT call the ancestor constructor**! It parses as an expression statement whose value is discarded (a runtime no-op), even though the compiler still checks that it is inside a method of a class with a superclass (`E0416`). To call a zero-argument base constructor, always write parentheses: `super()`.
+
+> [!NOTE]
+> Using `super` outside a class method or in a class without a superclass (`extends`) always produces compiler error `E0416`.
 
 ### 2.4 Reference parameters in methods
 
@@ -159,6 +196,99 @@ set v: int64 = acc.peek(ref c) // 15
 ```
 
 Through `ref ~` a method can modify not only its own fields but also an object owned by the caller; `ref` guarantees to the caller that the object stays unchanged.
+
+### 2.5 The this keyword, ref this, and return this
+
+Inside class methods and accessors, `this` is always available as a reference to the current instance with the static type of the enclosing class.
+
+#### Implicit and explicit `this` in parameters:
+
+- If `this` is omitted from the parameter list (`fun bump(step: int64)`), the compiler implicitly inserts it as the method receiver.
+- The receiver can also be written explicitly: `fun bump(this, step: int64)` or as a shared borrow `fun peek(ref this) -> int64`.
+- `this` itself cannot be rebound (`rewrite this = ...`), while fields of the instance can be mutated freely via `rewrite this.field = ...` (calling `obj.method()` does not move ownership of `obj`).
+
+#### What `return this` does:
+
+`return this` returns the pointer to the **exact same object instance** without copying the object or allocating new memory. This is the standard pattern for fluent APIs and method chaining:
+
+```yukino
+class RequestBuilder {
+    host: string
+    port: int64
+
+    fun init() {
+        rewrite this.host = "localhost"
+        rewrite this.port = 80
+    }
+
+    fun with_host(host: string) -> RequestBuilder {
+        rewrite this.host = host
+        return this
+    }
+
+    fun with_port(port: int64) -> RequestBuilder {
+        rewrite this.port = port
+        return this
+    }
+
+    fun get_port(ref this) -> int64 {
+        return this.port
+    }
+}
+
+set req = init RequestBuilder()
+    .with_host("example.com")
+    .with_port(443)
+set p: int64 = req.get_port() // 443
+```
+
+Key rules for `return this`:
+- The method must declare a compatible return type (`-> RequestBuilder`, a base class `-> BaseClass`, or an implemented interface `-> InterfaceName`).
+- `return this` does not move or invalidate `this` inside the method body before the return point.
+- Regular class method calls are dispatched virtually through `vtable` (and interface-typed calls through `itable`), unlike `super(...)` and `super.method(...)`, which are always statically dispatched.
+
+### 2.6 Class fields: set, static, and default values
+
+Class fields support optional `set` and `static` modifiers as well as literal default initializers:
+
+```yukino
+class Config {
+    // Equivalent declarations of regular mutable instance fields
+    host: string = "localhost"
+    set port: int32 = 8080
+
+    // Fields without a default are deterministically zeroed ("" / 0 / false / null)
+    label: string
+
+    // Static class field (literal initializer is mandatory)
+    public static MAX_RETRIES: int32 = 5
+
+    fun get_retries(ref this) -> int32 {
+        return this.MAX_RETRIES
+    }
+}
+
+set cfg = init Config()
+println(cfg.host)         // "localhost"
+println(cfg.port)         // 8080
+println(cfg.MAX_RETRIES)  // 5
+
+// Regular and set fields can be mutated with rewrite
+rewrite cfg.port = 9090
+
+// ERROR E0503: static class fields cannot be mutated with rewrite
+// rewrite cfg.MAX_RETRIES = 10
+```
+
+Rules for class fields and default values:
+
+1. **`field: T` and `set field: T` are equivalent**: both declare an ordinary instance field that can be reassigned via `rewrite obj.field = ...` (or `rewrite this.field = ...`). Combining `set` and `static` on the same field is forbidden.
+2. **Default field values (`field: T = <literal>`)**:
+   - Only **literals** (including unary `-`, `!`, `~` on literals) are accepted as default values. Non-literal expressions (`x: int32 = 1 + 2`) fail with `E0401`.
+   - When `init ClassName(...)` runs, instance fields are first zero-initialized, then literal defaults are applied from ancestors to the subclass, and finally the `init` constructor body executes (and may overwrite any defaults).
+3. **Static class fields (`static field: T = <literal>`)**:
+   - A literal initializer is **mandatory** for `static` fields (omitting `=` is a compile error).
+   - Static fields add zero per-instance storage overhead (emitted as global constants and honoring `inline_statics`), are inherited by subclasses (`this.FIELD`, `super.FIELD`, `obj.FIELD`), and **cannot be reassigned** via `rewrite` (`E0503`).
 
 ---
 
@@ -194,6 +324,9 @@ set a: float64 = rect.area // Getter call
 // Writing to the setter requires rewrite
 rewrite rect.size = 20.0
 ```
+
+> [!NOTE]
+> If a property defines only `get` (with neither `set` nor a matching underlying field), attempting to write via `rewrite obj.prop = ...` fails with compiler error `E0401` (read-only property).
 
 ---
 

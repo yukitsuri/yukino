@@ -15,7 +15,8 @@ load std.sharedc
 When imported, the following exported entities are available:
 
 - **Constants:** `RTLD_LAZY`, `RTLD_NOW`, `RTLD_LOCAL`, `RTLD_GLOBAL`.
-- **Error Structs:** `SharedError`.
+- **Enumerations:** `SymbolAbi`.
+- **Structures:** `SharedError`, `SharedExport`, `YukinoLibInfo`.
 - **Classes:** `SharedLibrary`.
 - **Functions:** `open`, `open_flags`, `try_open`, `try_open_flags`, `open_self`, `open_self_flags`, `filename`, `last_error`.
 
@@ -66,6 +67,8 @@ The `message` field contains a detailed system error description returned by the
 - `1` — Failed to open the shared library file at the specified path or failed to open the current process namespace.
 - `2` — The requested symbol was not found in the shared library export table.
 - `3` — Attempted to look up a symbol on a library instance that has already been closed.
+- `4` — The shared library does not embed `__yukino_metadata_v1` and has no loaded `.ykni` interface (or reading `.ykni` failed).
+- `5` — Ambiguous symbol lookup across multiple overloaded signatures.
 
 ---
 
@@ -366,6 +369,80 @@ fun main() {
             println("Failure reason: ${err}")
         }
     }
+}
+```
+
+---
+
+## 7. Dynamic Loading of Yukino Libraries
+
+Beyond plain C libraries, `std.sharedc` supports runtime loading and invocation of shared libraries compiled from Yukino (`lib*.so`, `*.dll`, `*.dylib`). For details on `.ykni` interface files, embedded metadata, and the `ptr<fun(...) -> ...>` calling convention, see [Compiled Library Interfaces (.ykni)](../9-modules.md#6-compiled-library-interfaces-ykni).
+
+### 7.1 Metadata Types and Error Codes
+
+```yukino
+public enum SymbolAbi {
+    CDecl,
+    YukinoFastCall
+}
+
+public struct SharedExport {
+    name: string
+    mangled: string
+    signature: string
+    abi: SymbolAbi
+    kind: string
+}
+
+public struct YukinoLibInfo {
+    package_name: string
+    yukic_version: string
+    target: string
+    abi_hash: string
+}
+```
+
+Additional `SharedError` codes:
+- `4` — the loaded library contains no Yukino metadata and no external `.ykni` was attached via `load_interface`.
+- `5` — the symbol name matches multiple overloads; disambiguate with `yukino_symbol_sig` or `method_symbol`.
+
+### 7.2 Using SharedLibrary Methods for Yukino Libraries
+
+- `lib.is_yukino() -> bool` — checks whether embedded Yukino metadata or an attached `.ykni` interface is available.
+- `lib.yukino_info() -> YukinoLibInfo?` — returns package name, compiler version, target triple, and ABI hash, or `null` if unavailable.
+- `lib.exports() -> SharedExport[]` — lists all exported symbols together with their signatures and ABIs.
+- `lib.load_interface(ykni_path: string) -> bool` — loads an external `.ykni` interface file and binds its export table to the open handle.
+- `lib.yukino_symbol(name)` / `lib.yukino_symbol_or_panic(name)` — resolves an export by logical name without manually specifying its mangled symbol.
+- `lib.yukino_symbol_sig(name, signature)` / `lib.yukino_symbol_sig_or_panic(name, signature)` — selects a specific overload matching the canonical signature string (such as `"fun(string) -> string"`).
+- `lib.method_symbol(class_name, method_name, param_count = -1)` / `lib.method_symbol_or_panic(...)` — resolves an exported class or struct method, optionally filtered by parameter count.
+
+Cast the resolved address with `cast` to `ptr<fun(...) -> ...>` for Yukino functions, or to `cfun(...) -> ...` for C ABI exports:
+
+```yukino
+load std.sharedc
+load std.io: println
+load core.utils: cast
+
+fun main() {
+    set lib = open("./libplugin.so")
+
+    if !lib.is_yukino() {
+        // Optionally attach an external .ykni interface manually
+        lib.load_interface("./plugin.ykni")
+    }
+
+    set info = lib.yukino_info()
+    println("Package: ${info?.package_name ?? \"unknown\"}")
+
+    set greet_ptr = lib.yukino_symbol_sig_or_panic("format_greeting", "fun(string) -> string")
+    set greet_fn = cast(greet_ptr, "ptr<fun(string) -> string>")
+    println(greet_fn("world"))
+
+    set c_ptr = lib.yukino_symbol_or_panic("native_ping")
+    set c_fn = cast(c_ptr, "cfun(int32) -> int32")
+    println(c_fn(41))
+
+    lib.close()
 }
 ```
 

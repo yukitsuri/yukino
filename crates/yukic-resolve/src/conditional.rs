@@ -13,6 +13,7 @@ pub struct ConditionalConfig {
     pub target: TargetTriple,
     pub features: HashSet<String>,
     pub is_test: bool,
+    pub debug_assertions: bool,
 }
 
 impl ConditionalConfig {
@@ -21,11 +22,17 @@ impl ConditionalConfig {
             target,
             features: features.into_iter().collect(),
             is_test: false,
+            debug_assertions: true,
         }
     }
 
     pub fn with_test(mut self, is_test: bool) -> Self {
         self.is_test = is_test;
+        self
+    }
+
+    pub fn with_debug_assertions(mut self, enabled: bool) -> Self {
+        self.debug_assertions = enabled;
         self
     }
 }
@@ -242,7 +249,7 @@ fn filter_item_members(item: &mut Item, config: &ConditionalConfig) -> Result<()
 fn externc_item_attributes(item: &yukic_ast::ExterncItem) -> &[AttributeNode] {
     match item {
         yukic_ast::ExterncItem::Cfun(decl) => &decl.yukino_attrs,
-        yukic_ast::ExterncItem::Cstruct(_) => &[],
+        yukic_ast::ExterncItem::Cstruct(_) | yukic_ast::ExterncItem::Cvar(_) => &[],
     }
 }
 
@@ -362,7 +369,7 @@ pub fn eval_cfg_expr(expr: &Expr, config: &ConditionalConfig) -> Result<bool, St
         ExprKind::Ident(id) => {
             match id.as_str() {
                 "test" => Ok(config.is_test),
-                "debug_assertions" => Ok(true),
+                "debug_assertions" => Ok(config.debug_assertions),
                 other => Ok(config.features.contains(other)),
             }
         }
@@ -887,12 +894,18 @@ fn item_name(item: &Item) -> Option<String> {
         ItemKind::Class(decl) => Some(decl.name.name.clone()),
         ItemKind::Struct(decl) => Some(decl.name.name.clone()),
         ItemKind::Cstruct(decl) => Some(decl.name.name.clone()),
+        ItemKind::Cvar(decl) => Some(decl.name.name.clone()),
         ItemKind::Interface(decl) => Some(decl.name.name.clone()),
         ItemKind::Enum(decl) => Some(decl.name.name.clone()),
         ItemKind::TypeAlias(decl) => Some(decl.name.name.clone()),
         ItemKind::Static(decl) => Some(decl.name.name.clone()),
         ItemKind::Macro(decl) => Some(decl.name.name.clone()),
-        ItemKind::Import(_) | ItemKind::Alias(_) | ItemKind::Externc(_) | ItemKind::Error => None,
+        ItemKind::Import(_)
+        | ItemKind::Cload(_)
+        | ItemKind::Alias(_)
+        | ItemKind::Externc(_)
+        | ItemKind::Namespace(_)
+        | ItemKind::Error => None,
     }
 }
 
@@ -936,7 +949,7 @@ mod tests {
                 generics: Vec::new(),
                 params: Vec::new(),
                 return_type: None,
-                body: Block::new(Vec::new(), span()),
+                body: Some(Block::new(Vec::new(), span())),
                 span: span(),
             }),
             span(),

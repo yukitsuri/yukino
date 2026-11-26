@@ -8,6 +8,7 @@ use yukic_diagnostics::Diagnostic;
 use yukic_diagnostics::code::ErrorCode;
 use yukic_span::Span;
 use yukic_types::{Type, TypeParam, ast_type_to_type};
+use yukic_types::convert::ast_type_to_c_field_type;
 
 use crate::affinity::TypeAffinity;
 use crate::escape::{EscapeAnalysis, EscapeInfo};
@@ -38,6 +39,7 @@ pub struct BorrowChecker {
     pub fn_returns: HashMap<String, Type>,
     pub fn_types: HashMap<String, Type>,
     pub type_fields: HashMap<String, HashMap<String, Type>>,
+    pub enum_names: std::collections::HashSet<String>,
     loop_depth: usize,
     loop_scope_threshold: usize,
 }
@@ -65,6 +67,7 @@ impl BorrowChecker {
             fn_returns,
             fn_types: HashMap::new(),
             type_fields: HashMap::new(),
+            enum_names: std::collections::HashSet::new(),
             loop_depth: 0,
             loop_scope_threshold: 0,
         }
@@ -167,10 +170,14 @@ impl BorrowChecker {
             ItemKind::Cstruct(decl) => {
                 let mut fields = HashMap::new();
                 for f in &decl.fields {
-                    fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                    fields.insert(f.name.name.clone(), ast_type_to_c_field_type(&f.ty));
                 }
                 self.type_fields.insert(decl.name.name.clone(), fields);
             }
+            ItemKind::Enum(decl) => {
+                self.enum_names.insert(decl.name.name.clone());
+            }
+            ItemKind::Cvar(_) => {}
             _ => {}
         }
     }
@@ -198,10 +205,11 @@ impl BorrowChecker {
                 ExterncItem::Cstruct(decl) => {
                     let mut fields = HashMap::new();
                     for f in &decl.fields {
-                        fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+                        fields.insert(f.name.name.clone(), ast_type_to_c_field_type(&f.ty));
                     }
                     self.type_fields.insert(decl.name.name.clone(), fields);
                 }
+                ExterncItem::Cvar(_) => {}
             }
         }
     }
@@ -234,6 +242,9 @@ impl BorrowChecker {
     }
 
     pub fn check_fun(&mut self, decl: &FunDecl) {
+        let Some(ref body) = decl.body else {
+            return;
+        };
         self.env.push_scope();
 
         for param in &decl.params {
@@ -263,7 +274,7 @@ impl BorrowChecker {
                 .declare_var(param.name.name.clone(), ty, state, param.span, param.is_ref);
         }
 
-        self.check_block(&decl.body);
+        self.check_block(body);
 
         if let Err(diags) = self.env.pop_scope() {
             self.diagnostics.extend(diags);
@@ -271,12 +282,20 @@ impl BorrowChecker {
     }
 
     fn check_class(&mut self, decl: &ClassDecl) {
+        for field in &decl.fields {
+            if let Some(default_expr) = &field.default_val {
+                self.check_expr(default_expr, MoveContext::None);
+            }
+        }
         for method in &decl.methods {
             self.check_method(decl, method);
         }
     }
 
     pub fn check_method(&mut self, class_decl: &ClassDecl, decl: &MethodDecl) {
+        let Some(ref body) = decl.body else {
+            return;
+        };
         self.env.push_scope();
 
         if decl.this_param != yukic_ast::item::ThisParam::None {
@@ -325,7 +344,7 @@ impl BorrowChecker {
                 .declare_var(param.name.name.clone(), ty, state, param.span, param.is_ref);
         }
 
-        self.check_block(&decl.body);
+        self.check_block(body);
 
         if let Err(diags) = self.env.pop_scope() {
             self.diagnostics.extend(diags);
@@ -963,6 +982,21 @@ impl BorrowChecker {
                 .get_var(&id.name)
                 .map(|v| v.ty.clone())
                 .or_else(|| self.fn_types.get(&id.name).cloned()),
+            ExprKind::Path(segments) => {
+                if segments.len() == 2 && self.enum_names.contains(&segments[0].name) {
+                    Some(Type::Enum(segments[0].name.clone()))
+                } else {
+                    let path = segments
+                        .iter()
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    self.env
+                        .get_var(&path)
+                        .map(|v| v.ty.clone())
+                        .or_else(|| self.fn_types.get(&path).cloned())
+                }
+            }
             ExprKind::This | ExprKind::Super => self.env.get_var("this").map(|v| v.ty.clone()),
             ExprKind::Call(callee, args) => self.infer_call_type(callee, args),
             ExprKind::MethodCall(target, method, args) => self.infer_method_call_type(target, method, args),
@@ -991,7 +1025,7 @@ impl BorrowChecker {
                 })
             }
             ExprKind::IndexAccess(target, _) => match self.infer_expr_type(target)? {
-                Type::Array(inner) => Some(*inner),
+                Type::Array(inner) | Type::FixedArray(inner, _) => Some(*inner),
                 Type::String | Type::Bytes => Some(Type::Uint8),
                 _ => None,
             },
@@ -1050,10 +1084,10 @@ impl BorrowChecker {
                                 p.is_ref,
                             );
                         }
-                        fun.body.stmts.iter().find_map(|s| match &s.kind {
+                        fun.body.as_ref().and_then(|b| b.stmts.iter().find_map(|s| match &s.kind {
                             StmtKind::Return(Some(e)) => temp.infer_expr_type(e),
                             _ => None,
-                        })
+                        }))
                     })
                     .unwrap_or(Type::Void);
                 Some(Type::Fn {

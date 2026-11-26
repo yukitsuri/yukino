@@ -15,6 +15,7 @@ pub struct Module {
     pub file_id: FileId,
     pub module_attrs: Vec<AttributeNode>,
     pub items: Vec<Item>,
+    pub c_namespaces: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 impl Module {
@@ -23,6 +24,7 @@ impl Module {
             file_id,
             module_attrs: Vec::new(),
             items: Vec::new(),
+            c_namespaces: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -84,14 +86,38 @@ pub enum ItemKind {
     Class(ClassDecl),
     Struct(StructDecl),
     Cstruct(CstructDecl),
+    Cvar(CvarDecl),
     Interface(InterfaceDecl),
     Enum(EnumDecl),
     TypeAlias(TypeAliasDecl),
     Import(ImportDecl),
+    Cload(CloadDecl),
     Alias(AliasDecl),
     Static(StaticDecl),
     Externc(ExterncBlock),
+    Namespace(NamespaceDecl),
     Error,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NamespaceDecl {
+    pub path: Vec<Ident>,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloadDecl {
+    pub path: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CvarDecl {
+    pub name: Ident,
+    pub c_attrs: Vec<CAttributeNode>,
+    pub ty: TypeNode,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,7 +127,7 @@ pub struct FunDecl {
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub return_type: Option<TypeNode>,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 
@@ -111,6 +137,7 @@ pub struct CfunDecl {
     pub c_attrs: Vec<CAttributeNode>,
     pub yukino_attrs: Vec<AttributeNode>,
     pub params: Vec<CParam>,
+    pub is_variadic: bool,
     pub return_type: Option<TypeNode>,
     pub symbol_override: Option<Ident>,
     pub body: Option<Block>,
@@ -142,7 +169,7 @@ pub struct MethodDecl {
     pub this_param: ThisParam,
     pub params: Vec<Param>,
     pub return_type: Option<TypeNode>,
-    pub body: Block,
+    pub body: Option<Block>,
     pub is_operator: bool,
     pub is_override: bool,
     pub span: Span,
@@ -161,7 +188,7 @@ pub struct StaticMethodDecl {
     pub attrs: Vec<AttributeNode>,
     pub params: Vec<Param>,
     pub return_type: Option<TypeNode>,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 
@@ -171,7 +198,7 @@ pub struct PropertyAccessor {
     pub attrs: Vec<AttributeNode>,
     pub ty: TypeNode,
     pub kind: AccessorKind,
-    pub body: Block,
+    pub body: Option<Block>,
     pub span: Span,
 }
 
@@ -184,6 +211,7 @@ pub enum AccessorKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExterncBlock {
     pub header: Option<String>,
+    pub namespace: Option<String>,
     pub items: Vec<ExterncItem>,
     pub span: Span,
 }
@@ -192,6 +220,7 @@ pub struct ExterncBlock {
 pub enum ExterncItem {
     Cfun(CfunDecl),
     Cstruct(CstructDecl),
+    Cvar(CvarDecl),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -242,6 +271,7 @@ pub struct ClassField {
     pub attrs: Vec<AttributeNode>,
     pub ty: TypeNode,
     pub is_pub: bool,
+    pub is_static: bool,
     pub default_val: Option<Expr>,
     pub span: Span,
 }
@@ -260,6 +290,7 @@ pub struct CstructDecl {
     pub name: Ident,
     pub c_attrs: Vec<CAttributeNode>,
     pub fields: Vec<FieldDef>,
+    pub is_union: bool,
     pub span: Span,
 }
 

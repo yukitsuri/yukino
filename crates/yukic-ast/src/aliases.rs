@@ -13,27 +13,35 @@ pub fn substitute_module_aliases(module: &mut Module, aliases: &AliasMap) {
     for item in &mut module.items {
         match &mut item.kind {
             ItemKind::Fun(decl) => {
-                let mut shadowed: HashSet<String> =
-                    decl.params.iter().map(|p| p.name.name.clone()).collect();
-                substitute_block_aliases(&mut decl.body, aliases, &mut shadowed);
+                if let Some(ref mut body) = decl.body {
+                    let mut shadowed: HashSet<String> =
+                        decl.params.iter().map(|p| p.name.name.clone()).collect();
+                    substitute_block_aliases(body, aliases, &mut shadowed);
+                }
             }
             ItemKind::Class(decl) => {
                 for m in &mut decl.methods {
-                    let mut shadowed: HashSet<String> =
-                        m.params.iter().map(|p| p.name.name.clone()).collect();
-                    substitute_block_aliases(&mut m.body, aliases, &mut shadowed);
+                    if let Some(ref mut body) = m.body {
+                        let mut shadowed: HashSet<String> =
+                            m.params.iter().map(|p| p.name.name.clone()).collect();
+                        substitute_block_aliases(body, aliases, &mut shadowed);
+                    }
                 }
             }
             ItemKind::Struct(decl) => {
                 for m in &mut decl.methods {
-                    let mut shadowed: HashSet<String> =
-                        m.params.iter().map(|p| p.name.name.clone()).collect();
-                    substitute_block_aliases(&mut m.body, aliases, &mut shadowed);
+                    if let Some(ref mut body) = m.body {
+                        let mut shadowed: HashSet<String> =
+                            m.params.iter().map(|p| p.name.name.clone()).collect();
+                        substitute_block_aliases(body, aliases, &mut shadowed);
+                    }
                 }
                 for sm in &mut decl.static_methods {
-                    let mut shadowed: HashSet<String> =
-                        sm.params.iter().map(|p| p.name.name.clone()).collect();
-                    substitute_block_aliases(&mut sm.body, aliases, &mut shadowed);
+                    if let Some(ref mut body) = sm.body {
+                        let mut shadowed: HashSet<String> =
+                            sm.params.iter().map(|p| p.name.name.clone()).collect();
+                        substitute_block_aliases(body, aliases, &mut shadowed);
+                    }
                 }
             }
             ItemKind::Static(decl) => {
@@ -251,7 +259,7 @@ mod tests {
             generics: vec![],
             params: vec![],
             return_type: None,
-            body: Block {
+            body: Some(Block {
                 stmts: vec![Stmt {
                     kind: StmtKind::Expr(Expr::new(
                         ExprKind::Call(
@@ -269,7 +277,7 @@ mod tests {
                     span: Span::DUMMY,
                 }],
                 span: Span::DUMMY,
-            },
+            }),
             span: Span::DUMMY,
         };
         module.items.push(Item::new(
@@ -284,7 +292,9 @@ mod tests {
         substitute_module_aliases(&mut module, &aliases);
 
         if let ItemKind::Fun(f) = &module.items[0].kind {
-            if let StmtKind::Expr(e) = &f.body.stmts[0].kind {
+            if let Some(ref body) = f.body
+                && let StmtKind::Expr(e) = &body.stmts[0].kind
+            {
                 if let ExprKind::Call(callee, _) = &e.kind {
                     if let ExprKind::Ident(id) = &callee.kind {
                         assert_eq!(id.name, "println");
@@ -319,7 +329,7 @@ mod tests {
                 span: Span::DUMMY,
             }],
             return_type: None,
-            body: Block {
+            body: Some(Block {
                 stmts: vec![Stmt {
                     kind: StmtKind::Expr(Expr::new(
                         ExprKind::Call(
@@ -337,7 +347,7 @@ mod tests {
                     span: Span::DUMMY,
                 }],
                 span: Span::DUMMY,
-            },
+            }),
             span: Span::DUMMY,
         };
         module.items.push(Item::new(
@@ -352,7 +362,9 @@ mod tests {
         substitute_module_aliases(&mut module, &aliases);
 
         if let ItemKind::Fun(f) = &module.items[0].kind {
-            if let StmtKind::Expr(e) = &f.body.stmts[0].kind {
+            if let Some(ref body) = f.body
+                && let StmtKind::Expr(e) = &body.stmts[0].kind
+            {
                 if let ExprKind::Call(callee, _) = &e.kind {
                     if let ExprKind::Ident(id) = &callee.kind {
                         assert_eq!(id.name, "prln");

@@ -14,7 +14,7 @@ use inkwell::values::{
 };
 use std::collections::HashSet;
 use std::path::Path;
-use yukic_ast::expr::{Expr, ExprKind, LiteralValue};
+use yukic_ast::expr::{ExprKind, LiteralValue};
 use yukic_ast::item::ItemKind;
 use yukic_ast::{ItemId, Module as AstModule};
 use yukic_target::TargetTriple;
@@ -55,6 +55,7 @@ pub struct CodeGenerator<'ctx> {
     pub panic_strategy: String,
     pub function_sections: bool,
     pub fast_math: bool,
+    pub inline_statics: bool,
     pub current_fn_fast_math: bool,
 }
 
@@ -102,6 +103,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             panic_strategy: "unwind".to_string(),
             function_sections: false,
             fast_math: false,
+            inline_statics: false,
             current_fn_fast_math: false,
         }
     }
@@ -118,6 +120,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub fn with_fast_math(mut self, enabled: bool) -> Self {
         self.fast_math = enabled;
+        self
+    }
+
+    pub fn with_inline_statics(mut self, enabled: bool) -> Self {
+        self.inline_statics = enabled;
         self
     }
 
@@ -195,13 +202,26 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub fn symbol_for_fun(&self, fun: &yukic_ast::item::FunDecl) -> String {
+        if let Some(sym) = extract_ykni_symbol_attr(&fun.attrs) {
+            return sym;
+        }
         if !crate::mangle::should_mangle_fun(&fun.name.name, &fun.attrs) {
             return fun.name.name.clone();
         }
         crate::mangle::mangle_fun_decl(fun, &self.registry)
     }
 
+    pub fn symbol_for_method(&self, class_name: &str, method: &yukic_ast::item::MethodDecl) -> String {
+        if let Some(sym) = extract_ykni_symbol_attr(&method.attrs) {
+            return sym;
+        }
+        crate::mangle::method_symbol_name(class_name, &method.name.name, method.params.len())
+    }
+
     pub fn symbol_for_cfun(&self, cfun: &yukic_ast::item::CfunDecl) -> String {
+        if let Some(sym) = extract_ykni_symbol_attr(&cfun.yukino_attrs) {
+            return sym;
+        }
         if let Some(ref sym) = cfun.symbol_override {
             return sym.name.clone();
         }
@@ -350,7 +370,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             match &item.kind {
                 ItemKind::Fun(fun) => self.declare_foreign_fun(fun)?,
                 ItemKind::Static(decl) => self.compile_static_decl(decl)?,
-                ItemKind::Class(decl) => self.pre_declare_class_methods(decl)?,
+                ItemKind::Class(decl) => {
+                    self.pre_declare_class_methods(decl)?;
+                    self.compile_class_static_fields(decl)?;
+                }
                 _ => {}
             }
         }
@@ -375,7 +398,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 match &item.kind {
                     ItemKind::Fun(fun) => self.declare_foreign_fun(fun)?,
                     ItemKind::Static(decl) => self.compile_static_decl(decl)?,
-                    ItemKind::Class(decl) => self.pre_declare_class_methods(decl)?,
+                    ItemKind::Class(decl) => {
+                        self.pre_declare_class_methods(decl)?;
+                        self.compile_class_static_fields(decl)?;
+                    }
                     _ => {}
                 }
             } else {
@@ -413,6 +439,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         match &item.kind {
             ItemKind::Fun(fun) => self.declare_foreign_fun(fun)?,
             ItemKind::Cfun(cfun) => self.declare_foreign_cfun(cfun, is_public)?,
+            ItemKind::Cvar(cvar) => self.compile_cvar_decl(cvar)?,
             ItemKind::Class(decl) => self.declare_foreign_class(decl)?,
             ItemKind::Static(decl) => self.declare_foreign_static(decl),
             ItemKind::Externc(block) => self.compile_externc_block(block, is_public)?,
@@ -505,18 +532,26 @@ impl<'ctx> CodeGenerator<'ctx> {
             .return_type
             .as_ref()
             .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
-        let llvm_ret = self.llvm_return_type(&ret_ty)?;
-
-        let mut param_types = Vec::new();
-        for param in &cfun.params {
-            let pty = self.ast_type_to_canonical_type(&param.ty);
-            param_types.push(self.llvm_type(&pty)?);
-        }
-
-        let (fn_type, _) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, true);
-        let fn_val =
-            self.module
-                .add_function(&sym_name, fn_type, Some(inkwell::module::Linkage::External));
+        let param_sem_tys: Vec<Type> = cfun
+            .params
+            .iter()
+            .map(|p| self.ast_type_to_canonical_type(&p.ty))
+            .collect();
+        let cabi_sig = crate::cabi::build_c_signature(
+            self.context,
+            self.target,
+            &self.target_data,
+            &self.registry,
+            &param_sem_tys,
+            &ret_ty,
+            cfun.is_variadic,
+        )?;
+        let fn_val = self.module.add_function(
+            &sym_name,
+            cabi_sig.fn_type,
+            Some(inkwell::module::Linkage::External),
+        );
+        crate::cabi::apply_c_signature_attrs(self.context, fn_val, &cabi_sig);
         self.cabi
             .configure_cfun(fn_val, &cfun.c_attrs, is_public, false)?;
         Ok(())
@@ -527,11 +562,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         decl: &yukic_ast::item::ClassDecl,
     ) -> Result<(), String> {
         for method in &decl.methods {
-            let sym_name = crate::mangle::method_symbol_name(
-                &decl.name.name,
-                &method.name.name,
-                method.params.len(),
-            );
+            let sym_name = self.symbol_for_method(&decl.name.name, method);
 
 
             if self.module.get_function(&sym_name).is_some() {
@@ -653,6 +684,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             let base_name = iface_id.name.split('<').next().unwrap_or(&iface_id.name);
             if base_name != iface_id.name {
                 let _ = self.vtable.declare_external_itable(&self.module, &decl.name.name, base_name);
+            }
+        }
+        for field in &decl.fields {
+            if !field.is_static {
+                continue;
+            }
+            let sym_name = crate::registry::TypeRegistry::class_static_global_name(
+                &decl.name.name,
+                &field.name.name,
+            );
+            if self.module.get_global(&sym_name).is_none() {
+                let target_ty = self.ast_type_to_canonical_type(&field.ty);
+                let llvm_ty = self.llvm_type(&target_ty).unwrap_or_else(|_| self.ptr_type().into());
+                let global = self
+                    .module
+                    .add_global(llvm_ty, Some(AddressSpace::default()), &sym_name);
+                global.set_constant(true);
+                global.set_linkage(inkwell::module::Linkage::External);
             }
         }
         Ok(())
@@ -875,10 +924,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             ItemKind::Cfun(cfun) => {
                 self.compile_cfun_decl(cfun, is_public)?;
             }
+            ItemKind::Cvar(cvar) => self.compile_cvar_decl(cvar)?,
             ItemKind::Class(decl) => self.compile_class_decl(decl)?,
             ItemKind::Externc(block) => self.compile_externc_block(block, is_public)?,
             _ => {}
         }
+        Ok(())
+    }
+
+    pub(crate) fn compile_cvar_decl(&mut self, cvar: &yukic_ast::item::CvarDecl) -> Result<(), String> {
+        if self.module.get_global(&cvar.name.name).is_some() {
+            return Ok(());
+        }
+        let ty = self.ast_type_to_canonical_type(&cvar.ty);
+        let llvm_ty = self.llvm_type(&ty)?;
+        let global = self.module.add_global(llvm_ty, Some(AddressSpace::default()), &cvar.name.name);
+        global.set_linkage(inkwell::module::Linkage::External);
         Ok(())
     }
 
@@ -888,8 +949,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         is_public: bool,
     ) -> Result<(), String> {
         for item in &block.items {
-            if let yukic_ast::item::ExterncItem::Cfun(cfun) = item {
-                self.compile_cfun_decl(cfun, is_public)?;
+            match item {
+                yukic_ast::item::ExterncItem::Cfun(cfun) => {
+                    self.compile_cfun_decl(cfun, is_public)?;
+                }
+                yukic_ast::item::ExterncItem::Cvar(cvar) => {
+                    self.compile_cvar_decl(cvar)?;
+                }
+                yukic_ast::item::ExterncItem::Cstruct(_) => {}
             }
         }
         Ok(())
@@ -949,6 +1016,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         class_name: &str,
         method: &yukic_ast::item::MethodDecl,
     ) -> Result<(), String> {
+        let Some(ref body) = method.body else {
+            return Ok(());
+        };
         let ret_ty = method
             .return_type
             .as_ref()
@@ -997,11 +1067,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             });
             self.transform_function_type_with_dest(&param_types, &ret_ty, llvm_ret, false, has_regional_ref)
         };
-        let sym_name = crate::mangle::method_symbol_name(
-            class_name,
-            &method.name.name,
-            method.params.len(),
-        );
+        let sym_name = self.symbol_for_method(class_name, method);
         let fn_val = self
             .module
             .get_function(&sym_name)
@@ -1021,7 +1087,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         if local_reg.is_none()
-            && method.body.stmts.len() <= 4
+            && body.stmts.len() <= 4
             && !method.attrs.iter().any(|a| a.is("inline_never") || a.is("cold"))
         {
             self.add_fn_attribute(fn_val, "inlinehint");
@@ -1056,14 +1122,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             false,
         )
         .with_panic_strategy(&self.panic_strategy)
-        .with_fast_math(is_fast_math);
+        .with_fast_math(is_fast_math)
+        .with_inline_statics(self.inline_statics);
         body_compiler.current_class = Some(class_name.to_string());
         body_compiler.setup_method_params(
             &method.params,
             method.this_param != yukic_ast::item::ThisParam::None,
             has_dest,
         )?;
-        body_compiler.compile_block(&method.body)?;
+        body_compiler.compile_block(body)?;
 
         if !body_compiler.is_terminated() {
             if let Some(reg) = local_reg {
@@ -1108,7 +1175,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let mut vals = Vec::with_capacity(elements.len());
                 for elem in elements {
-                    let lit = eval_const_literal(elem)
+                    let lit = crate::registry::eval_const_literal(elem)
                         .ok_or_else(|| "elements of static array must be constant literals".to_string())?;
                     let val = if let Some(ref elem_ty) = elem_target_ty {
                         self.emit_typed_const_literal(&lit, elem_ty)?
@@ -1146,7 +1213,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok(());
         }
 
-        if let Some(lit) = eval_const_literal(&decl.init) {
+        if let Some(lit) = crate::registry::eval_const_literal(&decl.init) {
             let target_ty = decl.ty.as_ref().map(|t| self.ast_type_to_canonical_type(t));
             let const_val = if let Some(target_ty) = target_ty {
                 self.emit_typed_const_literal(&lit, &target_ty)?
@@ -1169,12 +1236,63 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    pub(crate) fn compile_class_static_fields(
+        &mut self,
+        decl: &yukic_ast::item::ClassDecl,
+    ) -> Result<(), String> {
+        for field in &decl.fields {
+            if !field.is_static {
+                continue;
+            }
+            let Some(ref init_expr) = field.default_val else {
+                continue;
+            };
+            let Some(lit) = crate::registry::eval_const_literal(init_expr) else {
+                continue;
+            };
+            let target_ty = self.ast_type_to_canonical_type(&field.ty);
+            let const_val = self.emit_typed_const_literal(&lit, &target_ty)?;
+            let sym_name = crate::registry::TypeRegistry::class_static_global_name(
+                &decl.name.name,
+                &field.name.name,
+            );
+            let global = self.module.get_global(&sym_name).unwrap_or_else(|| {
+                self.module.add_global(
+                    const_val.get_type(),
+                    Some(AddressSpace::default()),
+                    &sym_name,
+                )
+            });
+            global.set_initializer(&const_val);
+            global.set_constant(true);
+            if self.function_sections {
+                global.set_section(Some(&format!(".rodata.{sym_name}")));
+            }
+        }
+        Ok(())
+    }
+
     fn emit_typed_const_literal(
         &mut self,
         lit: &LiteralValue,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let llvm_ty = self.llvm_type(ty)?;
+        if matches!(lit, LiteralValue::Null) {
+            return Ok(llvm_ty.const_zero());
+        }
+        if let BasicTypeEnum::StructType(st) = llvm_ty {
+            if st.count_fields() == 2
+                && st.get_field_type_at_index(0) == Some(self.context.bool_type().into())
+            {
+                let inner_ty = ty.unwrap_nullable();
+                if &inner_ty != ty && inner_ty != Type::Never {
+                    let inner_val = self.emit_typed_const_literal(lit, &inner_ty)?;
+                    let tag = self.context.bool_type().const_int(1, false);
+                    return Ok(st.const_named_struct(&[tag.into(), inner_val]).into());
+                }
+            }
+        }
         match (lit, llvm_ty) {
             (LiteralValue::Int(v) | LiteralValue::TypedInt(v, _), BasicTypeEnum::IntType(it)) => {
                 Ok(it.const_int((*v).cast_unsigned(), true).into())
@@ -1196,6 +1314,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_fun_decl(&mut self, fun: &yukic_ast::item::FunDecl) -> Result<(), String> {
+        let Some(ref body) = fun.body else {
+            return self.declare_foreign_fun(fun);
+        };
         if fun.name.name == "main" {
             return self.compile_main_fun(fun);
         }
@@ -1249,7 +1370,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         let fn_val = self
             .module
             .get_function(&sym_name)
-            .unwrap_or_else(|| self.module.add_function(&sym_name, fn_type, None));
+            .unwrap_or_else(|| {
+                let linkage = if fun.attrs.iter().any(|a| a.is("ykni::inline_body")) {
+                    Some(inkwell::module::Linkage::Internal)
+                } else {
+                    None
+                };
+                self.module.add_function(&sym_name, fn_type, linkage)
+            });
         let call_conv = if is_thunk {
             inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32
         } else {
@@ -1270,7 +1398,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         if local_reg.is_none()
-            && fun.body.stmts.len() <= 4
+            && body.stmts.len() <= 4
             && !fun.attrs.iter().any(|a| a.is("inline_never") || a.is("cold"))
         {
             self.add_fn_attribute(fn_val, "inlinehint");
@@ -1305,10 +1433,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             false,
         )
         .with_panic_strategy(&self.panic_strategy)
-        .with_fast_math(is_fast_math);
+        .with_fast_math(is_fast_math)
+        .with_inline_statics(self.inline_statics);
         body_compiler.generic_map = generic_map;
         body_compiler.setup_params(&fun.params, has_dest)?;
-        body_compiler.compile_block(&fun.body)?;
+        body_compiler.compile_block(body)?;
 
         if !body_compiler.is_terminated() {
             if let Some(reg) = local_reg {
@@ -1331,6 +1460,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn compile_main_fun(&mut self, fun: &yukic_ast::item::FunDecl) -> Result<(), String> {
+        let Some(ref body) = fun.body else {
+            return self.declare_foreign_fun(fun);
+        };
         let i32_type = self.context.i32_type();
         let ptr_type = self.ptr_type();
         let main_fn_type = i32_type.fn_type(&[i32_type.into(), ptr_type.into()], false);
@@ -1373,9 +1505,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             Some(i32_type.into()),
             true,
         )
-        .with_panic_strategy(&self.panic_strategy);
+        .with_panic_strategy(&self.panic_strategy)
+        .with_fast_math(self.fast_math)
+        .with_inline_statics(self.inline_statics);
 
-        body_compiler.compile_block(&fun.body)?;
+        body_compiler.compile_block(body)?;
 
         if !body_compiler.is_terminated() {
             self.emit_region_epilogue(app_reg)?;
@@ -1396,22 +1530,33 @@ impl<'ctx> CodeGenerator<'ctx> {
             .return_type
             .as_ref()
             .map_or(Type::Void, |t| self.ast_type_to_canonical_type(t));
-        let llvm_ret = self.llvm_return_type(&ret_ty)?;
-
-        let mut param_types = Vec::new();
-        for param in &cfun.params {
-            let pty = self.ast_type_to_canonical_type(&param.ty);
-            param_types.push(self.llvm_type(&pty)?);
-        }
-
-        let (fn_type, _) = self.transform_function_type(&param_types, &ret_ty, llvm_ret, true);
+        let param_sem_tys: Vec<Type> = cfun
+            .params
+            .iter()
+            .map(|p| self.ast_type_to_canonical_type(&p.ty))
+            .collect();
+        let cabi_sig = crate::cabi::build_c_signature(
+            self.context,
+            self.target,
+            &self.target_data,
+            &self.registry,
+            &param_sem_tys,
+            &ret_ty,
+            cfun.is_variadic,
+        )?;
+        let llvm_ret = match &cabi_sig.ret_mode {
+            crate::cabi::CAbiRetMode::Void | crate::cabi::CAbiRetMode::Sret { .. } => None,
+            crate::cabi::CAbiRetMode::Direct(t)
+            | crate::cabi::CAbiRetMode::Coerced { orig_ty: t, .. } => Some(*t),
+        };
         let sym_name = self.symbol_for_cfun(cfun);
 
         let fn_val = self
             .module
             .get_function(&sym_name)
-            .unwrap_or_else(|| self.module.add_function(&sym_name, fn_type, None));
+            .unwrap_or_else(|| self.module.add_function(&sym_name, cabi_sig.fn_type, None));
 
+        crate::cabi::apply_c_signature_attrs(self.context, fn_val, &cabi_sig);
         self.cabi
             .configure_cfun(fn_val, &cfun.c_attrs, is_public, cfun.body.is_some())?;
         self.apply_fun_attributes(fn_val, &cfun.yukino_attrs);
@@ -1445,23 +1590,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                 llvm_ret,
                 false,
             )
-            .with_panic_strategy(&self.panic_strategy);
-            body_compiler.setup_cparams(&cfun.params)?;
+            .with_panic_strategy(&self.panic_strategy)
+            .with_fast_math(self.fast_math)
+            .with_inline_statics(self.inline_statics);
+            body_compiler.setup_cparams_with_abi(&cfun.params, &cabi_sig)?;
             body_compiler.compile_block(body)?;
 
             if !body_compiler.is_terminated() {
                 if let Some(reg) = local_reg {
                     self.emit_region_epilogue(reg)?;
                 }
-                match llvm_ret {
-                    Some(ret) => {
+                match &cabi_sig.ret_mode {
+                    crate::cabi::CAbiRetMode::Void | crate::cabi::CAbiRetMode::Sret { .. } => {
+                        self.builder.build_return(None).map_err(|e| e.to_string())?;
+                    }
+                    crate::cabi::CAbiRetMode::Direct(ret)
+                    | crate::cabi::CAbiRetMode::Coerced { abi_ty: ret, .. } => {
                         let zero = ret.const_zero();
                         self.builder
                             .build_return(Some(&zero))
                             .map_err(|e| e.to_string())?;
-                    }
-                    None => {
-                        self.builder.build_return(None).map_err(|e| e.to_string())?;
                     }
                 }
             }
@@ -2231,29 +2379,85 @@ pub fn embed_artifact_version_metadata<'ctx>(module: &LlvmModule<'ctx>, context:
     let _ = module.add_global_metadata("llvm.ident", &md_node);
 }
 
-fn eval_const_literal(expr: &Expr) -> Option<LiteralValue> {
-    match &expr.kind {
-        ExprKind::Literal(lit) => Some(lit.clone()),
-        ExprKind::Unary(yukic_ast::expr::UnaryOp::Neg, inner) => match eval_const_literal(inner)? {
-            LiteralValue::Int(v) => Some(LiteralValue::Int(v.wrapping_neg())),
-            LiteralValue::TypedInt(v, s) => Some(LiteralValue::TypedInt(v.wrapping_neg(), s)),
-            LiteralValue::Float(v) => Some(LiteralValue::Float(-v)),
-            LiteralValue::TypedFloat(v, s) => Some(LiteralValue::TypedFloat(-v, s)),
-            _ => None,
-        },
-        ExprKind::Unary(yukic_ast::expr::UnaryOp::Not, inner) => match eval_const_literal(inner)? {
-            LiteralValue::Bool(b) => Some(LiteralValue::Bool(!b)),
-            _ => None,
-        },
-        ExprKind::Unary(yukic_ast::expr::UnaryOp::BitNot, inner) => match eval_const_literal(inner)? {
-            LiteralValue::Int(v) => Some(LiteralValue::Int(!v)),
-            LiteralValue::TypedInt(v, s) => Some(LiteralValue::TypedInt(!v, s)),
-            LiteralValue::UInt(v) => Some(LiteralValue::UInt(!v)),
-            LiteralValue::TypedUInt(v, s) => Some(LiteralValue::TypedUInt(!v, s)),
-            _ => None,
-        },
-        _ => None,
+pub fn emit_shared_metadata_cgu(
+    target: TargetTriple,
+    json_payload: &str,
+) -> Result<crate::cgu::CompiledCgu, String> {
+    crate::context::init_llvm_targets();
+    let context = Context::create();
+    let module = context.create_module("cgu_yukino_metadata");
+    let triple = InkwellTargetTriple::create(target.spec().triple);
+    module.set_triple(&triple);
+    let target_data = TargetData::create(target.spec().data_layout);
+    module.set_data_layout(&target_data.get_data_layout());
+
+    let builder = context.create_builder();
+    let i64_type = context.i64_type();
+    let ptr_type = context.ptr_type(AddressSpace::default());
+
+    let const_str = context.const_string(json_payload.as_bytes(), true);
+    let data_global = module.add_global(
+        const_str.get_type(),
+        Some(AddressSpace::default()),
+        "__yukino_metadata_json_bytes",
+    );
+    data_global.set_initializer(&const_str);
+    data_global.set_constant(true);
+    data_global.set_linkage(inkwell::module::Linkage::Private);
+
+    let fn_ty = ptr_type.fn_type(&[ptr_type.into()], false);
+    let fn_val = module.add_function(
+        "__yukino_metadata_v1",
+        fn_ty,
+        Some(inkwell::module::Linkage::External),
+    );
+    fn_val.set_call_conventions(inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32);
+    fn_val
+        .as_global_value()
+        .set_visibility(inkwell::GlobalVisibility::Default);
+
+    let entry = context.append_basic_block(fn_val, "entry");
+    let store_blk = context.append_basic_block(fn_val, "store_len");
+    let ret_blk = context.append_basic_block(fn_val, "ret");
+
+    builder.position_at_end(entry);
+    if let Some(out_len_param) = fn_val.get_first_param() {
+        let out_len_ptr = out_len_param.into_pointer_value();
+        let is_non_null = builder
+            .build_is_not_null(out_len_ptr, "has_out_len")
+            .map_err(|e| e.to_string())?;
+        builder
+            .build_conditional_branch(is_non_null, store_blk, ret_blk)
+            .map_err(|e| e.to_string())?;
+
+        builder.position_at_end(store_blk);
+        let len_val = i64_type.const_int(json_payload.len() as u64, false);
+        builder
+            .build_store(out_len_ptr, len_val)
+            .map_err(|e| e.to_string())?;
+        builder
+            .build_unconditional_branch(ret_blk)
+            .map_err(|e| e.to_string())?;
+    } else {
+        builder
+            .build_unconditional_branch(ret_blk)
+            .map_err(|e| e.to_string())?;
     }
+
+    builder.position_at_end(ret_blk);
+    let data_ptr = data_global.as_pointer_value();
+    builder
+        .build_return(Some(&data_ptr))
+        .map_err(|e| e.to_string())?;
+
+    module.verify().map_err(|e| e.to_string())?;
+    let ll_ir = module.print_to_string().to_string();
+    Ok(crate::cgu::CompiledCgu {
+        name: "cgu_yukino_metadata".to_string(),
+        ll_ir,
+        item_count: 1,
+        estimated_weight: 1,
+    })
 }
 
 fn make_const_array<'ctx>(
@@ -2301,6 +2505,19 @@ fn extract_region_capacity_attr(attrs: &[yukic_ast::AttributeNode]) -> Option<u6
                     }
                 }
             }
+        }
+    }
+    None
+}
+
+fn extract_ykni_symbol_attr(attrs: &[yukic_ast::AttributeNode]) -> Option<String> {
+    for attr in attrs {
+        if attr.is("ykni::symbol")
+            && let yukic_ast::attr::AttributeArgs::Positional(values) = &attr.args
+            && let Some(val) = values.first()
+            && let yukic_ast::ExprKind::Literal(yukic_ast::LiteralValue::String(sym)) = &val.kind
+        {
+            return Some(sym.clone());
         }
     }
     None

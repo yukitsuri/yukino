@@ -708,6 +708,30 @@ impl<'ctx> IntrinsicManager<'ctx> {
         }
     }
 
+    #[allow(unsafe_code)]
+    pub fn emit_raw_elem_ptr(
+        &self,
+        builder: &Builder<'ctx>,
+        base_ptr: PointerValue<'ctx>,
+        index: IntValue<'ctx>,
+        elem_ty: BasicTypeEnum<'ctx>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let i64_ty = self.context.i64_type();
+        let idx_i64 = if index.get_type().get_bit_width() < 64 {
+            builder
+                .build_int_z_extend(index, i64_ty, "idx_i64")
+                .map_err(|e| e.to_string())?
+        } else {
+            index
+        };
+
+        unsafe {
+            builder
+                .build_in_bounds_gep(elem_ty, base_ptr, &[idx_i64], "raw_elem_ptr")
+                .map_err(|e| e.to_string())
+        }
+    }
+
     pub fn emit_subslice(
         &self,
         builder: &Builder<'ctx>,

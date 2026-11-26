@@ -429,11 +429,11 @@ Extraction and single-folder wrapper stripping:
 
 #### 4. Member Lookup Algorithm Inside a Workspace
 
-Once a workspace is available (via `path`, `git`, or `link`), looking up the requested package name proceeds in order:
+Once a workspace is available (via `path`, `git`, or `link`), looking up the requested `package = "..."` value proceeds in order:
 
-1. **Inline Virtual Packages**: The package manager first checks the `[members.<name>]` table in `yukispace.toml`. If found, a project manifest is synthesized directly from the workspace manifest.
-2. **Directory Members**: If no inline member matches, the manager iterates over all directories declared in `workspace.members` (including glob wildcards such as `libs/*` or `plugins/*`).
-3. **Manifest Identification**: In each member directory, `lib.toml` (or `yuki.toml`) is loaded. A member matches if the library name in `[lib]` (or `[bin]`) equals the requested package name, or if the directory basename matches the requested name.
+1. **Workspace Package Name Lookup**: The package manager first checks the inline `[members.<name>]` table in `yukispace.toml`, and then iterates over all directories declared in `workspace.members` (including glob wildcards such as `libs/*`) to find a member whose `[lib]` or `[bin]` manifest `name` equals the requested package name.
+2. **Relative Path Fallback**: If no workspace package matches by name, the value is checked as a relative path from the root directory (for example, `libs/fast_hash`).
+3. **Explicit Error on Missing Package**: If neither a matching package name nor a valid relative path with a manifest exists, the build fails with an error.
 4. **Inheriting Workspace Build Settings**: C archives and link flags declared under `[workspace.build]` in the root `yukispace.toml` are automatically inherited and applied during member compilation.
 
 ---

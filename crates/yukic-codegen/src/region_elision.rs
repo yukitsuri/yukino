@@ -109,7 +109,10 @@ pub fn fun_needs_local_region(
             }
         }
     }
-    block_requires_region_scoped(&fun.body, &mut scope, registry)
+    let Some(ref body) = fun.body else {
+        return false;
+    };
+    block_requires_region_scoped(body, &mut scope, registry)
 }
 
 pub fn method_needs_local_region(
@@ -135,7 +138,10 @@ pub fn method_needs_local_region(
             }
         }
     }
-    block_requires_region_scoped(&method.body, &mut scope, registry)
+    let Some(ref body) = method.body else {
+        return false;
+    };
+    block_requires_region_scoped(body, &mut scope, registry)
 }
 
 pub fn block_requires_region(block: &Block, registry: &TypeRegistry) -> bool {
@@ -283,7 +289,17 @@ fn is_string_expr_with_scope(expr: &Expr, scope: &LocalScope) -> bool {
 fn is_regional_cast_target(expr: &Expr) -> bool {
     if let ExprKind::Literal(LiteralValue::String(s)) = &expr.kind {
         let ty = yukic_types::convert::parse_primitive_or_named(s);
-        RegionManager::is_regional_type(&ty)
+        if RegionManager::is_regional_type(&ty) {
+            return true;
+        }
+        if let Type::Ptr(inner) | Type::Fn { ret: inner, .. } = &ty {
+            let ret_ty = match inner.as_ref() {
+                Type::Fn { ret, .. } => ret.as_ref(),
+                other => other,
+            };
+            return RegionManager::is_regional_type(ret_ty);
+        }
+        false
     } else {
         false
     }
@@ -547,7 +563,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![p1, p2],
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("int32", sp)), sp)),
-            body: Block::new(vec![ret_stmt], sp),
+            body: Some(Block::new(vec![ret_stmt], sp)),
             span: sp,
         };
         let reg = TypeRegistry::default();
@@ -568,7 +584,7 @@ mod tests {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: None,
-            body: Block::new(Vec::new(), sp),
+            body: Some(Block::new(Vec::new(), sp)),
             span: sp,
         };
         let reg = TypeRegistry::default();
@@ -611,7 +627,7 @@ mod tests {
             generics: Vec::new(),
             params: vec![p1, p2],
             return_type: Some(TypeNode::new(TypeNodeKind::Ident(Ident::new("string", sp)), sp)),
-            body: Block::new(vec![ret_stmt], sp),
+            body: Some(Block::new(vec![ret_stmt], sp)),
             span: sp,
         };
         let reg = TypeRegistry::default();

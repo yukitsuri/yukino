@@ -10,12 +10,12 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use yukic_borrow::BorrowChecker;
-use yukic_codegen::{compile_units_parallel_advanced, partition_module_with_custom};
+use yukic_codegen::{compile_units_parallel_with_options, partition_module_with_custom};
 use yukic_dce::DeadCodeEliminator;
 use yukic_diagnostics::{ColorChoice, DiagnosticEmitter};
 use yukic_lexer::Lexer;
 use yukic_macro::{BuiltinMacroConfig, MacroExpander};
-use yukic_opt::{LtoKind, OptLevel, PipelineConfig, optimize_cgus_parallel, run_pipeline};
+use yukic_opt::{OptLevel, PipelineConfig, optimize_cgus_parallel, run_pipeline};
 use yukic_parser::Parser;
 use yukic_resolve::{
     ConditionalConfig, ModuleId, ModuleScope, Resolver, SearchPaths, build_target_name,
@@ -23,17 +23,22 @@ use yukic_resolve::{
 };
 use yukic_span::{FileId, SourceMap};
 use yukic_target::TargetTriple;
+use yukic_types::convert::ast_type_to_c_field_type;
 use yukic_types::{FnSig, Type, TypeChecker, TypeParam, ast_type_to_type};
 
 use crate::DriverConfig;
 use crate::cli::{EmitKind, OutputType};
 use crate::emitter::{
-    create_target_machine_for_driver_advanced, emit_asm_file, emit_cgus_parallel_advanced,
-    emit_object_file, format_emit_progress, format_source_cgu, reloc_mode_for,
+    create_target_machine_for_driver_with_code_model, emit_asm_file,
+    emit_cgus_parallel_with_options, emit_object_file, format_emit_progress, format_source_cgu,
+    resolve_reloc_mode,
 };
 use crate::error::DriverError;
 use crate::header::{
     generate_c_header_from_ast, generate_c_header_from_llvm, resolve_header_path,
+};
+use crate::interface::{
+    InterfaceModuleInput, generate_ykni_and_shared_metadata, parse_ykni_file, resolve_interface_path,
 };
 
 fn ensure_parent_dir(path: &Path) -> Result<(), std::io::Error> {
@@ -65,6 +70,24 @@ fn emit_header_if_needed(
         fs::write(&header_path, content)?;
         if config.verbose {
             println!("Emit C header: {}", header_path.display());
+        }
+    }
+    Ok(())
+}
+
+fn emit_interface_if_needed(
+    config: &DriverConfig,
+    out_path: &Path,
+    interface_text: Option<&str>,
+) -> Result<(), DriverError> {
+    let Some(content) = interface_text else {
+        return Ok(());
+    };
+    if let Some(iface_path) = resolve_interface_path(config, out_path) {
+        ensure_parent_dir(&iface_path)?;
+        fs::write(&iface_path, content)?;
+        if config.verbose {
+            println!("Emit Yukino interface: {}", iface_path.display());
         }
     }
     Ok(())
@@ -104,20 +127,23 @@ fn compile_ll_file(
 
     yukic_codegen::embed_artifact_version_metadata(&module, &context);
 
-    let reloc = reloc_mode_for(config.output_type);
-    let machine = create_target_machine_for_driver_advanced(
+    let reloc = resolve_reloc_mode(config.output_type, config.reloc_model);
+    let machine = create_target_machine_for_driver_with_code_model(
         target,
         config.opt_level,
         Some(reloc),
+        config.code_model,
         config.cpu.as_deref(),
         config.target_features.as_deref(),
     )?;
 
-    if config.opt_level != OptLevel::O0 {
-        let lto_kind = if config.lto { LtoKind::Thin } else { LtoKind::None };
+    let lto_kind = config.effective_lto_kind();
+    if config.opt_level != OptLevel::O0 || lto_kind.is_enabled() {
         let mut opt_cfg = PipelineConfig::new(config.opt_level, lto_kind);
         opt_cfg.target_cpu = config.cpu.clone();
         opt_cfg.target_features = config.target_features.clone();
+        opt_cfg.reloc_mode = Some(reloc);
+        opt_cfg.code_model = config.code_model;
         run_pipeline(&module, &machine, &opt_cfg)
             .map_err(|e| DriverError::OptFailed(e.to_string()))?;
     }
@@ -298,10 +324,73 @@ fn extract_manifest_name(dir: &Path) -> Option<String> {
     let table = val.as_table()?;
     let section = table
         .get("lib")
+        .or_else(|| table.get("bin"))
         .or_else(|| table.get("package"))
         .or_else(|| table.get("project"))
         .and_then(toml::Value::as_table)?;
     section.get("name").and_then(toml::Value::as_str).map(|s| s.to_string())
+}
+
+fn extract_dep_package_spec<'a>(spec_tbl: &'a toml::map::Map<String, toml::Value>) -> Option<&'a str> {
+    ["package", "sublib", "subpath", "lib"]
+        .iter()
+        .find_map(|key| spec_tbl.get(*key).and_then(toml::Value::as_str))
+}
+
+fn resolve_dep_package_dir(base_dir: &Path, pkg: &str) -> PathBuf {
+    let ws_path = base_dir.join("yukispace.toml");
+    if ws_path.is_file() {
+        if let Some(ws_val) = load_manifest_value(Some(&ws_path)) {
+            if let Some(ws_tbl) = ws_val.as_table() {
+                // workspace member name
+                if ws_tbl
+                    .get("members")
+                    .and_then(toml::Value::as_table)
+                    .is_some_and(|m| m.contains_key(pkg))
+                {
+                    return base_dir.to_path_buf();
+                }
+                if let Some(patterns) = ws_tbl
+                    .get("workspace")
+                    .and_then(toml::Value::as_table)
+                    .and_then(|w| w.get("members"))
+                    .and_then(toml::Value::as_array)
+                {
+                    let mut member_dirs = Vec::new();
+                    for pat_val in patterns {
+                        let Some(pat) = pat_val.as_str() else { continue; };
+                        if let Some(parent) = pat.strip_suffix("/*") {
+                            if let Ok(entries) = fs::read_dir(base_dir.join(parent)) {
+                                for entry in entries.flatten() {
+                                    let p = entry.path();
+                                    if p.is_dir() {
+                                        member_dirs.push(p);
+                                    }
+                                }
+                            }
+                        } else {
+                            let d = base_dir.join(pat);
+                            if d.is_dir() {
+                                member_dirs.push(d);
+                            }
+                        }
+                    }
+                    for dir in member_dirs {
+                        if extract_manifest_name(&dir).as_deref() == Some(pkg) {
+                            return dir;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // relpath
+    let pkg_dir = base_dir.join(pkg);
+    if pkg_dir.is_dir() {
+        return pkg_dir;
+    }
+    base_dir.to_path_buf()
 }
 
 fn is_manifest_macro(dir: &Path) -> bool {
@@ -363,17 +452,15 @@ fn register_manifest_reexports(
             continue;
         }
         let qualified_name = format!("{parent_prefix}_{dep_name}");
-        let dep_dir = if let Some(p) = spec_tbl.get("path").and_then(toml::Value::as_str) {
+        let base_dep_dir = if let Some(p) = spec_tbl.get("path").and_then(toml::Value::as_str) {
             manifest_dir.join(p)
         } else {
-            let mut local = manifest_dir.join("yuki-work/local/deps").join(dep_name);
-            if let Some(pkg) = spec_tbl.get("package").and_then(toml::Value::as_str) {
-                let pkg_dir = local.join(pkg);
-                if pkg_dir.is_dir() {
-                    local = pkg_dir;
-                }
-            }
-            local
+            manifest_dir.join("yuki-work/local/deps").join(dep_name)
+        };
+        let dep_dir = if let Some(pkg) = extract_dep_package_spec(spec_tbl) {
+            resolve_dep_package_dir(&base_dep_dir, pkg)
+        } else {
+            base_dep_dir
         };
         if dep_dir.is_dir() {
             if is_manifest_macro(&dep_dir) {
@@ -428,20 +515,18 @@ fn build_search_paths(
             {
                 for (lib_name, spec) in sub {
                     if let Some(spec_tbl) = spec.as_table() {
-                        if let Some(p) = spec_tbl.get("path").and_then(toml::Value::as_str) {
-                            let resolved = manifest_dir.join(p);
-                            search_paths.add_lib(lib_name.clone(), resolved);
+                        let base_dep_dir = if let Some(p) = spec_tbl.get("path").and_then(toml::Value::as_str) {
+                            manifest_dir.join(p)
                         } else {
-                            let mut local_dep_dir = manifest_dir.join("yuki-work/local/deps").join(lib_name);
-                            if let Some(pkg) = spec_tbl.get("package").and_then(toml::Value::as_str) {
-                                let pkg_dir = local_dep_dir.join(pkg);
-                                if pkg_dir.is_dir() {
-                                    local_dep_dir = pkg_dir;
-                                }
-                            }
-                            if local_dep_dir.is_dir() {
-                                search_paths.add_lib(lib_name.clone(), local_dep_dir);
-                            }
+                            manifest_dir.join("yuki-work/local/deps").join(lib_name)
+                        };
+                        let resolved_dir = if let Some(pkg) = extract_dep_package_spec(spec_tbl) {
+                            resolve_dep_package_dir(&base_dep_dir, pkg)
+                        } else {
+                            base_dep_dir
+                        };
+                        if resolved_dir.is_dir() {
+                            search_paths.add_lib(lib_name.clone(), resolved_dir);
                         }
                     }
                 }
@@ -503,7 +588,7 @@ fn parse_and_expand_file(
     }
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let tracked_files: Vec<PathBuf> = raw_tracked
+    let mut tracked_files: Vec<PathBuf> = raw_tracked
         .into_iter()
         .map(|t| {
             let p = PathBuf::from(t);
@@ -511,7 +596,229 @@ fn parse_and_expand_file(
         })
         .collect();
 
+    let cheader_tracked = expand_cload_items(path, &mut ast, macro_cfg, source_map, emitter);
+    for tf in cheader_tracked {
+        if !tracked_files.contains(&tf) {
+            tracked_files.push(tf);
+        }
+    }
+
     Ok((ast, tracked_files))
+}
+
+fn resolve_manifest_dir_for_file(file_path: &Path, macro_cfg: &BuiltinMacroConfig) -> PathBuf {
+    if let Some(mp) = &macro_cfg.manifest_path
+        && let Some(mp_dir) = mp.parent()
+    {
+        let norm_mp = mp_dir.canonicalize().unwrap_or_else(|_| mp_dir.to_path_buf());
+        let norm_file = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
+        if norm_file.starts_with(&norm_mp) {
+            return mp_dir.to_path_buf();
+        }
+        if let Some(nearest) = find_manifest_path(file_path, None)
+            && let Some(parent) = nearest.parent()
+        {
+            return parent.to_path_buf();
+        }
+        return mp_dir.to_path_buf();
+    }
+    if let Some(nearest) = find_manifest_path(file_path, None)
+        && let Some(parent) = nearest.parent()
+    {
+        return parent.to_path_buf();
+    }
+    if let Some(base) = &macro_cfg.base_dir {
+        return base.clone();
+    }
+    file_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+fn build_cheader_preproc_config(
+    manifest_dir: &Path,
+    macro_cfg: &BuiltinMacroConfig,
+) -> yukic_cheader::PreprocessConfig {
+    let target = TargetTriple::parse(&macro_cfg.target_triple).unwrap_or_default();
+    let mut include_dirs = Vec::new();
+    let mut defines = Vec::new();
+
+    if let Some(val) = &macro_cfg.manifest_value
+        && let Some(c_tbl) = val.get("c").and_then(toml::Value::as_table)
+    {
+        if let Some(arr) = c_tbl.get("include_dirs").and_then(toml::Value::as_array) {
+            for item in arr {
+                if let Some(rel) = item.as_str() {
+                    let p = Path::new(rel);
+                    include_dirs.push(if p.is_absolute() {
+                        p.to_path_buf()
+                    } else {
+                        manifest_dir.join(p)
+                    });
+                }
+            }
+        }
+        if let Some(def_tbl) = c_tbl.get("defines").and_then(toml::Value::as_table) {
+            for (k, v) in def_tbl {
+                let s = match v {
+                    toml::Value::String(st) => st.clone(),
+                    toml::Value::Integer(i) => i.to_string(),
+                    toml::Value::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
+                    _ => continue,
+                };
+                defines.push((k.clone(), s));
+            }
+        } else if let Some(def_arr) = c_tbl.get("defines").and_then(toml::Value::as_array) {
+            for entry in def_arr {
+                if let Some(raw) = entry.as_str() {
+                    if let Some((k, v)) = raw.split_once('=') {
+                        defines.push((k.trim().to_string(), v.trim().to_string()));
+                    } else {
+                        defines.push((raw.trim().to_string(), "1".to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    include_dirs.push(manifest_dir.to_path_buf());
+    yukic_cheader::PreprocessConfig {
+        target,
+        include_dirs,
+        defines,
+    }
+}
+
+fn expand_cload_items(
+    file_path: &Path,
+    ast: &mut yukic_ast::Module,
+    macro_cfg: &BuiltinMacroConfig,
+    source_map: &SourceMap,
+    emitter: &mut DiagnosticEmitter,
+) -> Vec<PathBuf> {
+    if !ast
+        .items
+        .iter()
+        .any(|it| matches!(it.kind, yukic_ast::ItemKind::Cload(_)))
+    {
+        return Vec::new();
+    }
+
+    let manifest_dir = resolve_manifest_dir_for_file(file_path, macro_cfg);
+    let pp_cfg = build_cheader_preproc_config(&manifest_dir, macro_cfg);
+    let mut tracked = Vec::new();
+
+    let mut seen_cstructs = std::collections::HashSet::new();
+    let mut seen_cfuns = std::collections::HashSet::new();
+    let mut seen_cvars = std::collections::HashSet::new();
+    let mut seen_aliases = std::collections::HashSet::new();
+    let mut seen_statics = std::collections::HashSet::new();
+
+    for item in &ast.items {
+        match &item.kind {
+            yukic_ast::ItemKind::Cstruct(d) => {
+                seen_cstructs.insert(d.name.name.clone());
+            }
+            yukic_ast::ItemKind::Cfun(d) => {
+                seen_cfuns.insert(d.name.name.clone());
+            }
+            yukic_ast::ItemKind::Cvar(d) => {
+                seen_cvars.insert(d.name.name.clone());
+            }
+            yukic_ast::ItemKind::TypeAlias(d) => {
+                seen_aliases.insert(d.name.name.clone());
+            }
+            yukic_ast::ItemKind::Static(d) => {
+                seen_statics.insert(d.name.name.clone());
+            }
+            yukic_ast::ItemKind::Externc(b) => {
+                for ei in &b.items {
+                    match ei {
+                        yukic_ast::ExterncItem::Cstruct(d) => {
+                            seen_cstructs.insert(d.name.name.clone());
+                        }
+                        yukic_ast::ExterncItem::Cfun(d) => {
+                            seen_cfuns.insert(d.name.name.clone());
+                        }
+                        yukic_ast::ExterncItem::Cvar(d) => {
+                            seen_cvars.insert(d.name.name.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let old_items = std::mem::take(&mut ast.items);
+    let mut new_items = Vec::with_capacity(old_items.len());
+    for item in old_items {
+        let yukic_ast::ItemKind::Cload(decl) = &item.kind else {
+            new_items.push(item);
+            continue;
+        };
+        match yukic_cheader::load_header_from_manifest(
+            &manifest_dir,
+            &decl.path,
+            item.visibility,
+            decl.span,
+            &pp_cfg,
+        ) {
+            Ok(loaded) => {
+                tracked.extend(loaded.tracked_files);
+                ast.c_namespaces
+                    .entry(loaded.namespace)
+                    .or_default()
+                    .extend(loaded.symbols);
+                for mut gen_item in loaded.items {
+                    match &mut gen_item.kind {
+                        yukic_ast::ItemKind::Externc(block) => {
+                            block.items.retain(|ei| match ei {
+                                yukic_ast::ExterncItem::Cstruct(d) => {
+                                    seen_cstructs.insert(d.name.name.clone())
+                                }
+                                yukic_ast::ExterncItem::Cfun(d) => {
+                                    seen_cfuns.insert(d.name.name.clone())
+                                }
+                                yukic_ast::ExterncItem::Cvar(d) => {
+                                    seen_cvars.insert(d.name.name.clone())
+                                }
+                            });
+                            if !block.items.is_empty() {
+                                new_items.push(gen_item);
+                            }
+                        }
+                        yukic_ast::ItemKind::TypeAlias(d) => {
+                            if seen_aliases.insert(d.name.name.clone()) {
+                                new_items.push(gen_item);
+                            }
+                        }
+                        yukic_ast::ItemKind::Static(d) => {
+                            if seen_statics.insert(d.name.name.clone()) {
+                                new_items.push(gen_item);
+                            }
+                        }
+                        _ => new_items.push(gen_item),
+                    }
+                }
+            }
+            Err(err) => {
+                let diag = yukic_diagnostics::Diagnostic::error(
+                    yukic_diagnostics::code::ErrorCode::E0701,
+                    format!("failed to load C header '{}': {err}", decl.path),
+                    decl.span,
+                );
+                let _ = emitter.emit(diag, source_map, &mut std::io::stderr());
+            }
+        }
+    }
+
+    for (idx, item) in new_items.iter_mut().enumerate() {
+        item.id = yukic_ast::ItemId(u32::try_from(idx).unwrap_or(u32::MAX));
+    }
+    ast.items = new_items;
+    tracked
 }
 
 fn module_name_for_path(
@@ -619,6 +926,188 @@ fn discover_external_modules(
             )?;
         }
         i += 1;
+    }
+    Ok(())
+}
+
+fn collect_ykni_files_from_dir(dir: &Path, out: &mut Vec<(Option<String>, PathBuf)>, alias: Option<&str>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut paths: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("ykni"))
+            .collect();
+        paths.sort();
+        for p in paths {
+            out.push((alias.map(str::to_string), p));
+        }
+    }
+}
+
+fn load_prebuilt_interfaces(
+    config: &DriverConfig,
+    manifest_value: Option<&toml::Value>,
+    manifest_dir: &Path,
+    target: TargetTriple,
+    source_map: &mut SourceMap,
+    emitter: &mut DiagnosticEmitter,
+    loaded_modules: &mut Vec<LoadedModule>,
+    discovered_link_systems: &mut Vec<String>,
+    discovered_link_archives: &mut Vec<PathBuf>,
+) -> Result<(), DriverError> {
+    let mut candidates: Vec<(Option<String>, PathBuf)> = Vec::new();
+
+    for (alias, raw_path) in &config.prebuilt_interfaces {
+        if raw_path.is_file() {
+            candidates.push((alias.clone(), raw_path.clone()));
+        } else if raw_path.is_dir() {
+            if let Some(pkg) = alias {
+                let exact = raw_path.join(format!("{pkg}.ykni"));
+                if exact.is_file() {
+                    candidates.push((Some(pkg.clone()), exact));
+                    continue;
+                }
+            }
+            collect_ykni_files_from_dir(raw_path, &mut candidates, alias.as_deref());
+        } else {
+            let diag = yukic_diagnostics::Diagnostic::error(
+                yukic_diagnostics::code::ErrorCode::E0701,
+                format!("prebuilt interface path '{}' does not exist", raw_path.display()),
+                yukic_span::Span::DUMMY,
+            );
+            let _ = emitter.emit(diag, source_map, &mut std::io::stderr());
+            return Err(DriverError::FrontendValidation(emitter.error_count()));
+        }
+    }
+
+    if let Some(val) = manifest_value
+        && let Some(tbl) = val.as_table()
+    {
+        for section in ["runtime", "build"] {
+            if let Some(libs_tbl) = tbl.get("libs").and_then(toml::Value::as_table)
+                && let Some(sub) = libs_tbl.get(section).and_then(toml::Value::as_table)
+            {
+                for (lib_name, spec) in sub {
+                    if let Some(spec_tbl) = spec.as_table() {
+                        if let Some(iface_str) = spec_tbl
+                            .get("interface")
+                            .or_else(|| spec_tbl.get("prebuilt"))
+                            .and_then(toml::Value::as_str)
+                        {
+                            let iface_path = manifest_dir.join(iface_str);
+                            if iface_path.is_file() {
+                                candidates.push((Some(lib_name.clone()), iface_path));
+                            } else if iface_path.is_dir() {
+                                collect_ykni_files_from_dir(&iface_path, &mut candidates, Some(lib_name));
+                            }
+                        }
+                        if let Some(arch_str) = spec_tbl.get("archive").and_then(toml::Value::as_str) {
+                            let arch_path = manifest_dir.join(arch_str);
+                            if arch_path.is_file() && !discovered_link_archives.contains(&arch_path) {
+                                discovered_link_archives.push(arch_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for inc in &config.include_dirs {
+        if inc.is_file() && inc.extension().and_then(|s| s.to_str()) == Some("ykni") {
+            candidates.push((None, inc.clone()));
+        } else if inc.is_dir()
+            && !inc.join("lib.toml").is_file()
+            && !inc.join("yuki.toml").is_file()
+            && !inc.join("lib.ykn").is_file()
+            && !inc.join("mod.ykn").is_file()
+        {
+            collect_ykni_files_from_dir(inc, &mut candidates, None);
+        }
+    }
+
+    let mut seen_paths = std::collections::HashSet::new();
+    for (alias, ykni_path) in candidates {
+        let canon = ykni_path.canonicalize().unwrap_or_else(|_| ykni_path.clone());
+        if !seen_paths.insert(canon) {
+            continue;
+        }
+        let parsed = match parse_ykni_file(&ykni_path, source_map) {
+            Ok(p) => p,
+            Err(diags) => {
+                for d in diags {
+                    let _ = emitter.emit(d, source_map, &mut std::io::stderr());
+                }
+                return Err(DriverError::FrontendValidation(emitter.error_count()));
+            }
+        };
+        if let Some(ref ykni_target) = parsed.meta.target
+            && ykni_target != target.as_str()
+        {
+            let diag = yukic_diagnostics::Diagnostic::error(
+                yukic_diagnostics::code::ErrorCode::E0701,
+                format!(
+                    "prebuilt interface '{}' was built for target '{}', but compiling for '{}'",
+                    ykni_path.display(),
+                    ykni_target,
+                    target.as_str()
+                ),
+                yukic_span::Span::DUMMY,
+            );
+            let _ = emitter.emit(diag, source_map, &mut std::io::stderr());
+            return Err(DriverError::FrontendValidation(emitter.error_count()));
+        }
+
+        for sys in &parsed.meta.link_systems {
+            if !discovered_link_systems.contains(sys) {
+                discovered_link_systems.push(sys.clone());
+            }
+        }
+        if let Some(parent_dir) = ykni_path.parent() {
+            for arch_name in &parsed.meta.link_archives {
+                let arch_path = parent_dir.join(arch_name);
+                if arch_path.is_file() && !discovered_link_archives.contains(&arch_path) {
+                    discovered_link_archives.push(arch_path);
+                }
+            }
+        }
+
+        for (mod_name, mod_ast) in parsed.modules {
+            let final_mod_name = if let Some(ref pkg_alias) = alias {
+                if mod_name == "main" {
+                    pkg_alias.clone()
+                } else if let Some(ref orig_pkg) = parsed.meta.package_name {
+                    if mod_name == *orig_pkg {
+                        pkg_alias.clone()
+                    } else if let Some(rest) = mod_name.strip_prefix(&format!("{orig_pkg}.")) {
+                        format!("{pkg_alias}.{rest}")
+                    } else {
+                        mod_name
+                    }
+                } else {
+                    mod_name
+                }
+            } else if mod_name == "main" {
+                parsed
+                    .meta
+                    .package_name
+                    .clone()
+                    .unwrap_or_else(|| mod_name.clone())
+            } else {
+                mod_name
+            };
+
+            if loaded_modules.iter().any(|m| m.name == final_mod_name) {
+                continue;
+            }
+            loaded_modules.push(LoadedModule {
+                name: final_mod_name,
+                path: ykni_path.clone(),
+                ast: mod_ast,
+                is_external: true,
+                tracked_files: vec![ykni_path.clone()],
+            });
+        }
     }
     Ok(())
 }
@@ -999,6 +1488,7 @@ fn build_macro_config(
         macro_runners: config.macro_runners.clone(),
         macro_timeout: config.macro_timeout,
         is_test: config.test_mode,
+        debug_assertions: config.debug_assertions,
     }
 }
 
@@ -1209,12 +1699,34 @@ fn merge_project_ast(
             next_item_id = next_item_id.saturating_add(1);
             combined_ast.items.push(item);
         }
+        for (ns, syms) in &module.ast.c_namespaces {
+            combined_ast
+                .c_namespaces
+                .entry(ns.clone())
+                .or_default()
+                .extend(syms.clone());
+        }
     }
 
     for module in loaded_modules.iter().filter(|m| m.is_external && (m.name.starts_with("core.") || m.name == "core")) {
         for mut item in module.ast.items.clone() {
             if matches!(item.kind, yukic_ast::ItemKind::Class(_)) {
                 item.attrs.extend(module.ast.module_attrs.clone());
+                item.id = yukic_ast::ItemId(next_item_id);
+                item_sources.insert(item.id, module.path.clone());
+                next_item_id = next_item_id.saturating_add(1);
+                combined_ast.items.push(item);
+            }
+        }
+    }
+
+    for module in loaded_modules.iter().filter(|m| {
+        m.is_external && m.path.extension().and_then(|e| e.to_str()) == Some("ykni")
+    }) {
+        for mut item in module.ast.items.clone() {
+            if let yukic_ast::ItemKind::Fun(ref fun) = item.kind
+                && fun.body.is_some()
+            {
                 item.id = yukic_ast::ItemId(next_item_id);
                 item_sources.insert(item.id, module.path.clone());
                 next_item_id = next_item_id.saturating_add(1);
@@ -1300,13 +1812,21 @@ fn struct_decl_to_def(decl: &yukic_ast::StructDecl) -> yukic_types::StructDef {
         fields,
         field_names,
         methods,
+        is_cstruct: false,
+        is_union: false,
     }
 }
 
 fn class_decl_to_def(decl: &yukic_ast::ClassDecl) -> yukic_types::ClassDef {
     let mut fields = std::collections::HashMap::new();
+    let mut static_fields = std::collections::HashMap::new();
     for f in &decl.fields {
-        fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
+        let fty = ast_type_to_type(&f.ty);
+        if f.is_static {
+            static_fields.insert(f.name.name.clone(), fty);
+        } else {
+            fields.insert(f.name.name.clone(), fty);
+        }
     }
     let mut interfaces = std::collections::BTreeSet::new();
     for iface in &decl.interfaces {
@@ -1357,6 +1877,7 @@ fn class_decl_to_def(decl: &yukic_ast::ClassDecl) -> yukic_types::ClassDef {
     }
     yukic_types::ClassDef {
         fields,
+        static_fields,
         methods,
         getters,
         setters,
@@ -1368,11 +1889,29 @@ fn class_decl_to_def(decl: &yukic_ast::ClassDecl) -> yukic_types::ClassDef {
 
 struct ExternalSignatures {
     fns: std::collections::HashMap<String, FnSig>,
+    variadic_cfuns: std::collections::HashSet<String>,
     classes: std::collections::HashMap<String, yukic_types::ClassDef>,
     structs: std::collections::HashMap<String, yukic_types::StructDef>,
+    enums: std::collections::HashMap<String, yukic_types::EnumDef>,
     interfaces: std::collections::HashMap<String, yukic_types::InterfaceDef>,
     statics: std::collections::HashMap<String, yukic_types::Type>,
     type_aliases: std::collections::HashMap<String, yukic_types::Type>,
+}
+
+fn cstruct_decl_to_def(decl: &yukic_ast::CstructDecl) -> yukic_types::StructDef {
+    let mut fields = std::collections::HashMap::new();
+    let mut field_names = Vec::new();
+    for f in &decl.fields {
+        fields.insert(f.name.name.clone(), ast_type_to_c_field_type(&f.ty));
+        field_names.push(f.name.name.clone());
+    }
+    yukic_types::StructDef {
+        fields,
+        field_names,
+        methods: std::collections::HashMap::new(),
+        is_cstruct: true,
+        is_union: decl.is_union,
+    }
 }
 
 fn collect_externc_signatures(
@@ -1384,23 +1923,22 @@ fn collect_externc_signatures(
         match ext_item {
             yukic_ast::ExterncItem::Cfun(decl) => {
                 let sig = cfun_decl_to_sig(decl);
+                if decl.is_variadic {
+                    sigs.variadic_cfuns.insert(decl.name.name.clone());
+                    sigs.variadic_cfuns.insert(format!("{mod_name}::{}", decl.name.name));
+                }
                 sigs.fns.insert(decl.name.name.clone(), sig.clone());
                 sigs.fns.insert(format!("{mod_name}::{}", decl.name.name), sig);
             }
             yukic_ast::ExterncItem::Cstruct(decl) => {
-                let mut fields = std::collections::HashMap::new();
-                let mut field_names = Vec::new();
-                for f in &decl.fields {
-                    fields.insert(f.name.name.clone(), ast_type_to_type(&f.ty));
-                    field_names.push(f.name.name.clone());
-                }
-                let def = yukic_types::StructDef {
-                    fields,
-                    field_names,
-                    methods: std::collections::HashMap::new(),
-                };
+                let def = cstruct_decl_to_def(decl);
                 sigs.structs.insert(decl.name.name.clone(), def.clone());
                 sigs.structs.insert(format!("{mod_name}::{}", decl.name.name), def);
+            }
+            yukic_ast::ExterncItem::Cvar(decl) => {
+                let ty = ast_type_to_type(&decl.ty);
+                sigs.statics.insert(decl.name.name.clone(), ty.clone());
+                sigs.statics.insert(format!("{mod_name}::{}", decl.name.name), ty);
             }
         }
     }
@@ -1409,8 +1947,10 @@ fn collect_externc_signatures(
 fn collect_external_signatures(loaded_modules: &[LoadedModule]) -> ExternalSignatures {
     let mut sigs = ExternalSignatures {
         fns: std::collections::HashMap::new(),
+        variadic_cfuns: std::collections::HashSet::new(),
         classes: std::collections::HashMap::new(),
         structs: std::collections::HashMap::new(),
+        enums: std::collections::HashMap::new(),
         interfaces: std::collections::HashMap::new(),
         statics: std::collections::HashMap::new(),
         type_aliases: std::collections::HashMap::new(),
@@ -1462,13 +2002,47 @@ fn collect_external_signatures(loaded_modules: &[LoadedModule]) -> ExternalSigna
                 }
                 yukic_ast::ItemKind::Cfun(decl) => {
                     let sig = cfun_decl_to_sig(decl);
+                    if decl.is_variadic {
+                        sigs.variadic_cfuns.insert(decl.name.name.clone());
+                        sigs.variadic_cfuns.insert(format!("{}::{}", ext_mod.name, decl.name.name));
+                    }
                     sigs.fns.insert(decl.name.name.clone(), sig.clone());
                     sigs.fns.insert(format!("{}::{}", ext_mod.name, decl.name.name), sig);
+                }
+                yukic_ast::ItemKind::Cstruct(decl) => {
+                    let def = cstruct_decl_to_def(decl);
+                    sigs.structs.insert(decl.name.name.clone(), def.clone());
+                    sigs.structs.insert(format!("{}::{}", ext_mod.name, decl.name.name), def);
+                }
+                yukic_ast::ItemKind::Cvar(decl) => {
+                    let ty = ast_type_to_type(&decl.ty);
+                    sigs.statics.insert(decl.name.name.clone(), ty.clone());
+                    sigs.statics.insert(format!("{}::{}", ext_mod.name, decl.name.name), ty);
                 }
                 yukic_ast::ItemKind::Struct(decl) => {
                     let def = struct_decl_to_def(decl);
                     sigs.structs.insert(decl.name.name.clone(), def.clone());
                     sigs.structs.insert(format!("{}::{}", ext_mod.name, decl.name.name), def);
+                }
+                yukic_ast::ItemKind::Enum(decl) => {
+                    let mut def = yukic_types::EnumDef::default();
+                    for v in &decl.variants {
+                        match v {
+                            yukic_ast::EnumVariant::Simple(id) => {
+                                def.variants.insert(id.name.clone(), None);
+                            }
+                            yukic_ast::EnumVariant::WithValue(id, _) => {
+                                def.variants.insert(id.name.clone(), Some(yukic_types::Type::Int64));
+                            }
+                            yukic_ast::EnumVariant::Adt(id, fields) => {
+                                let field_tys = fields.iter().map(|f| ast_type_to_type(&f.ty)).collect();
+                                def.variants
+                                    .insert(id.name.clone(), Some(yukic_types::Type::Tuple(field_tys)));
+                            }
+                        }
+                    }
+                    sigs.enums.insert(decl.name.name.clone(), def.clone());
+                    sigs.enums.insert(format!("{}::{}", ext_mod.name, decl.name.name), def);
                 }
                 yukic_ast::ItemKind::Class(decl) => {
                     let def = class_decl_to_def(decl);
@@ -1561,6 +2135,13 @@ fn populate_scope_imported(
             if let Some(sig) = sig {
                 if sig.is_cfun {
                     checker.env.register_cfun(name.clone(), sig.clone());
+                    let is_vararg = qualified
+                        .as_ref()
+                        .is_some_and(|q| sigs.variadic_cfuns.contains(q))
+                        || sigs.variadic_cfuns.contains(&entry.name);
+                    if is_vararg {
+                        checker.env.register_variadic_cfun(name.clone());
+                    }
                 } else {
                     checker.env.register_fn(name.clone(), sig.clone());
                 }
@@ -1572,6 +2153,14 @@ fn populate_scope_imported(
                 .or_else(|| sigs.structs.get(&entry.name));
             if let Some(def) = def {
                 checker.env.register_struct(name.clone(), def.clone());
+            }
+
+            let def = qualified
+                .as_ref()
+                .and_then(|q| sigs.enums.get(q))
+                .or_else(|| sigs.enums.get(&entry.name));
+            if let Some(def) = def {
+                checker.env.register_enum(name.clone(), def.clone());
             }
 
             let def = qualified
@@ -1635,6 +2224,14 @@ fn populate_scope_imported(
                 .or_else(|| sigs.structs.get(&entry.name));
             if let Some(def) = def {
                 checker.env.register_struct(alias_name.clone(), def.clone());
+            }
+
+            let def = qualified
+                .as_ref()
+                .and_then(|q| sigs.enums.get(q))
+                .or_else(|| sigs.enums.get(&entry.name));
+            if let Some(def) = def {
+                checker.env.register_enum(alias_name.clone(), def.clone());
             }
 
             let def = qualified
@@ -1715,6 +2312,9 @@ fn populate_imported_signatures(
     for (name, struct_def) in &sigs.structs {
         checker.env.register_struct(name.clone(), struct_def.clone());
     }
+    for (name, enum_def) in &sigs.enums {
+        checker.env.register_enum(name.clone(), enum_def.clone());
+    }
     for (name, ty) in &sigs.type_aliases {
         checker.env.register_type_alias(name.clone(), ty.clone());
     }
@@ -1783,6 +2383,9 @@ fn populate_borrow_signatures(
     }
     for (name, struct_def) in &sigs.structs {
         checker.type_fields.insert(name.clone(), struct_def.fields.clone());
+    }
+    for name in sigs.enums.keys() {
+        checker.enum_names.insert(name.clone());
     }
     for (mod_idx, _) in loaded_modules.iter().enumerate().filter(|(_, m)| !m.is_external) {
         let mod_id = ModuleId(u32::try_from(mod_idx).unwrap_or(0));
@@ -1933,7 +2536,20 @@ fn collect_imported_function_overrides(
                             for item in &target_mod.ast.items {
                                 match &item.kind {
                                     yukic_ast::ItemKind::Fun(fun) if fun.name.name == entry.name => {
-                                        let sym = if yukic_codegen::should_mangle_fun(&fun.name.name, &fun.attrs) {
+                                        let explicit_sym = fun.attrs.iter().find_map(|a| {
+                                            if a.is("ykni::symbol")
+                                                && let yukic_ast::AttributeArgs::Positional(args) = &a.args
+                                                && let Some(e) = args.first()
+                                                && let yukic_ast::ExprKind::Literal(yukic_ast::LiteralValue::String(s)) = &e.kind
+                                            {
+                                                Some(s.clone())
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                        let sym = if let Some(s) = explicit_sym {
+                                            s
+                                        } else if yukic_codegen::should_mangle_fun(&fun.name.name, &fun.attrs) {
                                             yukic_codegen::mangle_fun_decl(fun, &reg)
                                         } else {
                                             fun.name.name.clone()
@@ -1941,7 +2557,20 @@ fn collect_imported_function_overrides(
                                         overrides.insert(name.clone(), sym);
                                     }
                                     yukic_ast::ItemKind::Cfun(cfun) if cfun.name.name == entry.name => {
-                                        let sym = if let Some(ref s) = cfun.symbol_override {
+                                        let explicit_sym = cfun.yukino_attrs.iter().find_map(|a| {
+                                            if a.is("ykni::symbol")
+                                                && let yukic_ast::AttributeArgs::Positional(args) = &a.args
+                                                && let Some(e) = args.first()
+                                                && let yukic_ast::ExprKind::Literal(yukic_ast::LiteralValue::String(s)) = &e.kind
+                                            {
+                                                Some(s.clone())
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                        let sym = if let Some(s) = explicit_sym {
+                                            s
+                                        } else if let Some(ref s) = cfun.symbol_override {
                                             s.name.clone()
                                         } else if yukic_codegen::should_mangle_cfun(&cfun.name.name, &cfun.yukino_attrs) {
                                             yukic_codegen::mangle_cfun_decl(cfun, &reg)
@@ -2009,6 +2638,8 @@ fn run_backend_pipeline(
     item_sources: &std::collections::HashMap<yukic_ast::ItemId, PathBuf>,
     imported_overrides: &std::collections::HashMap<String, String>,
     loaded_modules: &[LoadedModule],
+    interface_text: Option<&str>,
+    shared_metadata_json: Option<&str>,
 ) -> Result<PathBuf, DriverError> {
     let input_path = Path::new(&config.input_file);
     let manifest_path = find_manifest_path(input_path, config.manifest_path.as_deref());
@@ -2039,7 +2670,7 @@ fn run_backend_pipeline(
         })
         .collect();
 
-    let mut compiled = compile_units_parallel_advanced(
+    let mut compiled = compile_units_parallel_with_options(
         ast,
         foreign_modules,
         target,
@@ -2047,6 +2678,7 @@ fn run_backend_pipeline(
         &config.panic_strategy,
         config.function_sections,
         config.fast_math,
+        config.inline_statics,
         imported_overrides,
     )
     .map_err(DriverError::CodegenFailed)?;
@@ -2080,10 +2712,22 @@ fn run_backend_pipeline(
         cgu_sources.push(vec![PathBuf::from(&config.input_file)]);
     }
 
-    let lto_kind = if config.lto { LtoKind::Thin } else { LtoKind::None };
+    if config.output_type == OutputType::Shared
+        && let Some(meta_json) = shared_metadata_json
+    {
+        let meta_cgu = yukic_codegen::emit_shared_metadata_cgu(target, meta_json)
+            .map_err(DriverError::CodegenFailed)?;
+        compiled.push(meta_cgu);
+        cgu_sources.push(vec![PathBuf::from(&config.input_file)]);
+    }
+
+    let reloc = resolve_reloc_mode(config.output_type, config.reloc_model);
+    let lto_kind = config.effective_lto_kind();
     let mut opt_config = PipelineConfig::new(config.opt_level, lto_kind);
     opt_config.target_cpu = config.cpu.clone();
     opt_config.target_features = config.target_features.clone();
+    opt_config.reloc_mode = Some(reloc);
+    opt_config.code_model = config.code_model;
     let optimized = optimize_cgus_parallel(
         compiled,
         target,
@@ -2098,42 +2742,79 @@ fn run_backend_pipeline(
     let out_path = config.resolve_output_path(target);
     ensure_parent_dir(&out_path)?;
     emit_header_if_needed(config, &out_path, Some(ast), None)?;
+    emit_interface_if_needed(config, &out_path, interface_text)?;
 
-    if config.emit == EmitKind::LlvmIr {
+    let requested_emits = config.requested_emits();
+    let resolve_emit_path = |kind: EmitKind| -> PathBuf {
+        if kind == config.emit {
+            out_path.clone()
+        } else {
+            let ext = match kind {
+                EmitKind::LlvmIr => "ll",
+                EmitKind::Asm => "s",
+                EmitKind::Obj => "o",
+                EmitKind::Bin => return out_path.clone(),
+            };
+            out_path.with_extension(ext)
+        }
+    };
+
+    if requested_emits.contains(&EmitKind::LlvmIr) {
+        let ll_path = resolve_emit_path(EmitKind::LlvmIr);
+        ensure_parent_dir(&ll_path)?;
         let combined_ir: String = optimized.iter().map(|c| c.ll_ir.as_str()).collect();
-        fs::write(&out_path, combined_ir)?;
+        fs::write(&ll_path, combined_ir)?;
         let cgu_str = format_source_cgu(
             Some(&config.input_file),
-            &out_path.to_string_lossy(),
+            &ll_path.to_string_lossy(),
             crate::should_color(),
         );
         println!("{cgu_str}");
-        return Ok(out_path);
     }
 
-    if config.emit == EmitKind::Asm {
-        let first = optimized.first().ok_or(DriverError::NoInputFile)?;
-        let context = Context::create();
-        let mem_buf =
-            MemoryBuffer::create_from_memory_range_copy(first.ll_ir.as_bytes(), &first.name);
-        let module = context
-            .create_module_from_ir(mem_buf)
-            .map_err(|e| DriverError::CodegenFailed(e.to_string()))?;
-        let reloc = reloc_mode_for(config.output_type);
-        let machine = create_target_machine_for_driver_advanced(
-            target,
-            config.opt_level,
-            Some(reloc),
-            config.cpu.as_deref(),
-            config.target_features.as_deref(),
-        )?;
-        emit_asm_file(&module, &machine, &out_path)?;
+    if requested_emits.contains(&EmitKind::Asm) {
+        let asm_path = resolve_emit_path(EmitKind::Asm);
+        ensure_parent_dir(&asm_path)?;
+        let mut combined_asm = String::new();
+        for cgu in &optimized {
+            let context = Context::create();
+            let mem_buf =
+                MemoryBuffer::create_from_memory_range_copy(cgu.ll_ir.as_bytes(), &cgu.name);
+            let module = context
+                .create_module_from_ir(mem_buf)
+                .map_err(|e| DriverError::CodegenFailed(e.to_string()))?;
+            let machine = create_target_machine_for_driver_with_code_model(
+                target,
+                config.opt_level,
+                Some(reloc),
+                config.code_model,
+                config.cpu.as_deref(),
+                config.target_features.as_deref(),
+            )?;
+            let tmp_asm = std::env::temp_dir().join(format!(
+                "yukic_asm_{}_{}_{}.s",
+                std::process::id(),
+                TEMP_COUNTER.fetch_add(1, Ordering::Relaxed),
+                cgu.name
+            ));
+            emit_asm_file(&module, &machine, &tmp_asm)?;
+            if let Ok(content) = fs::read_to_string(&tmp_asm) {
+                combined_asm.push_str(&content);
+            }
+            let _ = fs::remove_file(&tmp_asm);
+        }
+        fs::write(&asm_path, combined_asm)?;
         let cgu_str = format_source_cgu(
             Some(&config.input_file),
-            &out_path.to_string_lossy(),
+            &asm_path.to_string_lossy(),
             crate::should_color(),
         );
         println!("{cgu_str}");
+    }
+
+    let needs_obj = requested_emits.contains(&EmitKind::Obj);
+    let needs_bin = requested_emits.contains(&EmitKind::Bin);
+    if !needs_obj && !needs_bin {
         return Ok(out_path);
     }
 
@@ -2145,18 +2826,60 @@ fn run_backend_pipeline(
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ))
     });
-    let reloc = reloc_mode_for(config.output_type);
     let cache_profile = if is_temp {
         None
     } else {
         Some(config.profile_name.as_deref().unwrap_or("default"))
     };
     let cgu_extra_hashes = compute_cgu_extra_hashes(config, &cgu_sources, loaded_modules);
-    let obj_paths = emit_cgus_parallel_advanced(
+
+    if needs_obj && (!needs_bin || lto_kind.is_enabled()) {
+        let obj_dir = if !needs_bin {
+            cgu_dir.clone()
+        } else {
+            std::env::temp_dir().join(format!(
+                "yukic_objs_{}_{}",
+                std::process::id(),
+                TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ))
+        };
+        let machine_objs = emit_cgus_parallel_with_options(
+            &optimized,
+            target,
+            config.opt_level,
+            reloc,
+            config.code_model,
+            &obj_dir,
+            config.threads,
+            if !needs_bin { cache_profile } else { None },
+            Some(&config.input_file),
+            Some(&cgu_sources),
+            Some(&cgu_extra_hashes),
+            config.cpu.as_deref(),
+            config.target_features.as_deref(),
+            false,
+            |thread_id, event| {
+                println!("{}", format_emit_progress(thread_id, &event));
+            },
+        )?;
+        let obj_out = resolve_emit_path(EmitKind::Obj);
+        ensure_parent_dir(&obj_out)?;
+        emit_obj_artifacts(&machine_objs, &obj_out, Some(&config.input_file))?;
+        if !needs_bin {
+            if is_temp {
+                let _ = fs::remove_dir_all(&obj_dir);
+            }
+            return Ok(obj_out);
+        }
+        let _ = fs::remove_dir_all(&obj_dir);
+    }
+
+    let obj_paths = emit_cgus_parallel_with_options(
         &optimized,
         target,
         config.opt_level,
         reloc,
+        config.code_model,
         &cgu_dir,
         config.threads,
         cache_profile,
@@ -2165,13 +2888,19 @@ fn run_backend_pipeline(
         Some(&cgu_extra_hashes),
         config.cpu.as_deref(),
         config.target_features.as_deref(),
+        true,
         |thread_id, event| {
             println!("{}", format_emit_progress(thread_id, &event));
         },
     )?;
 
-    if config.emit == EmitKind::Obj {
-        emit_obj_artifacts(&obj_paths, &out_path, Some(&config.input_file))?;
+    if needs_obj && !lto_kind.is_enabled() {
+        let obj_out = resolve_emit_path(EmitKind::Obj);
+        ensure_parent_dir(&obj_out)?;
+        emit_obj_artifacts(&obj_paths, &obj_out, Some(&config.input_file))?;
+    }
+
+    if !needs_bin {
         if is_temp {
             let _ = fs::remove_dir_all(&cgu_dir);
         }
@@ -2237,7 +2966,8 @@ fn compile_ykn_file(
         resolve_project_dirs(input_path, config.manifest_path.as_deref());
     let mut macro_cfg = build_macro_config(config, target, input_path);
     macro_cfg.is_test = config.test_mode;
-    let mut conditions = ConditionalConfig::new(target, config.features.clone());
+    let mut conditions = ConditionalConfig::new(target, config.features.clone())
+        .with_debug_assertions(config.debug_assertions);
     if config.test_mode {
         conditions = conditions.with_test(true);
     }
@@ -2310,6 +3040,20 @@ fn compile_ykn_file(
         &mut emitter,
     )?;
 
+    let mut discovered_link_systems = Vec::new();
+    let mut discovered_link_archives = Vec::new();
+    load_prebuilt_interfaces(
+        config,
+        macro_cfg.manifest_value.as_ref(),
+        &manifest_dir,
+        target,
+        &mut source_map,
+        &mut emitter,
+        &mut loaded_modules,
+        &mut discovered_link_systems,
+        &mut discovered_link_archives,
+    )?;
+
     if emitter.has_errors() {
         return Err(DriverError::FrontendValidation(emitter.error_count()));
     }
@@ -2360,6 +3104,73 @@ fn compile_ykn_file(
     if emitter.has_errors() {
         return Err(DriverError::FrontendValidation(emitter.error_count()));
     }
+
+    let should_build_interface = config.output_type == OutputType::Static
+        || config.output_type == OutputType::Shared
+        || config.emit_interface.is_some();
+    let (interface_text, shared_metadata_json) = if should_build_interface && !config.test_mode {
+        let pkg_tbl = macro_cfg
+            .manifest_value
+            .as_ref()
+            .and_then(|v| {
+                v.get("package")
+                    .or_else(|| v.get("lib"))
+                    .or_else(|| v.get("project"))
+            })
+            .and_then(toml::Value::as_table);
+        let pkg_name = pkg_tbl
+            .and_then(|t| t.get("name"))
+            .and_then(toml::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                let stem = input_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("lib");
+                stem.strip_prefix("lib").unwrap_or(stem).to_string()
+            });
+        let pkg_version = pkg_tbl
+            .and_then(|t| t.get("version"))
+            .and_then(toml::Value::as_str)
+            .unwrap_or("0.1.0");
+        let iface_names: Vec<String> = loaded_modules
+            .iter()
+            .map(|m| {
+                if !m.is_external {
+                    if m.name == "main" || m.name == "lib" {
+                        pkg_name.clone()
+                    } else if m.name == pkg_name || m.name.starts_with(&format!("{pkg_name}.")) {
+                        m.name.clone()
+                    } else {
+                        format!("{pkg_name}.{}", m.name)
+                    }
+                } else {
+                    m.name.clone()
+                }
+            })
+            .collect();
+        let iface_inputs: Vec<InterfaceModuleInput<'_>> = loaded_modules
+            .iter()
+            .zip(iface_names.iter())
+            .map(|(m, effective_name)| InterfaceModuleInput {
+                name: effective_name.as_str(),
+                ast: &m.ast,
+                is_external: m.is_external,
+            })
+            .collect();
+        let (ykni, meta) = generate_ykni_and_shared_metadata(
+            &iface_inputs,
+            &combined_ast,
+            &source_map,
+            config,
+            target,
+            &pkg_name,
+            pkg_version,
+        );
+        (Some(ykni), Some(meta))
+    } else {
+        (None, None)
+    };
 
     if config.test_mode {
         for item in &mut combined_ast.items {
@@ -2439,6 +3250,19 @@ fn compile_ykn_file(
         final_config.connected_libs.retain(|l| l != "macrosdk");
     }
 
+    for sys in discovered_link_systems {
+        if !final_config.link_systems.contains(&sys) {
+            final_config.link_systems.push(sys);
+        }
+    }
+    if final_config.emit == EmitKind::Bin && final_config.output_type != OutputType::Static {
+        for arch in discovered_link_archives {
+            if !final_config.link_archives.contains(&arch) {
+                final_config.link_archives.push(arch);
+            }
+        }
+    }
+
     let imported_overrides = collect_imported_function_overrides(&resolver, &loaded_modules);
     run_backend_pipeline(
         &final_config,
@@ -2448,6 +3272,8 @@ fn compile_ykn_file(
         &item_sources,
         &imported_overrides,
         &loaded_modules,
+        interface_text.as_deref(),
+        shared_metadata_json.as_deref(),
     )
 }
 

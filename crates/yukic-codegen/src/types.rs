@@ -3,7 +3,7 @@
 use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::targets::TargetData;
-use inkwell::types::{BasicTypeEnum, IntType, PointerType, StructType};
+use inkwell::types::{BasicType, BasicTypeEnum, IntType, PointerType, StructType};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use yukic_target::{DataModel, TargetTriple};
@@ -138,6 +138,12 @@ impl<'a, 'ctx> TypeLowerer<'a, 'ctx> {
             Type::CInt(k) => Ok(self.lower_c_int(*k).into()),
             Type::String => Ok(self.string_type().into()),
             Type::Bytes | Type::Array(_) => Ok(self.slice_type().into()),
+            Type::FixedArray(elem, len) => {
+                let elem_llvm = self.lower_type(elem)?;
+                let len_u32 = u32::try_from(*len)
+                    .map_err(|_| format!("fixed array length {len} exceeds LLVM u32 limit"))?;
+                Ok(elem_llvm.array_type(len_u32).into())
+            }
             Type::Interface(_) => Ok(self.interface_type().into()),
             Type::Weak(_) => Ok(self.weak_type().into()),
             Type::Class(_)
@@ -220,6 +226,38 @@ impl<'a, 'ctx> TypeLowerer<'a, 'ctx> {
             .insert(name.to_string(), st);
 
         if let Some(layout) = self.registry.cstructs.get(name) {
+            if layout.is_union {
+                let mut max_size: u64 = 1;
+                let mut max_align: u64 = u64::from(layout.align.unwrap_or(1)).max(1);
+                for (_, field_ty) in &layout.fields {
+                    let llvm_f = self.lower_type(field_ty)?;
+                    let sz = self.target_data.get_abi_size(&llvm_f);
+                    let al = u64::from(self.target_data.get_abi_alignment(&llvm_f));
+                    if sz > max_size {
+                        max_size = sz;
+                    }
+                    if al > max_align {
+                        max_align = al;
+                    }
+                }
+                let (backing_ty, unit_bytes): (BasicTypeEnum<'ctx>, u64) = if max_align >= 16 {
+                    (self.context.i128_type().into(), 16)
+                } else if max_align >= 8 {
+                    (self.context.i64_type().into(), 8)
+                } else if max_align >= 4 {
+                    (self.context.i32_type().into(), 4)
+                } else if max_align >= 2 {
+                    (self.context.i16_type().into(), 2)
+                } else {
+                    (self.context.i8_type().into(), 1)
+                };
+                let count = u32::try_from(max_size.div_ceil(unit_bytes).max(1))
+                    .map_err(|_| format!("cunion '{name}' size exceeds LLVM u32 limit"))?;
+                let arr_ty = backing_ty.array_type(count);
+                st.set_body(&[arr_ty.into()], false);
+                return Ok(st);
+            }
+
             let mut field_types = Vec::with_capacity(layout.fields.len() + 1);
             for (_, field_ty) in &layout.fields {
                 field_types.push(self.lower_type(field_ty)?);

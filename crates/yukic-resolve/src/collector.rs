@@ -43,6 +43,7 @@ fn extract_symbols(item: &Item) -> Vec<(String, SymbolKind, Span)> {
         ItemKind::Class(decl) => vec![(decl.name.name.clone(), SymbolKind::Class, item.span)],
         ItemKind::Struct(decl) => vec![(decl.name.name.clone(), SymbolKind::Struct, item.span)],
         ItemKind::Cstruct(decl) => vec![(decl.name.name.clone(), SymbolKind::Cstruct, item.span)],
+        ItemKind::Cvar(decl) => vec![(decl.name.name.clone(), SymbolKind::Static, item.span)],
         ItemKind::Interface(decl) => vec![(decl.name.name.clone(), SymbolKind::Interface, item.span)],
         ItemKind::Enum(decl) => vec![(decl.name.name.clone(), SymbolKind::Enum, item.span)],
         ItemKind::TypeAlias(decl) => vec![(decl.name.name.clone(), SymbolKind::TypeAlias, item.span)],
@@ -58,11 +59,18 @@ fn extract_symbols(item: &Item) -> Vec<(String, SymbolKind, Span)> {
                     yukic_ast::ExterncItem::Cstruct(decl) => {
                         symbols.push((decl.name.name.clone(), SymbolKind::Cstruct, decl.span));
                     }
+                    yukic_ast::ExterncItem::Cvar(decl) => {
+                        symbols.push((decl.name.name.clone(), SymbolKind::Static, decl.span));
+                    }
                 }
             }
             symbols
         }
-        ItemKind::Import(_) | ItemKind::Alias(_) | ItemKind::Error => Vec::new(),
+        ItemKind::Import(_)
+        | ItemKind::Cload(_)
+        | ItemKind::Alias(_)
+        | ItemKind::Namespace(_)
+        | ItemKind::Error => Vec::new(),
     }
 }
 
@@ -105,7 +113,7 @@ mod tests {
                 generics: Vec::new(),
                 params: Vec::new(),
                 return_type: None,
-                body: Block::new(Vec::new(), body_span),
+                body: Some(Block::new(Vec::new(), body_span)),
                 span: dummy_span(),
             }),
             dummy_span(),

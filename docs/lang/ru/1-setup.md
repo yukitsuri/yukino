@@ -46,16 +46,16 @@ macOS пока не поддерживается. Работа над подде
 
 ### 2. Установка тулчейна Yukino
 
-Чтобы установить все пакеты Yukino (драйвер компилятора `yukic` и менеджер проектов `yukino`) релизного тега `v0.1.0` из репозитория `yukitsuri/yukino`:
+Чтобы установить все пакеты Yukino (драйвер компилятора `yukic` и менеджер проектов `yukino`) релизного тега `v0.1.1` из репозитория `yukitsuri/yukino`:
 
 ```sh
-lacie add yukitsuri/yukino v0.1.0
+lacie add yukitsuri/yukino v0.1.1
 ```
 
 > [!TIP]
 > Флаг `-y` (`--yes`) позволяет автоматически подтвердить установку без интерактивного диалога:
 > ```sh
-> lacie add yukitsuri/yukino v0.1.0 -y
+> lacie add yukitsuri/yukino v0.1.1 -y
 > ```
 
 После завершения установки команды `yukino` и `yukic` станут сразу доступны в терминале.
@@ -69,13 +69,13 @@ lacie add yukitsuri/yukino v0.1.0
 Установка готового release-пакета из конкретного тега:
 
 ```sh
-nix profile add github:yukitsuri/yukino/v0.1.0#yukino
+nix profile add github:yukitsuri/yukino/v0.1.1#yukino
 ```
 
 Для локальной установки из клонированного репозитория:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 nix profile add .#yukino
 ```
@@ -125,8 +125,8 @@ export LIBCLANG_PATH=/path/to/libclang/lib
 После настройки окружения установите оба бинарника из тега релиза:
 
 ```sh
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukino
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukino
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukic-driver
 ```
 
 Cargo установит бинарники в `~/.cargo/bin`:
@@ -159,7 +159,7 @@ irm https://raw.githubusercontent.com/yukitsuri/yukino/main/scripts/wininstall.p
 Склонируйте репозиторий с нужным тегом:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 python3 scripts/crossbuild.py
 ```
@@ -176,8 +176,8 @@ python3 scripts/crossbuild.py
 Результаты находятся в:
 
 ```text
-build/0.1.0/yukino/yukino-<target>
-build/0.1.0/yukic/yukic-<target>
+build/0.1.1/yukino/yukino-<target>
+build/0.1.1/yukic/yukic-<target>
 ```
 
 На Windows вместо `python3` используйте `py -3`.
@@ -193,7 +193,7 @@ python3 scripts/crossbuild-rt.py
 Результаты находятся в:
 
 ```text
-build/0.1.0/runtime/<target>.a
+build/0.1.1/runtime/<target>.a
 ```
 
 Этот runtime передается `yukic` для custom target через `--runtime <path>`. Для host target отдельный runtime не нужен: `yukic` использует встроенный host-runtime.

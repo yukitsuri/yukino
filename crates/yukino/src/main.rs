@@ -97,6 +97,13 @@ pub struct BuildArgs {
     )]
     pub package: Option<String>,
 
+    #[arg(
+        long = "mfpath",
+        value_name = "PATH",
+        help = "Path to yuki.toml, lib.toml, or yukispace.toml"
+    )]
+    pub mfpath: Option<PathBuf>,
+
     #[arg(short = 'r', long = "run", help = "Run project after building")]
     pub run: bool,
 
@@ -161,6 +168,13 @@ pub struct RunArgs {
         help = "Build specific package in workspace"
     )]
     pub package: Option<String>,
+
+    #[arg(
+        long = "mfpath",
+        value_name = "PATH",
+        help = "Path to yuki.toml, lib.toml, or yukispace.toml"
+    )]
+    pub mfpath: Option<PathBuf>,
 
     #[arg(long = "no-warns", help = "Disable compiler warnings")]
     pub no_warns: bool,
@@ -253,12 +267,26 @@ pub struct TestArgs {
         help = "Test specific package in workspace"
     )]
     pub package: Option<String>,
+
+    #[arg(
+        long = "mfpath",
+        value_name = "PATH",
+        help = "Path to yuki.toml, lib.toml, or yukispace.toml"
+    )]
+    pub mfpath: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, PartialEq, Eq, Default)]
 pub struct CleanArgs {
     #[arg(short = 'a', long = "all", help = "Also remove yuki-work/common/yuki.lock")]
     pub all: bool,
+
+    #[arg(
+        long = "mfpath",
+        value_name = "PATH",
+        help = "Path to yuki.toml, lib.toml, or yukispace.toml"
+    )]
+    pub mfpath: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -460,6 +488,7 @@ fn execute_build(args: BuildArgs) -> Result<(), ProjectError> {
         no_default_features: args.no_default_features,
         all_features: args.all_features,
         package: args.package,
+        manifest_path: args.mfpath,
         run: args.run,
         run_args: args.trailing_args,
         no_warns: args.no_warns,
@@ -495,6 +524,7 @@ fn execute_run(args: RunArgs) -> Result<(), ProjectError> {
         no_default_features: args.no_default_features,
         all_features: args.all_features,
         package: args.package,
+        manifest_path: args.mfpath,
         run: true,
         run_args: args.trailing_args,
         no_warns: args.no_warns,
@@ -532,6 +562,7 @@ fn execute_test(args: &TestArgs) -> Result<(), ProjectError> {
         all_features: args.all_features,
         no_default_features: args.no_default_features,
         package: args.package.clone(),
+        manifest_path: args.mfpath.clone(),
     };
     test_project(&current_dir, &opts)?;
     Ok(())
@@ -539,7 +570,18 @@ fn execute_test(args: &TestArgs) -> Result<(), ProjectError> {
 
 fn execute_clean(args: &CleanArgs) -> Result<(), ProjectError> {
     let current_dir = std::env::current_dir().map_err(|e| ProjectError::Io(e.to_string()))?;
-    clean_project(&current_dir, args.all)?;
+    let target_dir = if let Some(ref mf) = args.mfpath {
+        let full_mf = if mf.is_relative() {
+            current_dir.join(mf)
+        } else {
+            mf.clone()
+        };
+        let (_, resolved) = yukino::manifest::ProjectManifest::load_file(&full_mf)?;
+        resolved.parent().unwrap_or(&current_dir).to_path_buf()
+    } else {
+        current_dir
+    };
+    clean_project(&target_dir, args.all)?;
     Ok(())
 }
 
@@ -849,6 +891,35 @@ mod tests {
             }
             _ => panic!("expected Build command with all-features and package"),
         }
+
+        let cli_mf = Cli::try_parse_from(["yukino", "build", "--mfpath", "apps/cli/yuki.toml", "-p", "cli"])
+            .expect("parse build --mfpath");
+        match cli_mf.command {
+            Some(Commands::Build(args)) => {
+                assert_eq!(args.mfpath, Some(PathBuf::from("apps/cli/yuki.toml")));
+                assert_eq!(args.package.as_deref(), Some("cli"));
+            }
+            _ => panic!("expected Build command with --mfpath"),
+        }
+
+        let cli_run_mf = Cli::try_parse_from(["yukino", "run", "--mfpath", "sub/yuki.toml"])
+            .expect("parse run --mfpath");
+        match cli_run_mf.command {
+            Some(Commands::Run(args)) => {
+                assert_eq!(args.mfpath, Some(PathBuf::from("sub/yuki.toml")));
+            }
+            _ => panic!("expected Run command with --mfpath"),
+        }
+
+        let cli_test_mf = Cli::try_parse_from(["yukino", "test", "--mfpath", "ws/yukispace.toml", "-p", "core"])
+            .expect("parse test --mfpath");
+        match cli_test_mf.command {
+            Some(Commands::Test(args)) => {
+                assert_eq!(args.mfpath, Some(PathBuf::from("ws/yukispace.toml")));
+                assert_eq!(args.package.as_deref(), Some("core"));
+            }
+            _ => panic!("expected Test command with --mfpath"),
+        }
     }
 
     #[test]
@@ -899,9 +970,12 @@ mod tests {
 
     #[test]
     fn test_subcommand_clean_parsing() {
-        let cli = Cli::try_parse_from(["yukino", "clean", "-a"]).expect("parse clean");
+        let cli = Cli::try_parse_from(["yukino", "clean", "-a", "--mfpath", "app/yuki.toml"]).expect("parse clean");
         match cli.command {
-            Some(Commands::Clean(args)) => assert!(args.all),
+            Some(Commands::Clean(args)) => {
+                assert!(args.all);
+                assert_eq!(args.mfpath, Some(PathBuf::from("app/yuki.toml")));
+            }
             _ => panic!("expected Clean"),
         }
     }

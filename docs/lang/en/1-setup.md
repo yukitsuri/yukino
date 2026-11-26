@@ -46,16 +46,16 @@ If Lacie is not yet installed on your system, install it using the official guid
 
 ### 2. Install Yukino Toolchain
 
-To install all Yukino packages (`yukic` compiler driver and `yukino` build toolchain) for tag `v0.1.0` from `yukitsuri/yukino`:
+To install all Yukino packages (`yukic` compiler driver and `yukino` build toolchain) for tag `v0.1.1` from `yukitsuri/yukino`:
 
 ```sh
-lacie add yukitsuri/yukino v0.1.0
+lacie add yukitsuri/yukino v0.1.1
 ```
 
 > [!TIP]
 > Use `-y` (`--yes`) to approve the installation prompt automatically:
 > ```sh
-> lacie add yukitsuri/yukino v0.1.0 -y
+> lacie add yukitsuri/yukino v0.1.1 -y
 > ```
 
 After installation completes, `yukino` and `yukic` will be immediately available in your terminal.
@@ -69,13 +69,13 @@ When using Nix, all necessary build dependencies (LLVM 22, Clang, LLD, system li
 Install the release package directly from the release tag:
 
 ```sh
-nix profile add github:yukitsuri/yukino/v0.1.0#yukino
+nix profile add github:yukitsuri/yukino/v0.1.1#yukino
 ```
 
 For local installation from a cloned repository:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 nix profile add .#yukino
 ```
@@ -125,8 +125,8 @@ export LIBCLANG_PATH=/path/to/libclang/lib
 Once the environment is configured, install both binaries from the release tag:
 
 ```sh
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukino
-cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.0 --locked yukic-driver
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukino
+cargo install --git https://github.com/yukitsuri/yukino --tag v0.1.1 --locked yukic-driver
 ```
 
 Cargo installs the binaries into `~/.cargo/bin`:
@@ -159,7 +159,7 @@ Cross-compilation additionally requires:
 Clone the repository at the required tag:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/yukitsuri/yukino.git
+git clone --branch v0.1.1 https://github.com/yukitsuri/yukino.git
 cd yukino
 python3 scripts/crossbuild.py
 ```
@@ -176,8 +176,8 @@ The script asks you to select one or more targets. Enter `0` to build all target
 Outputs are written to:
 
 ```text
-build/0.1.0/yukino/yukino-<target>
-build/0.1.0/yukic/yukic-<target>
+build/0.1.1/yukino/yukino-<target>
+build/0.1.1/yukic/yukic-<target>
 ```
 
 On Windows, use `py -3` instead of `python3`.
@@ -193,7 +193,7 @@ python3 scripts/crossbuild-rt.py
 Outputs are written to:
 
 ```text
-build/0.1.0/runtime/<target>.a
+build/0.1.1/runtime/<target>.a
 ```
 
 Pass the resulting runtime to `yukic` for a custom target with `--runtime <path>`. A separate runtime is not needed for the host target: `yukic` uses its embedded host runtime.

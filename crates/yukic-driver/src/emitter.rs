@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
-use inkwell::targets::{FileType, RelocMode, TargetMachine};
+use inkwell::targets::{CodeModel, FileType, RelocMode, TargetMachine};
 use yukic_opt::{OptLevel, OptimizedCgu};
 use yukic_target::TargetTriple;
 
@@ -180,12 +180,16 @@ pub fn reloc_mode_for(output_type: OutputType) -> RelocMode {
     }
 }
 
+pub fn resolve_reloc_mode(output_type: OutputType, explicit: Option<RelocMode>) -> RelocMode {
+    explicit.unwrap_or_else(|| reloc_mode_for(output_type))
+}
+
 pub fn create_target_machine_for_driver(
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: Option<RelocMode>,
 ) -> Result<TargetMachine, DriverError> {
-    create_target_machine_for_driver_advanced(target, opt_level, reloc, None, None)
+    create_target_machine_for_driver_with_code_model(target, opt_level, reloc, None, None, None)
 }
 
 pub fn create_target_machine_for_driver_advanced(
@@ -195,7 +199,18 @@ pub fn create_target_machine_for_driver_advanced(
     cpu: Option<&str>,
     features: Option<&str>,
 ) -> Result<TargetMachine, DriverError> {
-    yukic_opt::create_target_machine_advanced(target, opt_level, reloc, None, cpu, features).map_err(|e| {
+    create_target_machine_for_driver_with_code_model(target, opt_level, reloc, None, cpu, features)
+}
+
+pub fn create_target_machine_for_driver_with_code_model(
+    target: TargetTriple,
+    opt_level: OptLevel,
+    reloc: Option<RelocMode>,
+    code_model: Option<CodeModel>,
+    cpu: Option<&str>,
+    features: Option<&str>,
+) -> Result<TargetMachine, DriverError> {
+    yukic_opt::create_target_machine_advanced(target, opt_level, reloc, code_model, cpu, features).map_err(|e| {
         DriverError::TargetMachineCreation(target.spec().triple.to_string(), e.to_string())
     })
 }
@@ -231,17 +246,20 @@ pub fn emit_asm_file(
     emit_module_to_file(module, machine, FileType::Assembly, path)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_single_cgu_object(
     cgu: &OptimizedCgu,
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: RelocMode,
+    code_model: Option<CodeModel>,
     target_cpu: Option<&str>,
     target_features: Option<&str>,
+    allow_bitcode: bool,
     out_path: &Path,
 ) -> Result<(), DriverError> {
     let tmp_path = out_path.with_extension(format!("o.tmp.{}", std::process::id()));
-    if let Some(bitcode) = &cgu.bitcode {
+    if allow_bitcode && let Some(bitcode) = &cgu.bitcode {
         fs::write(&tmp_path, bitcode)
             .map_err(|e| DriverError::EmissionFailed(tmp_path.clone(), e.to_string()))?;
     } else {
@@ -251,10 +269,11 @@ fn emit_single_cgu_object(
             .create_module_from_ir(mem_buf)
             .map_err(|e| DriverError::CodegenFailed(format!("{}: {}", cgu.name, e)))?;
 
-        let machine = create_target_machine_for_driver_advanced(
+        let machine = create_target_machine_for_driver_with_code_model(
             target,
             opt_level,
             Some(reloc),
+            code_model,
             target_cpu,
             target_features,
         )?;
@@ -290,6 +309,7 @@ fn resolve_cached_cgus<F>(
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: RelocMode,
+    code_model: CodeModel,
     output_dir: &Path,
     manifest: Option<&CguCacheManifest>,
     source_file: Option<&str>,
@@ -313,7 +333,14 @@ where
         } else {
             Vec::new()
         };
-        let hash = CguCacheManifest::compute_cgu_hash(cgu, target, opt_level, reloc, &extra_refs);
+        let hash = CguCacheManifest::compute_cgu_hash_with_code_model(
+            cgu,
+            target,
+            opt_level,
+            reloc,
+            code_model,
+            &extra_refs,
+        );
         cgu_hashes.push(hash.clone());
 
         if let Some(m) = manifest
@@ -359,6 +386,7 @@ fn emit_pending_cgus_worker_pool<F>(
     target: TargetTriple,
     opt_level: OptLevel,
     reloc: RelocMode,
+    code_model: Option<CodeModel>,
     output_dir: &Path,
     pending_indices: &[usize],
     num_threads: usize,
@@ -366,6 +394,7 @@ fn emit_pending_cgus_worker_pool<F>(
     cgu_sources: Option<&[Vec<PathBuf>]>,
     target_cpu: Option<&str>,
     target_features: Option<&str>,
+    allow_bitcode: bool,
     on_progress: &F,
 ) -> Result<Vec<PathBuf>, DriverError>
 where
@@ -411,8 +440,10 @@ where
                         target,
                         opt_level,
                         reloc,
+                        code_model,
                         target_cpu,
                         target_features,
+                        allow_bitcode,
                         &out_path,
                     )?;
                     let duration = start.elapsed().as_secs_f32();
@@ -507,6 +538,46 @@ pub fn emit_cgus_parallel_advanced<F>(
 where
     F: Fn(usize, EmitProgressEvent) + Sync + Send,
 {
+    emit_cgus_parallel_with_options(
+        cgus,
+        target,
+        opt_level,
+        reloc,
+        None,
+        output_dir,
+        num_threads,
+        cache_profile,
+        source_file,
+        cgu_sources,
+        cgu_extra_hashes,
+        target_cpu,
+        target_features,
+        true,
+        on_progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn emit_cgus_parallel_with_options<F>(
+    cgus: &[OptimizedCgu],
+    target: TargetTriple,
+    opt_level: OptLevel,
+    reloc: RelocMode,
+    code_model: Option<CodeModel>,
+    output_dir: &Path,
+    num_threads: usize,
+    cache_profile: Option<&str>,
+    source_file: Option<&str>,
+    cgu_sources: Option<&[Vec<PathBuf>]>,
+    cgu_extra_hashes: Option<&[Vec<String>]>,
+    target_cpu: Option<&str>,
+    target_features: Option<&str>,
+    allow_bitcode: bool,
+    on_progress: F,
+) -> Result<Vec<PathBuf>, DriverError>
+where
+    F: Fn(usize, EmitProgressEvent) + Sync + Send,
+{
     if cgus.is_empty() {
         return Ok(Vec::new());
     }
@@ -521,6 +592,7 @@ where
         target,
         opt_level,
         reloc,
+        code_model.unwrap_or(CodeModel::Default),
         output_dir,
         manifest.as_ref(),
         source_file,
@@ -535,6 +607,7 @@ where
             target,
             opt_level,
             reloc,
+            code_model,
             output_dir,
             &partition.pending_indices,
             num_threads,
@@ -542,6 +615,7 @@ where
             cgu_sources,
             target_cpu,
             target_features,
+            allow_bitcode,
             &on_progress,
         )?;
 

@@ -242,6 +242,18 @@ impl<'ctx> RegionManager<'ctx> {
         is_cfun: bool,
         has_regional_ref: bool,
     ) -> (FunctionType<'ctx>, bool) {
+        self.transform_function_type_full(param_types, return_type, llvm_ret, is_cfun, has_regional_ref, false)
+    }
+
+    pub fn transform_function_type_full(
+        &self,
+        param_types: &[BasicTypeEnum<'ctx>],
+        return_type: &Type,
+        llvm_ret: Option<BasicTypeEnum<'ctx>>,
+        is_cfun: bool,
+        has_regional_ref: bool,
+        is_variadic: bool,
+    ) -> (FunctionType<'ctx>, bool) {
         let needs_dest = !is_cfun && (Self::is_regional_type(return_type) || has_regional_ref);
         let mut final_params = Vec::with_capacity(param_types.len() + 1);
 
@@ -252,9 +264,10 @@ impl<'ctx> RegionManager<'ctx> {
             final_params.push((*pt).into());
         }
 
+        let var_arg = is_cfun && is_variadic;
         let fn_ty = match llvm_ret {
-            Some(ret) => ret.fn_type(&final_params, false),
-            None => self.context.void_type().fn_type(&final_params, false),
+            Some(ret) => ret.fn_type(&final_params, var_arg),
+            None => self.context.void_type().fn_type(&final_params, var_arg),
         };
         (fn_ty, needs_dest)
     }

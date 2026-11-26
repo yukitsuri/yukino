@@ -372,16 +372,16 @@ When detailed API documentation or signatures are needed, use relative paths to 
 | Topic | File Link | Key Concepts |
 | :--- | :--- | :--- |
 | **Language Overview** | [`0-overview.md`](./references/en/0-overview.md) | Design goals, toolchain requirements, platform ABI |
-| **Toolchain & Projects** | [`2-cli-project.md`](./references/en/2-cli-project.md) | CLI commands, `yuki.toml`, `build.ykn` hooks, lockfiles |
+| **Toolchain & Projects** | [`2-cli-project.md`](./references/en/2-cli-project.md) | CLI commands, `--mfpath`, `yuki.toml`, `build.ykn` hooks (`yuki:manifest*`), lockfiles |
 | **Basic Syntax & Loops** | [`3-basics.md`](./references/en/3-basics.md) | `set`, `rewrite`, ranges `0..n`, loop labels, `space` |
 | **Type System** | [`4-types.md`](./references/en/4-types.md) | Primitives, `T?`, `T1 \| T2` unions, `switch`, `type` alias |
 | **Functions & Closures** | [`5-functions-closures.md`](./references/en/5-functions-closures.md) | `fun`, parameters, default values, captures, calling conventions |
 | **Memory & Borrowing** | [`6-memory.md`](./references/en/6-memory.md) | Affine ownership, `ref ~`, `region {}`, escape analysis |
-| **OOP & Data Types** | [`7-oop.md`](./references/en/7-oop.md) | `struct`, `class`, `interface`, `enum` ADTs, accessors |
+| **OOP & Data Types** | [`7-oop.md`](./references/en/7-oop.md) | `struct`, `class`, `static`/`set`/default fields, `interface`, `enum` ADTs, accessors |
 | **Strings & Bytes** | [`8-strings.md`](./references/en/8-strings.md) | `string`, `bytes`, interpolation `${expr}`, string slicing |
-| **Module System** | [`9-modules.md`](./references/en/9-modules.md) | `load`, relative paths `.sub`, directory overrides `!` |
+| **Module System** | [`9-modules.md`](./references/en/9-modules.md) | `load`, relative paths `.sub`, overrides `!`, `.ykni` compiled interfaces & prebuilt libs |
 | **Macros & Metaprogramming** | [`10-macros.md`](./references/en/10-macros.md) | Syntactic `define`, procedural macros, macro SDK |
-| **System C ABI & FFI** | [`11-cabi.md`](./references/en/11-cabi.md) | `externc`, `cfun`, `cstruct`, calling conventions |
+| **System C ABI & FFI** | [`11-cabi.md`](./references/en/11-cabi.md) | `externc`, `cload`, `cfun`, `cstruct`, `cunion`, `cvar`, calling conventions |
 | **Core Library** | [`12-core-library.md`](./references/en/12-core-library.md) | `core.utils`, `core.mem`, `core.process`, `Arena` |
 | **Compiler Attributes** | [`13-attributes.md`](./references/en/13-attributes.md) | `#[cfg(...)]`, optimization attributes, inlining |
 | **Error Handling** | [`14-errors.md`](./references/en/14-errors.md) | `sus`, `catch`, `finally`, `panic`, unwinding vs abort |
@@ -411,7 +411,7 @@ When detailed API documentation or signatures are needed, use relative paths to 
 | **Archives** | `std.archives` | `tar`, `zip` archive extraction and creation | [`stdlib/16-archives.md`](./references/en/stdlib/16-archives.md) |
 | **Locale** | `std.locale` | System locale, regional string and date formatting | [`stdlib/17-locale.md`](./references/en/stdlib/17-locale.md) |
 | **Number Formatting** | `std.numf` | Precision control, scientific notation, binary/hex conversion | [`stdlib/18-numf.md`](./references/en/stdlib/18-numf.md) |
-| **Shared Memory** | `std.sharedc` | Inter-process shared memory, memory-mapped files | [`stdlib/19-sharedc.md`](./references/en/stdlib/19-sharedc.md) |
+| **Shared C & Dynamic Libs** | `std.sharedc` | `SharedLibrary`, `load_interface`, `yukino_symbol`, `SymbolAbi`, `SharedExport`, `YukinoLibInfo` | [`stdlib/19-sharedc.md`](./references/en/stdlib/19-sharedc.md) |
 | **JSON** | `std.json` | `parse_json`, `stringify_json`, JSON DOM navigation | [`stdlib/20-json.md`](./references/en/stdlib/20-json.md) |
 | **JSON Comments** | `std.jsonc` | JSON with comments parsing and serialization | [`stdlib/21-jsonc.md`](./references/en/stdlib/21-jsonc.md) |
 | **Output Formatter** | `std.outf` | ANSI colors, bold text, colored console output | [`stdlib/22-outf.md`](./references/en/stdlib/22-outf.md) |

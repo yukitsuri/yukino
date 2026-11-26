@@ -52,15 +52,24 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                         }
                     }
                 }
-                if idents.len() == 2 && idents[0].name == "extern" {
+                if idents.len() == 2
+                    && (idents[0].name == "extern"
+                        || self.registry.is_c_namespace_symbol(&idents[0].name, &idents[1].name))
+                {
                     let fn_name = &idents[1].name;
-                    let c_sym = self
-                        .registry
-                        .c_symbols
-                        .get(fn_name)
-                        .cloned()
-                        .unwrap_or_else(|| fn_name.clone());
-                    return self.resolve_and_emit_c_fn_call(&c_sym, &arg_vals);
+                    if idents[0].name == "extern"
+                        || self.registry.cfun_types.contains_key(fn_name)
+                        || self.registry.c_symbols.contains_key(fn_name)
+                    {
+                        let c_sym = self
+                            .registry
+                            .c_symbols
+                            .get(fn_name)
+                            .cloned()
+                            .unwrap_or_else(|| fn_name.clone());
+                        return self.resolve_and_emit_c_fn_call(&c_sym, &arg_vals);
+                    }
+                    return self.resolve_and_emit_fn_call(fn_name, &arg_vals);
                 }
                 if idents.len() == 2 {
                     let enum_name = &idents[0].name;
@@ -1749,6 +1758,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         env_val: Option<PointerValue<'ctx>>,
     ) -> Result<(inkwell::types::FunctionType<'ctx>, u32, bool, Vec<BasicValueEnum<'ctx>>), String> {
         let sem_ty = self.expr_semantic_ty(callee);
+        let is_raw_fn_ptr = matches!(sem_ty.as_ref(), Some(Type::Ptr(_)));
         let fn_sig = match sem_ty.as_ref() {
             Some(Type::Fn { params, ret, is_cfun }) => {
                 Some((params.clone(), (**ret).clone(), *is_cfun))
@@ -1764,23 +1774,29 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
 
         if let Some((params, ret, is_cfun)) = fn_sig {
             let mut coerced = Vec::with_capacity(arg_vals.len() + 2);
-            if !is_cfun && crate::region::RegionManager::is_regional_type(&ret) {
+            let has_regional_ref = params
+                .iter()
+                .any(|p| p.is_ref && crate::region::RegionManager::is_regional_type(&p.ty));
+            if !is_cfun && (crate::region::RegionManager::is_regional_type(&ret) || has_regional_ref) {
                 let reg = self
                     .dest_region
                     .or(self.region_ptr)
                     .map_or_else(|| self.ptr_type().const_null().into(), Into::into);
                 coerced.push(reg);
             }
-            if !is_cfun {
+            // Raw `ptr<fun(...) -> ...>` pointers target compiled Yukino free functions, which do not take closure `env_ptr`.
+            if !is_cfun && !is_raw_fn_ptr {
                 let env = env_val.unwrap_or_else(|| self.ptr_type().const_null());
                 coerced.push(env.into());
             }
             for (i, &arg) in arg_vals.iter().enumerate() {
                 if let Some(param) = params.get(i) {
-                    if let Ok(target_ty) = self.lower_type(&param.ty) {
-                        if let Ok(c) = self.coerce_type(arg, target_ty) {
-                            coerced.push(c);
-                            continue;
+                    if !param.is_ref {
+                        if let Ok(target_ty) = self.lower_type(&param.ty) {
+                            if let Ok(c) = self.coerce_type(arg, target_ty) {
+                                coerced.push(c);
+                                continue;
+                            }
                         }
                     }
                 }
@@ -1843,8 +1859,52 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             _ => return Err("expected function pointer for call".to_string()),
         };
 
+        let sem_ty = self.expr_semantic_ty(callee);
+        let fn_sig = match sem_ty.as_ref() {
+            Some(Type::Fn { params, ret, is_cfun }) => {
+                Some((params.clone(), (**ret).clone(), *is_cfun))
+            }
+            Some(Type::Ptr(inner)) => match &**inner {
+                Type::Fn { params, ret, is_cfun } => {
+                    Some((params.clone(), (**ret).clone(), *is_cfun))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let mut c_ret_unpack: Option<crate::cabi::CAbiRetMode<'ctx>> = None;
+        let mut c_sret_slot: Option<PointerValue<'ctx>> = None;
+        let mut c_abi_sig_opt: Option<crate::cabi::CAbiSignature<'ctx>> = None;
+
         let (fn_type, call_conv, is_void, coerced_args) =
-            self.prepare_indirect_call(callee, arg_vals, env_opt)?;
+            if let Some((ref params, ref ret, true)) = fn_sig {
+                let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+                let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+                let sig = crate::cabi::build_c_signature(
+                    self.context,
+                    self.target,
+                    &td,
+                    self.registry,
+                    &param_tys,
+                    ret,
+                    false,
+                )?;
+                let (args_out, sret_ptr) = self.marshal_c_args(&sig, arg_vals, false)?;
+                let void_ret = matches!(sig.ret_mode, crate::cabi::CAbiRetMode::Void);
+                c_ret_unpack = Some(sig.ret_mode.clone());
+                c_sret_slot = sret_ptr;
+                let ft = sig.fn_type;
+                c_abi_sig_opt = Some(sig);
+                (
+                    ft,
+                    inkwell::llvm_sys::LLVMCallConv::LLVMCCallConv as u32,
+                    void_ret,
+                    args_out,
+                )
+            } else {
+                self.prepare_indirect_call(callee, arg_vals, env_opt)?
+            };
 
         let unwind_bb = self.unwind_dest.or_else(|| {
             if self.has_active_cleanups() {
@@ -1854,7 +1914,7 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             }
         });
 
-        if let Some(unwind) = unwind_bb {
+        let raw_res = if let Some(unwind) = unwind_bb {
             let personality = self.get_or_declare_personality();
             self.fn_val.set_personality_function(personality);
 
@@ -1864,12 +1924,15 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 .build_indirect_invoke(fn_type, fn_ptr, &coerced_args, normal_bb, unwind, "ind_inv")
                 .map_err(|e| e.to_string())?;
             inv.set_call_convention(call_conv);
+            if let Some(ref sig) = c_abi_sig_opt {
+                crate::cabi::apply_c_callsite_attrs(self.context, inv, sig);
+            }
             self.builder.position_at_end(normal_bb);
             if is_void {
-                Ok(self.context.i64_type().const_zero().into())
+                self.context.i64_type().const_zero().into()
             } else {
                 let dummy = self.context.i64_type().const_zero().into();
-                Ok(inv.try_as_basic_value().basic().unwrap_or(dummy))
+                inv.try_as_basic_value().basic().unwrap_or(dummy)
             }
         } else {
             let meta_args: Vec<BasicMetadataValueEnum<'ctx>> =
@@ -1879,13 +1942,21 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 .build_indirect_call(fn_type, fn_ptr, &meta_args, "ind_call")
                 .map_err(|e| e.to_string())?;
             call.set_call_convention(call_conv);
+            if let Some(ref sig) = c_abi_sig_opt {
+                crate::cabi::apply_c_callsite_attrs(self.context, call, sig);
+            }
             if is_void {
-                Ok(self.context.i64_type().const_zero().into())
+                self.context.i64_type().const_zero().into()
             } else {
                 let dummy = self.context.i64_type().const_zero().into();
-                Ok(call.try_as_basic_value().basic().unwrap_or(dummy))
+                call.try_as_basic_value().basic().unwrap_or(dummy)
             }
+        };
+
+        if let Some(ref ret_mode) = c_ret_unpack {
+            return self.unmarshal_c_return(ret_mode, c_sret_slot, raw_res);
         }
+        Ok(raw_res)
     }
 
     fn compile_class_or_virtual_method(
@@ -1965,6 +2036,83 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                 _ => None,
             });
 
+        let fn_sem_type = self
+            .registry
+            .cfun_types
+            .get(sem_name)
+            .or_else(|| self.registry.cfun_types.get(effective_name))
+            .or_else(|| self.registry.fn_types.get(sem_name))
+            .or_else(|| self.registry.fn_types.get(effective_name))
+            .cloned();
+
+        let is_cfun_call = fn_sem_type
+            .as_ref()
+            .is_some_and(|t| matches!(t, Type::Fn { is_cfun: true, .. }));
+        let is_var_arg = fn_val.get_type().is_var_arg();
+
+        if is_cfun_call
+            && let Some(Type::Fn {
+                params: c_params,
+                ret: c_ret,
+                ..
+            }) = fn_sem_type.as_ref()
+        {
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let param_tys: Vec<Type> = c_params.iter().map(|p| p.ty.clone()).collect();
+            let sig = crate::cabi::build_c_signature(
+                self.context,
+                self.target,
+                &td,
+                self.registry,
+                &param_tys,
+                c_ret,
+                is_var_arg,
+            )?;
+            let (coerced_args, sret_ptr) = self.marshal_c_args(&sig, arg_vals, is_var_arg)?;
+
+            let unwind_bb = if self.is_abort_strategy() {
+                None
+            } else {
+                self.unwind_dest.or_else(|| {
+                    if self.has_active_cleanups() {
+                        self.get_or_create_cleanup_unwind_bb().ok()
+                    } else {
+                        None
+                    }
+                })
+            };
+
+            let raw_res = if let Some(unwind) = unwind_bb {
+                let personality = self.get_or_declare_personality();
+                self.fn_val.set_personality_function(personality);
+
+                let normal_bb = self.context.append_basic_block(self.fn_val, "invoke.cont");
+                let inv = self
+                    .builder
+                    .build_invoke(fn_val, &coerced_args, normal_bb, unwind, "inv")
+                    .map_err(|e| e.to_string())?;
+                inv.set_call_convention(fn_val.get_call_conventions());
+                crate::cabi::apply_c_callsite_attrs(self.context, inv, &sig);
+
+                self.builder.position_at_end(normal_bb);
+                let dummy = self.context.i64_type().const_zero().into();
+                inv.try_as_basic_value().basic().unwrap_or(dummy)
+            } else {
+                let meta_args: Vec<BasicMetadataValueEnum<'ctx>> =
+                    coerced_args.iter().map(|&a| a.into()).collect();
+                let call = self
+                    .builder
+                    .build_call(fn_val, &meta_args, "")
+                    .map_err(|e| e.to_string())?;
+                call.set_call_convention(fn_val.get_call_conventions());
+                crate::cabi::apply_c_callsite_attrs(self.context, call, &sig);
+
+                let dummy = self.context.i64_type().const_zero().into();
+                call.try_as_basic_value().basic().unwrap_or(dummy)
+            };
+            return self.unmarshal_c_return(&sig.ret_mode, sret_ptr, raw_res);
+        }
+
         let offset = usize::from(needs_dest);
         for (i, &arg) in arg_vals.iter().enumerate() {
             if let Some(target_param) = params.get(i + offset) {
@@ -1979,6 +2127,30 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
                     _ => self.coerce_type(arg, target_ty)?,
                 };
                 coerced_args.push(coerced);
+            } else if is_var_arg {
+                // C default argument promotions for variadic tail arguments
+                let promoted = match arg {
+                    BasicValueEnum::FloatValue(fv) if fv.get_type() == self.context.f32_type() => {
+                        self.builder
+                            .build_float_ext(fv, self.context.f64_type(), "va_fpext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => {
+                        self.builder
+                            .build_int_z_extend(iv, self.context.i32_type(), "va_zext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 32 => {
+                        self.builder
+                            .build_int_s_extend(iv, self.context.i32_type(), "va_sext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    other => other,
+                };
+                coerced_args.push(promoted);
             } else {
                 coerced_args.push(arg);
             }
@@ -2111,20 +2283,49 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
             param_types.push(a.get_type().into());
         }
 
+        let is_var_arg = is_cfun
+            && (self.registry.variadic_cfuns.contains(name)
+                || self.registry.variadic_cfuns.contains(sem_name));
+
+        if is_cfun
+            && let Some(yukic_types::Type::Fn {
+                params: c_params,
+                ret: c_ret,
+                ..
+            }) = fn_ty
+        {
+            let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+            let param_tys: Vec<Type> = c_params.iter().map(|p| p.ty.clone()).collect();
+            if let Ok(sig) = crate::cabi::build_c_signature(
+                self.context,
+                self.target,
+                &td,
+                self.registry,
+                &param_tys,
+                c_ret,
+                is_var_arg,
+            ) {
+                let f = self.module.add_function(name, sig.fn_type, Some(Linkage::External));
+                crate::cabi::apply_c_signature_attrs(self.context, f, &sig);
+                f.set_call_conventions(call_conv);
+                return f;
+            }
+        }
+
         let fn_type = if let Some(ret) = ret_ty {
             let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
             let lowerer =
                 crate::types::TypeLowerer::new(self.context, &td, self.target, self.registry);
             if let Ok(llvm_ret) = lowerer.lower_return_type(ret) {
                 match llvm_ret {
-                    Some(bty) => bty.fn_type(&param_types, false),
-                    None => self.context.void_type().fn_type(&param_types, false),
+                    Some(bty) => bty.fn_type(&param_types, is_var_arg),
+                    None => self.context.void_type().fn_type(&param_types, is_var_arg),
                 }
             } else {
-                self.context.void_type().fn_type(&param_types, false)
+                self.context.void_type().fn_type(&param_types, is_var_arg)
             }
         } else {
-            self.context.void_type().fn_type(&param_types, false)
+            self.context.void_type().fn_type(&param_types, is_var_arg)
         };
         let f = self.module.add_function(name, fn_type, Some(Linkage::External));
         if needs_dest {
@@ -2134,6 +2335,140 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         }
         f.set_call_conventions(call_conv);
         f
+    }
+
+    fn marshal_c_args(
+        &mut self,
+        sig: &crate::cabi::CAbiSignature<'ctx>,
+        arg_vals: &[BasicValueEnum<'ctx>],
+        is_var_arg: bool,
+    ) -> Result<(Vec<BasicValueEnum<'ctx>>, Option<PointerValue<'ctx>>), String> {
+        let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+        let mut out_args = Vec::with_capacity(arg_vals.len() + 2);
+        let mut sret_ptr = None;
+        if let crate::cabi::CAbiRetMode::Sret { pointee, .. } = &sig.ret_mode {
+            let slot = self.create_entry_alloca(*pointee, "cabi_sret")?;
+            out_args.push(slot.into());
+            sret_ptr = Some(slot);
+        }
+
+        for (i, &arg) in arg_vals.iter().enumerate() {
+            if let Some(mode) = sig.arg_modes.get(i) {
+                match mode {
+                    crate::cabi::CAbiArgMode::Direct(target_ty) => {
+                        out_args.push(self.coerce_type(arg, *target_ty)?);
+                    }
+                    crate::cabi::CAbiArgMode::Coerced { parts, orig_ty } => {
+                        let coerced = self.coerce_type(arg, *orig_ty)?;
+                        let orig_sz = td.get_store_size(orig_ty);
+                        let parts_sz: u64 = parts.iter().map(|p| td.get_store_size(p)).sum();
+                        let buf_bytes = orig_sz.max(parts_sz).max(1);
+                        let buf_ty = self
+                            .context
+                            .i8_type()
+                            .array_type(u32::try_from(buf_bytes).unwrap_or(1));
+                        let buf = self.create_entry_alloca(buf_ty.into(), "cabi_arg_buf")?;
+                        self.builder
+                            .build_store(buf, buf_ty.const_zero())
+                            .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_store(buf, coerced)
+                            .map_err(|e| e.to_string())?;
+                        let mut off = 0u64;
+                        for part_ty in parts {
+                            let slot = crate::cabi::offset_ptr_bytes(
+                                self.context,
+                                self.builder,
+                                buf,
+                                off,
+                                "cabi_part_ptr",
+                            )?;
+                            let val = self
+                                .builder
+                                .build_load(*part_ty, slot, "cabi_part")
+                                .map_err(|e| e.to_string())?;
+                            out_args.push(val);
+                            off += td.get_store_size(part_ty);
+                        }
+                    }
+                    crate::cabi::CAbiArgMode::IndirectPtr { pointee, .. } => {
+                        let coerced = self.coerce_type(arg, *pointee)?;
+                        let slot = self.create_entry_alloca(*pointee, "cabi_byval")?;
+                        self.builder
+                            .build_store(slot, coerced)
+                            .map_err(|e| e.to_string())?;
+                        out_args.push(slot.into());
+                    }
+                }
+            } else if is_var_arg {
+                let promoted = match arg {
+                    BasicValueEnum::FloatValue(fv) if fv.get_type() == self.context.f32_type() => {
+                        self.builder
+                            .build_float_ext(fv, self.context.f64_type(), "va_fpext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => {
+                        self.builder
+                            .build_int_z_extend(iv, self.context.i32_type(), "va_zext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 32 => {
+                        self.builder
+                            .build_int_s_extend(iv, self.context.i32_type(), "va_sext")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    }
+                    other => other,
+                };
+                out_args.push(promoted);
+            } else {
+                out_args.push(arg);
+            }
+        }
+        Ok((out_args, sret_ptr))
+    }
+
+    fn unmarshal_c_return(
+        &self,
+        ret_mode: &crate::cabi::CAbiRetMode<'ctx>,
+        sret_ptr: Option<PointerValue<'ctx>>,
+        raw_res: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match ret_mode {
+            crate::cabi::CAbiRetMode::Sret { pointee, .. } => {
+                if let Some(slot) = sret_ptr {
+                    self.builder
+                        .build_load(*pointee, slot, "cabi_sret_out")
+                        .map_err(|e| e.to_string())
+                } else {
+                    Ok(raw_res)
+                }
+            }
+            crate::cabi::CAbiRetMode::Coerced { abi_ty, orig_ty } => {
+                let td = inkwell::targets::TargetData::create(self.target.spec().data_layout);
+                let bytes = td
+                    .get_store_size(abi_ty)
+                    .max(td.get_store_size(orig_ty))
+                    .max(1);
+                let buf_ty = self
+                    .context
+                    .i8_type()
+                    .array_type(u32::try_from(bytes).unwrap_or(1));
+                let buf = self.create_entry_alloca(buf_ty.into(), "cabi_ret_buf")?;
+                self.builder
+                    .build_store(buf, buf_ty.const_zero())
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_store(buf, raw_res)
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_load(*orig_ty, buf, "cabi_ret_val")
+                    .map_err(|e| e.to_string())
+            }
+            _ => Ok(raw_res),
+        }
     }
 
     pub fn compile_super_method_call(
@@ -2234,6 +2569,26 @@ impl<'ctx> BodyCompiler<'_, 'ctx> {
         if let Some(vt_global) = self.module.get_global(&vt_name) {
             self.vtable
                 .init_instance_vtable(self.builder, inst_ptr, vt_global)?;
+        }
+
+        if let Some(layout) = self.registry.lookup_class_layout(class_name).cloned() {
+            for (fname, _, lit) in &layout.default_fields {
+                if let Some(idx) = layout.fields.iter().position(|(n, _)| n == fname) {
+                    let field_idx = u32::try_from(idx + 1).map_err(|e| e.to_string())?;
+                    let field_ty = struct_ty
+                        .get_field_type_at_index(field_idx)
+                        .ok_or_else(|| format!("missing field index {field_idx} in class `{class_name}`"))?;
+                    let raw_val = self.compile_literal(lit);
+                    let final_val = self.coerce_type(raw_val, field_ty)?;
+                    let gep = self
+                        .builder
+                        .build_struct_gep(struct_ty, inst_ptr, field_idx, fname)
+                        .map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_store(gep, final_val)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
         }
 
         let mut init_sym = None;

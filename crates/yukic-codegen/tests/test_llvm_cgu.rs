@@ -27,10 +27,10 @@ fn dummy_method(name: &str) -> MethodDecl {
         this_param: ThisParam::Value,
         params: Vec::new(),
         return_type: None,
-        body: Block {
+        body: Some(Block {
             stmts: vec![Stmt::new(StmtKind::Space, Span::DUMMY)],
             span: Span::DUMMY,
-        },
+        }),
         is_operator: false,
         is_override: false,
         span: Span::DUMMY,
@@ -101,13 +101,13 @@ fn build_multi_item_ast() -> AstModule {
             generics: Vec::new(),
             params: vec![make_param("a"), make_param("b")],
             return_type: Some(int32_type_node()),
-            body: Block::new(
+            body: Some(Block::new(
                 vec![
                     Stmt::new(StmtKind::Space, dummy_span),
                     Stmt::new(StmtKind::Space, dummy_span),
                 ],
                 dummy_span,
-            ),
+            )),
             span: dummy_span,
         }),
         dummy_span,
@@ -123,13 +123,13 @@ fn build_multi_item_ast() -> AstModule {
             generics: Vec::new(),
             params: Vec::new(),
             return_type: Some(int32_type_node()),
-            body: Block::new(
+            body: Some(Block::new(
                 vec![
                     Stmt::new(StmtKind::Space, dummy_span),
                     Stmt::new(StmtKind::Space, dummy_span),
                 ],
                 dummy_span,
-            ),
+            )),
             span: dummy_span,
         }),
         dummy_span,
@@ -148,6 +148,7 @@ fn build_multi_item_ast() -> AstModule {
                 ty: int32_type_node(),
                 span: dummy_span,
             }],
+            is_variadic: false,
             return_type: Some(int32_type_node()),
             symbol_override: None,
             body: Some(Block::new(

@@ -22,15 +22,15 @@ pub use body::*;
 pub use cabi::*;
 pub use cgu::{
     CodegenUnit, CompiledCgu, compile_modules_parallel, compile_units_parallel,
-    compile_units_parallel_advanced, compile_units_parallel_with_overrides,
-    estimate_item_weight, partition_module, partition_module_by_sources,
-    partition_module_with_custom,
+    compile_units_parallel_advanced, compile_units_parallel_with_options,
+    compile_units_parallel_with_overrides, estimate_item_weight, partition_module,
+    partition_module_by_sources, partition_module_with_custom,
 };
 pub use closure::*;
 pub use context::init_llvm_targets;
 pub use debug::*;
 pub use exception::*;
-pub use generator::{CodeGenerator, embed_artifact_version_metadata};
+pub use generator::{CodeGenerator, embed_artifact_version_metadata, emit_shared_metadata_cgu};
 pub use inkwell;
 pub use intrinsic::*;
 pub use mangle::*;
@@ -488,7 +488,7 @@ mod tests {
                 generics: Vec::new(),
                 params: Vec::new(),
                 return_type: None,
-                body: yukic_ast::Block::new(stmts, dummy_span),
+                body: Some(yukic_ast::Block::new(stmts, dummy_span)),
                 span: dummy_span,
             }),
             dummy_span,
@@ -862,10 +862,10 @@ mod tests {
             this_param: yukic_ast::item::ThisParam::Value,
             params: Vec::new(),
             return_type: None,
-            body: yukic_ast::Block {
+            body: Some(yukic_ast::Block {
                 stmts: Vec::new(),
                 span: yukic_span::Span::DUMMY,
-            },
+            }),
             is_operator: false,
             is_override: false,
             span: yukic_span::Span::DUMMY,
@@ -1467,6 +1467,7 @@ mod tests {
                 ),
                 span: dummy_span,
             }],
+            is_variadic: false,
             return_type: None,
             symbol_override: None,
             body: None,
@@ -1505,6 +1506,7 @@ mod tests {
                     span: dummy_span,
                 },
             ],
+            is_variadic: false,
             return_type: Some(yukic_ast::TypeNode::new(
                 yukic_ast::TypeNodeKind::Ident(yukic_ast::Ident::new("int32", dummy_span)),
                 dummy_span,
@@ -2273,7 +2275,7 @@ mod tests {
             generics: vec![],
             params: vec![],
             return_type: None,
-            body: yukic_ast::Block { stmts: vec![], span: dspan },
+            body: Some(yukic_ast::Block { stmts: vec![], span: dspan }),
             span: dspan,
         };
         codegen.compile_fun_decl(&fun_decl).unwrap();
@@ -2293,6 +2295,67 @@ mod tests {
         let expected = format!("yukic v{}", env!("CARGO_PKG_VERSION"));
         assert!(ir.contains("!llvm.ident"));
         assert!(ir.contains(&expected));
+    }
+
+    #[test]
+    fn test_inline_statics_codegen() {
+        let dspan = yukic_span::Span::new(yukic_span::FileId(0), yukic_span::BytePos(0), yukic_span::BytePos(0));
+        let mut module = yukic_ast::Module::new(yukic_span::FileId(0));
+        module.items.push(yukic_ast::Item::new(
+            yukic_ast::ItemId(0),
+            yukic_ast::Visibility::Local,
+            yukic_ast::ItemKind::Static(yukic_ast::StaticDecl {
+                name: yukic_ast::Ident::new("CONST_VAL", dspan),
+                ty: None,
+                init: yukic_ast::Expr::new(
+                    yukic_ast::ExprKind::Literal(yukic_ast::LiteralValue::Int(12345)),
+                    dspan,
+                ),
+                span: dspan,
+            }),
+            dspan,
+        ));
+        module.items.push(yukic_ast::Item::new(
+            yukic_ast::ItemId(1),
+            yukic_ast::Visibility::Public,
+            yukic_ast::ItemKind::Fun(yukic_ast::FunDecl {
+                name: yukic_ast::Ident::new("read_const", dspan),
+                attrs: vec![],
+                generics: vec![],
+                params: vec![],
+                return_type: Some(yukic_ast::TypeNode {
+                    kind: yukic_ast::TypeNodeKind::Ident(yukic_ast::Ident::new("int64", dspan)),
+                    span: dspan,
+                }),
+                body: Some(yukic_ast::Block {
+                    stmts: vec![yukic_ast::Stmt::new(
+                        yukic_ast::StmtKind::Return(Some(yukic_ast::Expr::new(
+                            yukic_ast::ExprKind::Ident(yukic_ast::Ident::new("CONST_VAL", dspan)),
+                            dspan,
+                        ))),
+                        dspan,
+                    )],
+                    span: dspan,
+                }),
+                span: dspan,
+            }),
+            dspan,
+        ));
+
+        let ctx_no_inline = Context::create();
+        let mut cg_no_inline = CodeGenerator::new(&ctx_no_inline, "no_inline", TargetTriple::host())
+            .with_inline_statics(false);
+        cg_no_inline.compile_module(&module).unwrap();
+        let ir_no_inline = cg_no_inline.emit_llvm_ir_to_string();
+        assert!(ir_no_inline.contains("load i64, ptr @CONST_VAL"));
+
+        let ctx_inline = Context::create();
+        let mut cg_inline = CodeGenerator::new(&ctx_inline, "with_inline", TargetTriple::host())
+            .with_inline_statics(true);
+        cg_inline.compile_module(&module).unwrap();
+        let ir_inline = cg_inline.emit_llvm_ir_to_string();
+        assert!(!ir_inline.contains("load i64, ptr @CONST_VAL"));
+        assert!(ir_inline.contains("ret i64 12345"));
     }
 }
 

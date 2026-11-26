@@ -24,6 +24,7 @@ pub struct FnSig {
 #[derive(Clone, Debug, Default)]
 pub struct ClassDef {
     pub fields: HashMap<String, Type>,
+    pub static_fields: HashMap<String, Type>,
     pub methods: HashMap<String, FnSig>,
     pub getters: HashMap<String, Type>,
     pub setters: HashMap<String, Type>,
@@ -37,6 +38,8 @@ pub struct StructDef {
     pub fields: HashMap<String, Type>,
     pub field_names: Vec<String>,
     pub methods: HashMap<String, FnSig>,
+    pub is_cstruct: bool,
+    pub is_union: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -55,6 +58,8 @@ pub struct TypeEnv {
     scopes: Vec<HashMap<String, VarInfo>>,
     functions: HashMap<String, FnSig>,
     c_functions: HashMap<String, FnSig>,
+    variadic_cfuns: BTreeSet<String>,
+    c_namespaces: HashMap<String, BTreeSet<String>>,
     classes: HashMap<String, ClassDef>,
     structs: HashMap<String, StructDef>,
     interfaces: HashMap<String, InterfaceDef>,
@@ -69,6 +74,8 @@ impl TypeEnv {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             c_functions: HashMap::new(),
+            variadic_cfuns: BTreeSet::new(),
+            c_namespaces: HashMap::new(),
             classes: HashMap::new(),
             structs: HashMap::new(),
             interfaces: HashMap::new(),
@@ -200,6 +207,7 @@ impl TypeEnv {
                 fields: error_fields.clone(),
                 field_names: error_names.clone(),
                 methods: HashMap::new(),
+                ..Default::default()
             },
         );
         self.structs.insert(
@@ -208,6 +216,7 @@ impl TypeEnv {
                 fields: error_fields,
                 field_names: error_names,
                 methods: HashMap::new(),
+                ..Default::default()
             },
         );
     }
@@ -412,6 +421,35 @@ impl TypeEnv {
         self.c_functions.get(name)
     }
 
+    pub fn register_variadic_cfun(&mut self, name: String) {
+        self.variadic_cfuns.insert(name);
+    }
+
+    pub fn is_variadic_cfun(&self, name: &str) -> bool {
+        self.variadic_cfuns.contains(name)
+    }
+
+    pub fn register_c_namespace_symbol(&mut self, ns: String, sym: String) {
+        self.c_namespaces.entry(ns).or_default().insert(sym);
+    }
+
+    pub fn is_c_namespace_symbol(&self, ns: &str, sym: &str) -> bool {
+        self.c_namespaces.get(ns).is_some_and(|syms| syms.contains(sym))
+    }
+
+    pub fn has_c_namespace(&self, ns: &str) -> bool {
+        self.c_namespaces.contains_key(ns)
+    }
+
+    pub fn resolve_c_namespace_struct_name<'a>(&'a self, name: &'a str) -> &'a str {
+        if let Some((ns, sym)) = name.split_once("::") {
+            if self.is_c_namespace_symbol(ns, sym) {
+                return sym;
+            }
+        }
+        name
+    }
+
     pub fn register_ambiguous(&mut self, name: String, namespaces: Vec<String>) {
         self.ambiguous_symbols.insert(name, namespaces);
     }
@@ -433,7 +471,14 @@ impl TypeEnv {
     }
 
     pub fn lookup_struct(&self, name: &str) -> Option<&StructDef> {
-        self.structs.get(name)
+        if let Some(found) = self.structs.get(name) {
+            return Some(found);
+        }
+        let resolved = self.resolve_c_namespace_struct_name(name);
+        if resolved != name {
+            return self.structs.get(resolved);
+        }
+        None
     }
 
     pub fn register_interface(&mut self, name: String, iface: InterfaceDef) {
@@ -587,6 +632,10 @@ impl TypeEnv {
             Type::Array(inner) => {
                 Type::Array(Box::new(Self::canonicalize_type_internal(inner, classes, ifaces, enums, aliases, visited)))
             }
+            Type::FixedArray(inner, len) => Type::FixedArray(
+                Box::new(Self::canonicalize_type_internal(inner, classes, ifaces, enums, aliases, visited)),
+                *len,
+            ),
             Type::Tuple(members) => Type::Tuple(
                 members
                     .iter()

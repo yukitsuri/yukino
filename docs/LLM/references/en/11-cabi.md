@@ -13,14 +13,18 @@ Yukino is designed for seamless interoperability with C, C++, Rust, and operatin
    1.4 [C Attribute Syntax: \|attr1, attr2\|](#14-c-attribute-syntax-attr1-attr2)  
    1.5 [Calling Conventions](#15-calling-conventions)  
    1.6 [Linkage and Optimization C Attributes](#16-linkage-and-optimization-c-attributes)  
-   1.7 [Termination Syntax: the Semicolon (;)](#17-termination-syntax-the-semicolon-)
-2. [C Structures: cstruct and Memory Layout](#2-c-structures-cstruct-and-memory-layout)  
+   1.7 [Termination Syntax: the Semicolon (;)](#17-termination-syntax-the-semicolon-)  
+   1.8 [Variadic C Functions and External Globals (cvar)](#18-variadic-c-functions-and-external-globals-cvar)
+2. [C Structures, Unions, and Fixed Arrays](#2-c-structures-unions-and-fixed-arrays)  
    2.1 [Declaration and Field Access](#21-declaration-and-field-access)  
-   2.2 [The packed and align Attributes](#22-the-packed-and-align-attributes)
-3. [Exporting Yukino Functions to the C ABI](#3-exporting-yukino-functions-to-the-c-abi)
-4. [Raw Pointers: ptr\<T\> and the ptr_of Operator](#4-raw-pointers-ptrt-and-the-ptr_of-operator)
-5. [Integrating C Files into the Build Process](#5-integrating-c-files-into-the-build-process)
-6. [Comprehensive Example: Different Types in C and Yukino](#6-comprehensive-example-different-types-in-c-and-yukino)
+   2.2 [The packed and align Attributes](#22-the-packed-and-align-attributes)  
+   2.3 [C Unions: cunion](#23-c-unions-cunion)  
+   2.4 [Fixed-Size Inline C Arrays](#24-fixed-size-inline-c-arrays)
+3. [Automatic C Header Loading: cload](#3-automatic-c-header-loading-cload)
+4. [Exporting Yukino Functions to the C ABI](#4-exporting-yukino-functions-to-the-c-abi)
+5. [Raw Pointers: ptr\<T\> and the ptr_of Operator](#5-raw-pointers-ptrt-and-the-ptr_of-operator)
+6. [Integrating C Files into the Build Process](#6-integrating-c-files-into-the-build-process)
+7. [Comprehensive Example: Different Types in C and Yukino](#7-comprehensive-example-different-types-in-c-and-yukino)
 
 ---
 
@@ -182,9 +186,24 @@ cfun abs(x: int32) -> int32
 
 The parser accepts both forms equally, both at the top level and inside an `externc` block; the semicolon serves as a visual separator in declaration lists.
 
+### 1.8 Variadic C Functions and External Globals (cvar)
+
+C functions with variable arguments (`...`) are declared with a trailing `...` parameter. During calls, standard C default argument promotions are applied automatically (`float32` promotes to `float64`; `bool`, `int8`, `int16`, and small C integer types promote to `int32`/`uint32`).
+
+External C global variables are declared with `cvar`:
+
+```yukino
+externc {
+    cfun snprintf(buf: ptr<c_char>, cap: c_size_t, fmt: ptr<c_char>, ...) -> c_int;
+    cvar global_error_code: c_int;
+}
+```
+
+`cvar` declarations can also appear at top level outside `externc` (and with `public cvar ...`).
+
 ---
 
-## 2. C Structures: cstruct and Memory Layout
+## 2. C Structures, Unions, and Fixed Arrays
 
 Unlike standard Yukino `struct` structures, the `cstruct` keyword is used for C structures. They follow the size, field offsets, and ABI of the target platform: fields are laid out according to the natural alignment of their types, and the `packed` attribute disables padding.
 
@@ -245,9 +264,78 @@ Without `packed`, fields are laid out according to the natural alignment of thei
 
 The `align="N"` (or `align=N`) attribute sets the explicit machine alignment of the structure in bytes (for example, `|align="16"|` or `|align=8|`). The overall size of the structure is padded with trailing bytes to become a multiple of the alignment, and variables of this structure (including stack alloca allocations) are positioned in memory respecting the specified alignment. It can also be combined with `packed` (for example, `|packed, align="4"|`).
 
+### 2.3 C Unions: cunion
+
+C unions with overlapping memory fields are declared with `cunion`. Their size and alignment match the largest member and strictest member alignment under target C ABI rules:
+
+```yukino
+externc {
+    cunion RegisterValue {
+        as_i32: int32,
+        as_f32: float32,
+        bytes: uint8[4],
+    }
+}
+
+fun use_union() -> int32 {
+    // A cunion literal accepts either 0 fields (zero-initialized) or 1 active field:
+    set reg = RegisterValue { as_i32: 0x3f800000 }
+    return reg.as_i32
+}
+```
+
+### 2.4 Fixed-Size Inline C Arrays
+
+Inside `cstruct` and `cunion`, array syntax `T[N]` denotes an inline fixed-size C array laid out directly in the aggregate (`[N x T]` in LLVM), rather than a heap-backed dynamic slice:
+
+```yukino
+externc {
+    cstruct MatrixRow {
+        cells: float64[4],
+    }
+}
+
+fun sum_first_two() -> float64 {
+    set row = MatrixRow { cells: [1.0, 2.5, 0.0, 0.0] }
+    return row.cells[0] + row.cells[1]
+}
+```
+
+In `cfun` parameters, C arrays (`T[N]` or `T[]`) decay to `ptr<T>` according to standard C ABI rules.
+
 ---
 
-## 3. Exporting Yukino Functions to the C ABI
+## 3. Automatic C Header Loading: cload
+
+Instead of writing bindings manually, Yukino can parse `.h` header files directly with `cload` (or `public cload` to re-export generated bindings):
+
+```yukino
+cload "native/include/api.h"
+
+fun main() {
+    // Symbols from api.h are brought into module scope directly:
+    set p = NativePoint { x: 1, y: 2 }
+    // Every symbol is also available via the header-stem namespace (`<header_stem>::symbol`):
+    set res = api::process_point(p)
+}
+```
+
+Key rules for `cload`:
+- **Manifest-relative paths:** header paths resolve relative to the directory containing `yuki.toml` (the project manifest directory), not relative to `src/`.
+- **Preprocessor and standard headers:** `cload` runs a built-in C preprocessor supporting `#include`, `#pragma once`, `#pragma pack`, `#define` (object and function-like macros with `#`, `##`, `__VA_ARGS__`), `#if` / `#ifdef` / `#ifndef` / `#elif` / `#else`, target architecture/OS macros, and built-in standard C headers (`<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<inttypes.h>`, `<stdarg.h>`, `<sys/types.h>`).
+- **Translated entities:** C `struct` and `union` definitions become `cstruct`/`cunion` (including bitfields, fixed arrays, and anonymous nested aggregates), functions become `cfun` (including variadic `...` and function pointers), `extern` globals become `cvar`, `typedef` becomes `type`, and `enum` values as well as integer/float/string `#define` constants become `static` constants.
+- **Namespace access:** symbols can be referenced directly (`Symbol`) or via `<header_stem>::Symbol` without an `as` clause (for example, `native/include/api.h` uses namespace `api::`).
+- **Incremental tracking and manifest options:** included headers are tracked automatically for incremental rebuilds. Extra header search paths or preprocessor definitions can optionally be configured in `yuki.toml`:
+
+```toml
+[c]
+include_dirs = ["vendor/myclib/include"]
+defines = { USE_FAST_PATH = "1" }
+```
+
+---
+
+## 4. Exporting Yukino Functions to the C ABI
 
 Yukino lets you write libraries that are called from C, C++, Python (`ctypes`), Rust, or C# (`P/Invoke`). For this, the function is declared with the `cfun` keyword.
 
@@ -280,7 +368,7 @@ The compiled library exports these functions with clean C names (unmangled symbo
 
 ---
 
-## 4. Raw Pointers: ptr\<T\> and the ptr_of Operator
+## 5. Raw Pointers: ptr\<T\> and the ptr_of Operator
 
 Yukino supports raw typed pointers `ptr<T>`:
 
@@ -317,7 +405,7 @@ If needed, `ptr<uint8>` can be renamed to `ptr<char>` via `cast` (conversion bet
 
 ---
 
-## 5. Integrating C Files into the Build Process
+## 6. Integrating C Files into the Build Process
 
 To build projects containing both Yukino and C code, the `yuki.toml` file is used:
 
@@ -355,7 +443,7 @@ The `yukino run` command automatically links the `native_helper.o` object file a
 
 ---
 
-## 6. Comprehensive Example: Different Types in C and Yukino
+## 7. Comprehensive Example: Different Types in C and Yukino
 
 Below is a complete example of interoperability between a C codebase and the Yukino language, covering primitives, floating-point numbers, boolean flags, C strings, structures with the C ABI field layout (`cstruct`), output parameters passed by pointer (`ptr<T>`), and callbacks (`cfun` callbacks).
 

@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 use yukic_ast::Module as AstModule;
-use yukic_ast::expr::LiteralValue;
+use yukic_ast::expr::{Expr, ExprKind, LiteralValue, UnaryOp};
 use yukic_ast::item::{
-    ClassDecl, CstructDecl, EnumDecl, EnumVariant, ItemKind, StructDecl,
+    CfunDecl, ClassDecl, CstructDecl, CvarDecl, EnumDecl, EnumVariant, ItemKind, StructDecl,
 };
 use yukic_types::{Type, TypeParam};
-use yukic_types::convert::ast_type_to_type;
+use yukic_types::convert::{ast_type_to_c_field_type, ast_type_to_type};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructLayout {
@@ -21,6 +21,8 @@ pub struct ClassLayout {
     pub superclass: Option<String>,
     pub interfaces: Vec<String>,
     pub fields: Vec<(String, Type)>,
+    pub default_fields: Vec<(String, Type, LiteralValue)>,
+    pub static_fields: HashMap<String, (String, Type)>,
     pub getters: HashSet<String>,
     pub setters: HashSet<String>,
 }
@@ -44,6 +46,7 @@ pub struct CstructLayout {
     pub fields: Vec<(String, Type)>,
     pub is_packed: bool,
     pub align: Option<u32>,
+    pub is_union: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,7 +67,10 @@ pub struct TypeRegistry {
     pub functions: HashMap<String, Type>,
     pub fn_types: HashMap<String, Type>,
     pub cfun_types: HashMap<String, Type>,
+    pub variadic_cfuns: HashSet<String>,
     pub c_symbols: HashMap<String, String>,
+    pub c_namespaces: HashMap<String, HashSet<String>>,
+    pub c_vars: HashMap<String, Type>,
     pub type_aliases: HashMap<String, Type>,
     pub symbol_overrides: HashMap<String, String>,
     pub fn_candidates: HashMap<String, Vec<MangledFunSig>>,
@@ -82,9 +88,34 @@ impl TypeRegistry {
         for item in &module.items {
             self.register_item(&item.kind);
         }
+        for (ns, syms) in &module.c_namespaces {
+            let entry = self.c_namespaces.entry(ns.clone()).or_default();
+            for sym in syms {
+                entry.insert(sym.clone());
+                let qualified = format!("{ns}::{sym}");
+                if let Some(target) = self.type_aliases.get(sym).cloned() {
+                    self.type_aliases.insert(qualified, target);
+                } else if self.cstructs.contains_key(sym) {
+                    self.type_aliases.insert(qualified, Type::Cstruct(sym.clone()));
+                }
+            }
+        }
         self.resolve_inherited_class_fields();
         self.canonicalize_registered_types();
         self.register_mangled_symbols(module);
+    }
+
+    pub fn is_c_namespace_symbol(&self, ns: &str, sym: &str) -> bool {
+        self.c_namespaces.get(ns).is_some_and(|syms| syms.contains(sym))
+    }
+
+    pub fn resolve_c_namespace_name<'a>(&'a self, name: &'a str) -> &'a str {
+        if let Some((ns, sym)) = name.split_once("::") {
+            if self.is_c_namespace_symbol(ns, sym) {
+                return sym;
+            }
+        }
+        name
     }
 
     pub fn canonicalize_registered_types(&mut self) {
@@ -119,6 +150,12 @@ impl TypeRegistry {
         }
         for layout in self.classes.values_mut() {
             for (_, field_ty) in &mut layout.fields {
+                *field_ty = Self::canon_type(field_ty, &classes, &ifaces, &enums, &cstructs, &self.type_aliases);
+            }
+            for (_, field_ty, _) in &mut layout.default_fields {
+                *field_ty = Self::canon_type(field_ty, &classes, &ifaces, &enums, &cstructs, &self.type_aliases);
+            }
+            for (_, field_ty) in layout.static_fields.values_mut() {
                 *field_ty = Self::canon_type(field_ty, &classes, &ifaces, &enums, &cstructs, &self.type_aliases);
             }
         }
@@ -184,6 +221,10 @@ impl TypeRegistry {
                 }
             }
             Type::Array(inner) => Type::Array(Box::new(Self::canon_type_internal(inner, classes, ifaces, enums, cstructs, aliases, visited))),
+            Type::FixedArray(inner, len) => Type::FixedArray(
+                Box::new(Self::canon_type_internal(inner, classes, ifaces, enums, cstructs, aliases, visited)),
+                *len,
+            ),
             Type::Tuple(members) => {
                 Type::Tuple(members.iter().map(|m| Self::canon_type_internal(m, classes, ifaces, enums, cstructs, aliases, visited)).collect())
             }
@@ -321,53 +362,37 @@ impl TypeRegistry {
                     },
                 );
             }
-            ItemKind::Cfun(decl) => {
-                let ret = decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
-                self.functions.insert(decl.name.name.clone(), ret.clone());
-                let sym_override = decl.symbol_override.as_ref().map_or_else(|| decl.name.name.clone(), |sym| sym.name.clone());
-                self.c_symbols.insert(decl.name.name.clone(), sym_override);
-                if let Some(ref sym) = decl.symbol_override {
-                    self.symbol_overrides.insert(decl.name.name.clone(), sym.name.clone());
-                }
-                let params = decl
-                    .params
-                    .iter()
-                    .map(|p| TypeParam::value(ast_type_to_type(&p.ty)))
-                    .collect();
-                let c_fn_ty = Type::Fn {
-                    params,
-                    ret: Box::new(ret),
-                    is_cfun: true,
-                };
-                self.cfun_types.insert(decl.name.name.clone(), c_fn_ty.clone());
-                self.fn_types.insert(decl.name.name.clone(), c_fn_ty);
-            }
+            ItemKind::Cfun(decl) => self.register_cfun_decl(decl),
+            ItemKind::Cvar(decl) => self.register_cvar_decl(decl),
             ItemKind::Externc(block) => {
                 for item in &block.items {
                     match item {
                         yukic_ast::item::ExterncItem::Cstruct(cstruct_decl) => {
                             self.register_cstruct(cstruct_decl);
+                            if let Some(ref ns) = block.namespace {
+                                self.c_namespaces
+                                    .entry(ns.clone())
+                                    .or_default()
+                                    .insert(cstruct_decl.name.name.clone());
+                            }
                         }
                         yukic_ast::item::ExterncItem::Cfun(fn_decl) => {
-                            let ret = fn_decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
-                            self.functions.insert(fn_decl.name.name.clone(), ret.clone());
-                            let sym_override = fn_decl.symbol_override.as_ref().map_or_else(|| fn_decl.name.name.clone(), |sym| sym.name.clone());
-                            self.c_symbols.insert(fn_decl.name.name.clone(), sym_override);
-                            if let Some(ref sym) = fn_decl.symbol_override {
-                                self.symbol_overrides.insert(fn_decl.name.name.clone(), sym.name.clone());
+                            self.register_cfun_decl(fn_decl);
+                            if let Some(ref ns) = block.namespace {
+                                self.c_namespaces
+                                    .entry(ns.clone())
+                                    .or_default()
+                                    .insert(fn_decl.name.name.clone());
                             }
-                            let params = fn_decl
-                                .params
-                                .iter()
-                                .map(|p| TypeParam::value(ast_type_to_type(&p.ty)))
-                                .collect();
-                            let c_fn_ty = Type::Fn {
-                                params,
-                                ret: Box::new(ret),
-                                is_cfun: true,
-                            };
-                            self.cfun_types.insert(fn_decl.name.name.clone(), c_fn_ty.clone());
-                            self.fn_types.insert(fn_decl.name.name.clone(), c_fn_ty);
+                        }
+                        yukic_ast::item::ExterncItem::Cvar(cvar_decl) => {
+                            self.register_cvar_decl(cvar_decl);
+                            if let Some(ref ns) = block.namespace {
+                                self.c_namespaces
+                                    .entry(ns.clone())
+                                    .or_default()
+                                    .insert(cvar_decl.name.name.clone());
+                            }
                         }
                     }
                 }
@@ -391,11 +416,47 @@ impl TypeRegistry {
         );
     }
 
+    fn register_cfun_decl(&mut self, decl: &CfunDecl) {
+        let ret = decl.return_type.as_ref().map_or(Type::Void, ast_type_to_type);
+        self.functions.insert(decl.name.name.clone(), ret.clone());
+        let sym_override = decl
+            .symbol_override
+            .as_ref()
+            .map_or_else(|| decl.name.name.clone(), |sym| sym.name.clone());
+        self.c_symbols.insert(decl.name.name.clone(), sym_override.clone());
+        if decl.is_variadic {
+            self.variadic_cfuns.insert(decl.name.name.clone());
+            self.variadic_cfuns.insert(sym_override);
+        }
+        if let Some(ref sym) = decl.symbol_override {
+            self.symbol_overrides
+                .insert(decl.name.name.clone(), sym.name.clone());
+        }
+        let params = decl
+            .params
+            .iter()
+            .map(|p| TypeParam::value(ast_type_to_type(&p.ty)))
+            .collect();
+        let c_fn_ty = Type::Fn {
+            params,
+            ret: Box::new(ret),
+            is_cfun: true,
+        };
+        self.cfun_types.insert(decl.name.name.clone(), c_fn_ty.clone());
+        self.fn_types.insert(decl.name.name.clone(), c_fn_ty);
+    }
+
+    fn register_cvar_decl(&mut self, decl: &CvarDecl) {
+        let ty = ast_type_to_type(&decl.ty);
+        self.static_vars.insert(decl.name.name.clone(), ty.clone());
+        self.c_vars.insert(decl.name.name.clone(), ty);
+    }
+
     pub fn register_cstruct(&mut self, decl: &CstructDecl) {
         let fields = decl
             .fields
             .iter()
-            .map(|f| (f.name.name.clone(), ast_type_to_type(&f.ty)))
+            .map(|f| (f.name.name.clone(), ast_type_to_c_field_type(&f.ty)))
             .collect();
         let mut is_packed = false;
         let mut align = None;
@@ -413,16 +474,28 @@ impl TypeRegistry {
                 fields,
                 is_packed,
                 align,
+                is_union: decl.is_union,
             },
         );
     }
 
     pub fn register_class(&mut self, decl: &ClassDecl) {
-        let fields = decl
-            .fields
-            .iter()
-            .map(|f| (f.name.name.clone(), ast_type_to_type(&f.ty)))
-            .collect();
+        let mut fields = Vec::new();
+        let mut default_fields = Vec::new();
+        let mut static_fields = HashMap::new();
+        for f in &decl.fields {
+            let fty = ast_type_to_type(&f.ty);
+            if f.is_static {
+                static_fields.insert(f.name.name.clone(), (decl.name.name.clone(), fty));
+            } else {
+                fields.push((f.name.name.clone(), fty.clone()));
+                if let Some(ref expr) = f.default_val {
+                    if let Some(lit) = eval_const_literal(expr) {
+                        default_fields.push((f.name.name.clone(), fty, lit));
+                    }
+                }
+            }
+        }
         let mut getters = HashSet::new();
         let mut setters = HashSet::new();
         for acc in &decl.accessors {
@@ -451,6 +524,8 @@ impl TypeRegistry {
                 superclass,
                 interfaces,
                 fields,
+                default_fields,
+                static_fields,
                 getters,
                 setters,
             },
@@ -461,8 +536,12 @@ impl TypeRegistry {
         let class_names: Vec<String> = self.classes.keys().cloned().collect();
         for name in class_names {
             let resolved = self.collect_all_class_fields(&name, &mut Vec::new());
+            let resolved_defaults = self.collect_all_class_defaults(&name, &mut Vec::new());
+            let resolved_statics = self.collect_all_class_statics(&name, &mut Vec::new());
             if let Some(layout) = self.classes.get_mut(&name) {
                 layout.fields = resolved;
+                layout.default_fields = resolved_defaults;
+                layout.static_fields = resolved_statics;
             }
         }
     }
@@ -491,6 +570,64 @@ impl TypeRegistry {
             }
         }
         fields
+    }
+
+    fn collect_all_class_defaults(
+        &self,
+        class_name: &str,
+        visited: &mut Vec<String>,
+    ) -> Vec<(String, Type, LiteralValue)> {
+        if visited.iter().any(|v| v == class_name) {
+            return Vec::new();
+        }
+        visited.push(class_name.to_string());
+
+        let Some(layout) = self.classes.get(class_name) else {
+            return Vec::new();
+        };
+
+        let mut defaults = Vec::new();
+        if let Some(ref super_name) = layout.superclass {
+            defaults.extend(self.collect_all_class_defaults(super_name, visited));
+        }
+        for (fname, fty, lit) in &layout.default_fields {
+            if !defaults.iter().any(|(existing, _, _)| existing == fname) {
+                defaults.push((fname.clone(), fty.clone(), lit.clone()));
+            }
+        }
+        defaults
+    }
+
+    fn collect_all_class_statics(
+        &self,
+        class_name: &str,
+        visited: &mut Vec<String>,
+    ) -> HashMap<String, (String, Type)> {
+        if visited.iter().any(|v| v == class_name) {
+            return HashMap::new();
+        }
+        visited.push(class_name.to_string());
+
+        let Some(layout) = self.classes.get(class_name) else {
+            return HashMap::new();
+        };
+
+        let mut statics = if let Some(ref super_name) = layout.superclass {
+            self.collect_all_class_statics(super_name, visited)
+        } else {
+            HashMap::new()
+        };
+        for (fname, info) in &layout.static_fields {
+            statics.insert(fname.clone(), info.clone());
+        }
+        statics
+    }
+
+    pub fn lookup_class_layout(&self, name: &str) -> Option<&ClassLayout> {
+        self.classes.get(name).or_else(|| {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            self.classes.get(short)
+        })
     }
 
     pub fn register_enum(&mut self, decl: &EnumDecl) {
@@ -551,6 +688,7 @@ impl TypeRegistry {
                 fields,
                 is_packed,
                 align,
+                is_union: false,
             },
         );
     }
@@ -569,6 +707,8 @@ impl TypeRegistry {
                 superclass,
                 interfaces: Vec::new(),
                 fields,
+                default_fields: Vec::new(),
+                static_fields: HashMap::new(),
                 getters: HashSet::new(),
                 setters: HashSet::new(),
             },
@@ -774,6 +914,10 @@ impl TypeRegistry {
         self.symbol_overrides.get(name).cloned()
     }
 
+    pub fn class_static_global_name(owner_class: &str, field_name: &str) -> String {
+        format!("_Y_{owner_class}_S_{field_name}")
+    }
+
     fn infer_const_expr_ty(expr: &yukic_ast::Expr) -> Option<Type> {
         match &expr.kind {
             yukic_ast::ExprKind::Literal(lit) => match lit {
@@ -816,5 +960,30 @@ impl TypeRegistry {
             }
             _ => None,
         }
+    }
+}
+
+pub(crate) fn eval_const_literal(expr: &Expr) -> Option<LiteralValue> {
+    match &expr.kind {
+        ExprKind::Literal(lit) => Some(lit.clone()),
+        ExprKind::Unary(UnaryOp::Neg, inner) => match eval_const_literal(inner)? {
+            LiteralValue::Int(v) => Some(LiteralValue::Int(v.wrapping_neg())),
+            LiteralValue::TypedInt(v, s) => Some(LiteralValue::TypedInt(v.wrapping_neg(), s)),
+            LiteralValue::Float(v) => Some(LiteralValue::Float(-v)),
+            LiteralValue::TypedFloat(v, s) => Some(LiteralValue::TypedFloat(-v, s)),
+            _ => None,
+        },
+        ExprKind::Unary(UnaryOp::Not, inner) => match eval_const_literal(inner)? {
+            LiteralValue::Bool(b) => Some(LiteralValue::Bool(!b)),
+            _ => None,
+        },
+        ExprKind::Unary(UnaryOp::BitNot, inner) => match eval_const_literal(inner)? {
+            LiteralValue::Int(v) => Some(LiteralValue::Int(!v)),
+            LiteralValue::TypedInt(v, s) => Some(LiteralValue::TypedInt(!v, s)),
+            LiteralValue::UInt(v) => Some(LiteralValue::UInt(!v)),
+            LiteralValue::TypedUInt(v, s) => Some(LiteralValue::TypedUInt(!v, s)),
+            _ => None,
+        },
+        _ => None,
     }
 }

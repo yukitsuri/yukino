@@ -368,7 +368,7 @@ The `lib.toml` manifest specifies `output = "macro"` and includes the SDK:
 name = "my_codegen"
 version = "0.1.0"
 entry = "my_codegen/lib.ykn"
-yukino = ["0.1.0", "+"]
+yukino = ["0.1.1", "+"]
 output = "macro"
 includes = ["stdlib", "macrosdk"]
 ```

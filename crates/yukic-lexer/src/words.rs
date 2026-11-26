@@ -20,6 +20,8 @@ fn lookup_decl_keyword(ident: &str) -> Option<TokenKind<'static>> {
         "class" => Some(TokenKind::Class),
         "struct" => Some(TokenKind::Struct),
         "cstruct" => Some(TokenKind::Cstruct),
+        "cunion" => Some(TokenKind::Cunion),
+        "cvar" => Some(TokenKind::Cvar),
         "interface" => Some(TokenKind::Interface),
         "enum" => Some(TokenKind::Enum),
         "type" => Some(TokenKind::Type),
@@ -27,6 +29,7 @@ fn lookup_decl_keyword(ident: &str) -> Option<TokenKind<'static>> {
         "locked" => Some(TokenKind::Locked),
         "operator" => Some(TokenKind::Operator),
         "externc" => Some(TokenKind::Externc),
+        "cload" => Some(TokenKind::Cload),
         "get" => Some(TokenKind::Get),
         _ => None,
     }

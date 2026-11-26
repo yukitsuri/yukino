@@ -108,6 +108,9 @@ yukino build --all-features
 # Build a specific member package within a workspace (-p / --package)
 yukino build -p core_lib
 
+# Specify an explicit path to a manifest file (yuki.toml, lib.toml, or yukispace.toml)
+yukino build --mfpath apps/cli_tool/yuki.toml
+
 # Setting the number of compilation threads
 yukino build -j 8
 
@@ -173,6 +176,9 @@ yukino run debug
 # Run a specific binary package from a workspace (-p / --package)
 yukino run -p cli_tool
 
+# Run using an explicit manifest path (--mfpath)
+yukino run --mfpath apps/cli_tool/yuki.toml
+
 # Run with command-line arguments passed to the application
 yukino run -- --port 8080 --host 0.0.0.0
 
@@ -213,6 +219,9 @@ yukino test
 
 # Test a specific package in a workspace (-p / --package)
 yukino test -p core_lib
+
+# Test using an explicit manifest path (--mfpath)
+yukino test --mfpath libs/core_lib/lib.toml
 
 # Run tests with all features enabled
 yukino test --all-features
@@ -264,6 +273,9 @@ yukino clean
 
 # Full cleanup, including removal of the yuki-work/common/yuki.lock lockfile (-a / --all)
 yukino clean -a
+
+# Clean a project using an explicit manifest path (--mfpath)
+yukino clean --mfpath apps/cli_tool/yuki.toml
 ```
 
 ### 1.6 Global configuration: yukino config
@@ -345,13 +357,13 @@ name = "my_app"              # Executable file name in release mode
 namedbg = "my_app_debug"      # Executable file name when building the debug profile
 version = "0.1.0"            # Project version
 entry = "src/main.ykn"        # Main entry point
-yukino = ["0.1.0", "+"]       # Supported compiler version range [min, max]
-includes = ["stdlib"]        # Built-in packages for the project (defaults to ["stdlib"])
+yukino = ["0.1.1", "+"]       # Supported compiler version range [min, max]
+includes = ["core", "stdlib"] # Built-in packages for the project (defaults to ["core", "stdlib"])
 ```
 
 The `includes` configuration manages built-in compiler packages (builtins) for the project:
-- When initializing a new project (`yukino new`), `includes = ["stdlib"]` is automatically added to the bottom of the `[bin]` or `[lib]` section.
-- If `includes` is omitted from the manifest, the project defaults to `includes = ["stdlib"]`.
+- When initializing a new project (`yukino new`), `includes = ["core", "stdlib"]` is automatically added to `[bin]` or `[lib]` (for `--macro`, `includes = ["core", "stdlib", "macrosdk"]`).
+- If `includes` is omitted from the manifest, the project defaults to `includes = ["core", "stdlib"]`.
 - If a specific builtin (such as `stdlib`) is not in the array (for example, `includes = []`), it is not included: its modules are unavailable (even when using `load std`), and its archives are neither compiled nor linked.
 - The language runtime (`runtime`) is always linked independently of `includes` (unless `--no-runtime` is passed).
 
@@ -364,9 +376,9 @@ Used for library packages:
 name = "my_lib"
 version = "0.1.0"
 entry = "my_lib/lib.ykn"      # Library entry point
-yukino = ["0.1.0", "+"]
+yukino = ["0.1.1", "+"]
 output = "static"             # Library type: "static" (.a), "shared" (.so / .dll), or "macro" (host-compiled procedural macro); defaults to "static"
-includes = ["stdlib"]        # Built-in packages for the project (defaults to ["stdlib"])
+includes = ["core", "stdlib"] # Built-in packages for the project (defaults to ["core", "stdlib"])
 ```
 
 ### 2.3 Managing dependencies: [libs.runtime] and [libs.build]
@@ -412,6 +424,11 @@ Supported package description parameters (`DependencySpec`):
 - `default_features`: control over the dependency's default features (`default_features = false` disables the dependency's `default` feature list).
 - `reexport`: boolean flag (`reexport = true`, defaults to `false`). Allows a library to transitively connect a dependency to downstream consumer projects under the prefixed name `{parent}_{dependency}` to avoid name collisions. Recursive re-exporting of arbitrary depth (`A_B_C`) is supported.
 - `splitnames`: boolean flag (`splitnames = true`, defaults to `false`). Merges the namespace of the re-exported dependency into the namespace of the parent library. Downstream consumers can import symbols and submodules from both libraries via a unified `load <parent>: ...`.
+- `interface` / `prebuilt`: path to a precompiled `.ykni` interface file (or directory containing `.ykni` files) for consuming a prebuilt library without its `.ykn` sources.
+- `archive`: path to a precompiled static `.a` archive paired with a `.ykni` interface (defaults to `lib<name>.a` next to the `.ykni` file if present).
+- `shared`: path to a precompiled dynamic library (`.so` / `.dll` / `.dylib`) paired with a `.ykni` interface. When compiling an application (`output = "app"`), `yukino` passes `-rpath $ORIGIN` and copies the shared library beside the output binary.
+
+Direct `yukic` invocations also accept `--emit-interface [PATH]` (automatically enabled for `--output-type static` and `--output-type shared`) and `--prebuilt <PATH|NAME=PATH>` (as well as auto-discovering `.ykni` files in `--include` directories).
 
 > [!WARNING]
 > When using `splitnames = true`, the compiler checks for collisions between public symbols across the parent and re-exported libraries. If an identical public symbol is declared in multiple branches of the merged namespace, the compiler fails with error E0301. Library authors must carefully ensure that exported names do not collide.
@@ -454,45 +471,40 @@ system = ["ws2_32", "user32", "advapi32"]
 
 ### 2.6 Compilation profiles: [config.<profile>]
 
-Each profile (for example, `[config.release]`, `[config.debug]`) describes optimization parameters. The `release` profile defaults to `opt_level = 3`, `lto = true`, `strip = true`, `strip_unused = true`, and `inline_statics = true`; any other profile starts from the debug defaults (`opt_level = 0`, `debug_assertions = true`). Unspecified fields fall back to these defaults.
+Each profile (for example, `[config.release]`, `[config.debug]`) describes optimization, code generation, and linking parameters. The `release` profile defaults to `opt_level = 3`, `lto = true`, `strip = true`, `strip_unused = true`, `inline_statics = true`, `function_sections = true`, `debug_assertions = false`, and `cpu = "generic"`; any other profile starts from the debug defaults (`opt_level = 0`, `debug_assertions = true`, `inline_statics = false`). Unspecified fields fall back to these defaults.
 
 > [!NOTE]
 > Because debug builds include full uncompressed debug symbol tables and zero optimizations, binaries are substantially larger. Switching to the `release` profile enables `strip = true`, `opt_level = 3`, and `lto = true`, significantly reducing the final binary size.
 
-Only the following fields currently affect the build:
+All of the fields below are supported by the manifest, can be overridden with `-o key=value`, and are passed to the `yukic` compiler (both for the root project and its dependencies):
 
 ```toml
 [config.release]
 opt_level = 3                 # Optimization level: 0, 1, 2, 3, "s" (size), "z" (aggressive size)
-lto = true                    # Link-Time Optimization: false, true/"fat", "thin" (all enabled variants pass a single --lto flag)
+lto = true                    # Link-Time Optimization: false/"none", "thin", true/"fat"/"full"
 strip = true                  # Stripping debug symbols from the final file
 strip_unused = true           # Dead Code Elimination (DCE)
 function_sections = true      # Place functions and static data into dedicated sections (.text.<sym>, .rodata.<sym>) for dead-code stripping by the linker (--gc-sections)
+inline_statics = true         # Inline constant static values directly at their usage sites instead of loading from globals
+debug_assertions = false      # Controls the #[cfg(debug_assertions)] and cfg!(debug_assertions) conditional compilation predicate
+panic_strategy = "unwind"     # Panic strategy: "unwind" (stack unwinding) or "abort"
 codegen_units = 8             # Number of parallel codegen units (CGU)
 linker = "lld"                # Linker selection: "lld", "system", "mold", "ld", "gold", "bfd", or custom path
-```
 
-The `function_sections = true` option is generated by default under `[config.release]` when creating a new project.
+# LLVM target options and output formats
+cpu = "generic"               # LLVM CPU model: "generic", "native", "x86-64-v3", etc.
+features = []                 # Extra target CPU instruction features (for example, ["+avx2", "+fma"])
+reloc_model = "pic"           # Relocation model: "pic", "static", "dynamic-no-pic", "default"
+code_model = "default"        # LLVM code model: "default", "small", "kernel", "medium", "large"
+fast_math = false             # Enable aggressive floating-point optimizations
+emit = ["bin"]                # Output formats (one or more): "bin", "obj", "asm", "llvm-ir"
+```
 
 Resolution priority for codegen units (`cgunits`):
 1. Explicit CLI flag `--cgunits <N>` (or `--codegen-units <N>`).
 2. The `codegen_units` setting in the active profile `[config.<profile>]`.
 3. The `cthreads` setting in global `config.json`.
 4. Number of CPU cores (fallback).
-
-The remaining fields below are recognized by the manifest parser (and can be overridden with `-o`), but they are not passed to the `yukic` compiler yet and do not affect the build result:
-
-```toml
-inline_statics = true         # Inlining static constants at their usage sites (reserved)
-debug_assertions = false      # Internal compiler assert checks (reserved)
-panic_strategy = "unwind"     # Panic strategy: "unwind" (stack unwinding) or "abort" (reserved)
-fast_math = false             # Aggressive FP optimizations (reserved)
-cpu = "native"                # LLVM CPU model: "native", "generic", "x86-64-v3", etc. (reserved)
-features = ["+avx2", "+fma"]  # Specific CPU instructions (reserved)
-reloc_model = "pic"           # Relocation model: "pic", "static" (reserved)
-code_model = "default"        # "default", "small", "kernel", "medium", "large" (reserved)
-emit = ["bin"]                # Output formats: "bin", "obj", "asm", "llvm-ir" (reserved)
-```
 
 ### 2.7 Build flags and conditional compilation: [features]
 
@@ -660,12 +672,25 @@ Printing certain prefixes to `stdout` from `build.ykn` is intercepted by the `yu
 | `yuki:link-archive=PATH` | Adds a static archive (`.a`) or an object file to the link |
 | `yuki:link-system=LIB` | Passes a system library to the linker (analog of `-l LIB`) |
 | `yuki:warning=TEXT` | Prints a warning into the build log |
+| `yuki:manifest=KEY=VALUE` | Temporarily sets a field in `yuki.toml` / `lib.toml` (using dotted key paths such as `bin.name=custom` or `config.release.opt_level=2`) for the current compilation |
+| `yuki:manifest-append=KEY=VALUE` | Appends `VALUE` to a manifest array at `KEY` (creating the array if absent) for the current compilation |
+| `yuki:manifest-remove=KEY` | Removes the manifest key `KEY` for the current compilation |
+
+#### Temporary manifest overrides
+
+The `yuki:manifest*` directives update fields of `yuki.toml` / `lib.toml` **for a single compilation only**:
+
+- As soon as compilation finishes, the original `yuki.toml` / `lib.toml` contents are **guaranteed to be restored** verbatim, regardless of whether compilation succeeded or failed (including parse, type-checking, codegen, or linking errors).
+- `KEY` uses dotted TOML paths matching `yukienv!` (`bin.name`, `bin.namedbg`, `lib.output`, `config.release.opt_level`, `config.debug.lto`, `libs.static.system`, `features.default`, `customcgus.group`, and so on). Missing intermediate tables are created automatically.
+- `VALUE` is parsed first as a single-line TOML value (booleans such as `true`/`false`, integers such as `2`, arrays such as `["core", "stdlib"]`, or quoted strings such as `"0.2.0"`), while bare unquoted values (such as `custom_app` or `shared`) are treated automatically as strings.
+- `yuki:manifest=` requires a non-empty value; pass `""` for an empty string, or use `yuki:manifest-remove=KEY` to delete a field.
+- Dependency fetching and compilation for `[libs.runtime]` and `[libs.build]` run before `build.ykn`, so temporary manifest overrides affect profile settings, build options (`[bin]` / `[lib]`, `[libs.static]`, `[customcgus]`, `[features]`, `[test]`), and `yukienv!` for the current build target. Explicit CLI flags (such as `--opt-level`) still take precedence over `[config.<profile>]`.
 
 Other directives (`cfg`, `rerun-if-changed`, etc.) are not supported at the moment.
 
 ### 4.3 build.ykn example
 
-An example `build.ykn` that passes a prebuilt native archive and a system library to the linker:
+An example `build.ykn` that passes a prebuilt native archive and a system library to the linker while temporarily overriding manifest fields for the build:
 
 ```yukino
 load std.io: print
@@ -679,6 +704,10 @@ fun main() {
     
     // Pass a system library
     print("yuki:link-system=m\n")
+    
+    // Temporarily override manifest fields (restored after compilation finishes)
+    print("yuki:manifest=config.debug.opt_level=2\n")
+    print("yuki:manifest-append=libs.static.system=pthread\n")
     
     // A warning in the build log
     print("yuki:warning=native wrapper linked\n")

@@ -88,6 +88,7 @@ impl<'a> ReachabilityAnalysis<'a> {
             ItemKind::Class(decl) => collect_class_refs(decl, &mut refs),
             ItemKind::Struct(decl) => collect_struct_refs(decl, &mut refs),
             ItemKind::Cstruct(decl) => collect_cstruct_refs(decl, &mut refs),
+            ItemKind::Cvar(decl) => collect_type_refs(&decl.ty, &mut refs),
             ItemKind::Interface(decl) => collect_interface_refs(decl, &mut refs),
             ItemKind::Enum(decl) => collect_enum_refs(decl, &mut refs),
             ItemKind::TypeAlias(decl) => collect_type_alias_refs(decl, &mut refs),
@@ -96,7 +97,12 @@ impl<'a> ReachabilityAnalysis<'a> {
             ItemKind::Macro(decl) => collect_macro_refs(decl, &mut refs),
             ItemKind::Import(decl) => collect_import_refs(decl, &mut refs),
             ItemKind::Alias(decl) => collect_alias_refs(decl, &mut refs),
-            ItemKind::Error => {}
+            ItemKind::Namespace(ns) => {
+                for sub in &ns.items {
+                    refs.extend(Self::collect_item_references(sub));
+                }
+            }
+            ItemKind::Cload(_) | ItemKind::Error => {}
         }
         refs
     }
@@ -109,6 +115,7 @@ fn item_exported_names(item: &Item) -> Vec<String> {
         ItemKind::Class(d) => vec![d.name.as_str().to_string()],
         ItemKind::Struct(d) => vec![d.name.as_str().to_string()],
         ItemKind::Cstruct(d) => vec![d.name.as_str().to_string()],
+        ItemKind::Cvar(d) => vec![d.name.as_str().to_string()],
         ItemKind::Interface(d) => vec![d.name.as_str().to_string()],
         ItemKind::Enum(d) => vec![d.name.as_str().to_string()],
         ItemKind::TypeAlias(d) => vec![d.name.as_str().to_string()],
@@ -152,7 +159,9 @@ fn collect_fun_refs(decl: &FunDecl, refs: &mut Vec<String>) {
     if let Some(ret_ty) = &decl.return_type {
         collect_type_refs(ret_ty, refs);
     }
-    collect_block_refs(&decl.body, refs);
+    if let Some(ref body) = decl.body {
+        collect_block_refs(body, refs);
+    }
 }
 
 fn collect_cfun_refs(decl: &CfunDecl, refs: &mut Vec<String>) {
@@ -185,7 +194,9 @@ fn collect_class_refs(decl: &ClassDecl, refs: &mut Vec<String>) {
     }
     for acc in &decl.accessors {
         collect_type_refs(&acc.ty, refs);
-        collect_block_refs(&acc.body, refs);
+        if let Some(ref body) = acc.body {
+            collect_block_refs(body, refs);
+        }
     }
 }
 
@@ -208,7 +219,9 @@ fn collect_struct_refs(decl: &StructDecl, refs: &mut Vec<String>) {
         if let Some(ret_ty) = &static_method.return_type {
             collect_type_refs(ret_ty, refs);
         }
-        collect_block_refs(&static_method.body, refs);
+        if let Some(ref body) = static_method.body {
+            collect_block_refs(body, refs);
+        }
     }
 }
 
@@ -221,7 +234,9 @@ fn collect_method_refs(method: &MethodDecl, refs: &mut Vec<String>) {
     if let Some(ret_ty) = &method.return_type {
         collect_type_refs(ret_ty, refs);
     }
-    collect_block_refs(&method.body, refs);
+    if let Some(ref body) = method.body {
+        collect_block_refs(body, refs);
+    }
 }
 
 fn collect_cstruct_refs(decl: &CstructDecl, refs: &mut Vec<String>) {
@@ -276,6 +291,7 @@ fn collect_externc_refs(block: &ExterncBlock, refs: &mut Vec<String>) {
         match item {
             ExterncItem::Cfun(decl) => collect_cfun_refs(decl, refs),
             ExterncItem::Cstruct(decl) => collect_cstruct_refs(decl, refs),
+            ExterncItem::Cvar(decl) => collect_type_refs(&decl.ty, refs),
         }
     }
 }

@@ -36,12 +36,18 @@ pub fn generate_attributes_json(module: &Module, project_name: &str) -> String {
             ItemKind::Struct(d) => ("struct", d.name.as_str(), &item.attrs),
             ItemKind::Cfun(d) => ("cfun", d.name.as_str(), &d.yukino_attrs),
             ItemKind::Cstruct(d) => ("cstruct", d.name.as_str(), &item.attrs),
+            ItemKind::Cvar(d) => ("cvar", d.name.as_str(), &item.attrs),
             ItemKind::Interface(d) => ("interface", d.name.as_str(), &item.attrs),
             ItemKind::Enum(d) => ("enum", d.name.as_str(), &item.attrs),
             ItemKind::TypeAlias(d) => ("type_alias", d.name.as_str(), &item.attrs),
             ItemKind::Static(d) => ("static", d.name.as_str(), &item.attrs),
             ItemKind::Macro(d) => ("macro", d.name.as_str(), &item.attrs),
-            ItemKind::Import(_) | ItemKind::Alias(_) | ItemKind::Externc(_) | ItemKind::Error => {
+            ItemKind::Import(_)
+            | ItemKind::Cload(_)
+            | ItemKind::Alias(_)
+            | ItemKind::Externc(_)
+            | ItemKind::Namespace(_)
+            | ItemKind::Error => {
                 continue;
             }
         };
