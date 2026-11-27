@@ -101,10 +101,19 @@
 
 2. **Установка расширения в VS Code**
 
-   - Откройте Visual Studio Code.
-   - Перейдите в панель поиска расширений с помощью комбинации клавиш `Ctrl + Shift + X`.
-   - Введите в строке поиска: `Yukino LSP`.
-   - Нажмите кнопку **Install** («Установить»).
+   - Убедитесь, что у вас установлен Python.
+   - Выполните команду в терминале:
+
+     **Windows:**
+     ```powershell
+     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/yukitsuri/vscode-yukino/main/install.py" -OutFile install.py
+     python install.py
+     ```
+
+     **Linux:**
+     ```bash
+     curl -fsSLO https://raw.githubusercontent.com/yukitsuri/vscode-yukino/main/install.py && python3 install.py
+     ```
 
 #### Настройки расширения в VS Code:
 

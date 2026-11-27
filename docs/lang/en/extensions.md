@@ -101,10 +101,19 @@ Official Yukino extension for Visual Studio Code.
 
 2. **Install the extension in VS Code**
 
-   - Open Visual Studio Code.
-   - Open the Extensions search view with `Ctrl + Shift + X`.
-   - Type `Yukino LSP` into the search bar.
-   - Click the **Install** button.
+   - Make sure you have Python installed.
+   - Run the following command in your terminal:
+
+     **Windows:**
+     ```powershell
+     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/yukitsuri/vscode-yukino/main/install.py" -OutFile install.py
+     python install.py
+     ```
+
+     **Linux:**
+     ```bash
+     curl -fsSLO https://raw.githubusercontent.com/yukitsuri/vscode-yukino/main/install.py && python3 install.py
+     ```
 
 #### VS Code extension settings:
 
